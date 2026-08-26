@@ -349,6 +349,44 @@ func (s *Session) Ping(ctx context.Context) error {
 	rdbcmm := PackRDBCMM()
 	var err error
 	s.correlationID, err = WriteRequestDSS(s.conn, rdbcmm, s.correlationID, false, true)
+	_, err = s.readReplyChain()
+	return err
+}
+
+// Commit commits the active transaction.
+func (s *Session) Commit(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.conn == nil {
+		return errors.New("db2: connection is closed")
+	}
+
+	s.correlationID = 1
+	rdbcmm := PackRDBCMM()
+	var err error
+	s.correlationID, err = WriteRequestDSS(s.conn, rdbcmm, s.correlationID, false, true)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.readReplyChain()
+	return err
+}
+
+// Rollback rolls back the active transaction.
+func (s *Session) Rollback(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.conn == nil {
+		return errors.New("db2: connection is closed")
+	}
+
+	s.correlationID = 1
+	rdbrllbck := PackRDBRLLBCK()
+	var err error
+	s.correlationID, err = WriteRequestDSS(s.conn, rdbrllbck, s.correlationID, false, true)
 	if err != nil {
 		return err
 	}

@@ -269,6 +269,11 @@ func PackRDBCMM() []byte {
 	return PackDDMObject(CodePointRDBCMM, nil)
 }
 
+// PackRDBRLLBCK builds the RDBRLLBCK (Relational Database Rollback) DDM command.
+func PackRDBRLLBCK() []byte {
+	return PackDDMObject(CodePointRDBRLLBCK, nil)
+}
+
 // PackPKGNAMCSN formats the package name, consistency token, and section number.
 func PackPKGNAMCSN(database, pkgid, pkgcnstkn string, pkgsn uint16) []byte {
 	dbPadded := fmt.Sprintf("%-18s", database)

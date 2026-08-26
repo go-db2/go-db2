@@ -1,4 +1,4 @@
-package go_db2
+package db2
 
 import (
 	"errors"
