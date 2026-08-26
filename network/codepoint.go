@@ -56,6 +56,7 @@ const (
 	CodePointSYNCPTMGR  CodePoint = 0x14C0 // Sync Point Manager
 	CodePointXAMGR      CodePoint = 0x1C01 // XA Manager
 	CodePointDICTIONARY CodePoint = 0x1458 // Data Dictionary Manager
+	CodePointRDB        CodePoint = 0x240F // Relational Database Application Manager
 
 	// SQL Statements & Execution
 	CodePointPRPSQLSTT  CodePoint = 0x200D // Prepare SQL Statement
@@ -297,6 +298,7 @@ var codePointNames = map[CodePoint]string{
 	CodePointSYNCPTMGR:  "SYNCPTMGR",
 	CodePointXAMGR:      "XAMGR",
 	CodePointDICTIONARY: "DICTIONARY",
+	CodePointRDB:        "RDB",
 	CodePointPRPSQLSTT:  "PRPSQLSTT",
 	CodePointEXCSQLSTT:  "EXCSQLSTT",
 	CodePointEXCSQLIMM:  "EXCSQLIMM",
