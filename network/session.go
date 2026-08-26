@@ -64,6 +64,12 @@ func NewSession(cfg SessionConfig) *Session {
 		cfg.Timeout = 30 * time.Second
 	}
 
+	dbPadded := fmt.Sprintf("%-18s", cfg.Database)
+	if len(dbPadded) > 18 {
+		dbPadded = dbPadded[:18]
+	}
+	cfg.Database = dbPadded
+
 	return &Session{
 		cfg:           cfg,
 		correlationID: 1,

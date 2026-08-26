@@ -197,28 +197,39 @@ gantt
 
 ## 6. Estratégia de Testes e Ambiente de Desenvolvimento
 
-Para garantir validação contínua e sem necessidade de servidores externos dedicados:
+Para garantir validação contínua e testes locais:
 
-1. **Ambiente Local com Docker:**
-   Utilizar a imagem oficial do IBM Db2 Community Edition:
+1. **Ambiente Local com Podman / Docker:**
+   Inicializar a imagem oficial do IBM Db2 Community Edition com as configurações validadas:
    ```bash
-   docker run -itd --name db2-dev \
-     --privileged=true \
+   podman run -d \
+     --name db2-test \
+     --privileged \
      -p 50000:50000 \
      -e LICENSE=accept \
-     -e DB2INST1_PASSWORD=password \
+     -e DB2INST1_PASSWORD=MinhaSenhaForte123 \
      -e DBNAME=testdb \
+     -e PERSISTENT_HOME=false \
      icr.io/db2_community/db2
    ```
+   > Aguarde a mensagem `(*) Setup has completed.` nos logs (`podman logs -f db2-test`).
 
-2. **Testes Unitários:**
-   - Testes isolados com tabelas de bytes simuladas para validar encoders e decoders DDM/DSS sem depender do banco online.
-   - Testes de conversão de tipos (`converters_test.go`).
+2. **Testes Unitários e Mock (Isolados):**
+   - Testes isolados com tabelas de bytes e servidor TCP mock sem depender do banco online:
+     ```bash
+     go test -v ./...
+     ```
 
-3. **Testes de Integração Automatizados em Go:**
+3. **Execução de Teste Real com o Driver:**
+   - Executar o programa de validação de handshake e transações reais contra o contêiner:
+     ```bash
+     go run examples/basic_connect/main.go
+     ```
+
+4. **Testes de Integração Automatizados em Go (Futuro):**
    - Integração com a biblioteca `testcontainers-go` para inicializar automaticamente contêineres Db2 durante a execução da suite `go test ./...`.
 
-4. **CI/CD no GitHub Actions:**
+5. **CI/CD no GitHub Actions:**
    - Pipeline automatizado de linting (`golangci-lint`), testes de unidade e testes de integração com o serviço de contêiner Db2.
 
 ---

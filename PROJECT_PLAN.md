@@ -197,29 +197,40 @@ gantt
 
 ## 6. Testing Strategy and Development Environment
 
-To ensure continuous validation without requiring external dedicated servers:
+To ensure continuous validation and local testing:
 
-1. **Local Environment with Docker:**
-   Use the official IBM Db2 Community Edition image:
+1. **Local Environment with Podman / Docker:**
+   Launch the official IBM Db2 Community Edition container using verified flags:
    ```bash
-   docker run -itd --name db2-dev \
-     --privileged=true \
+   podman run -d \
+     --name db2-test \
+     --privileged \
      -p 50000:50000 \
      -e LICENSE=accept \
-     -e DB2INST1_PASSWORD=password \
+     -e DB2INST1_PASSWORD=MinhaSenhaForte123 \
      -e DBNAME=testdb \
+     -e PERSISTENT_HOME=false \
      icr.io/db2_community/db2
    ```
+   > Wait for the message `(*) Setup has completed.` in container logs (`podman logs -f db2-test`).
 
-2. **Unit Tests:**
-   - Isolated tests with mock byte tables to validate DDM/DSS encoders and decoders without an active database.
-   - Type conversion tests (`converters_test.go`).
+2. **Unit & Mock Tests (Isolated):**
+   - Run unit and mock TCP server test suites without external database dependencies:
+     ```bash
+     go test -v ./...
+     ```
 
-3. **Automated Integration Tests in Go:**
-   - Integration with the `testcontainers-go` library to automatically launch Db2 containers during `go test ./...`.
+3. **Live Driver Integration Test:**
+   - Run the live handshake, ping, and transaction test against the active container:
+     ```bash
+     go run examples/basic_connect/main.go
+     ```
 
-4. **CI/CD with GitHub Actions:**
-   - Automated pipeline for linting (`golangci-lint`), unit testing, and integration tests against Db2 container services.
+4. **Automated Integration Tests (Future):**
+   - Integration with `testcontainers-go` to automatically launch Db2 containers during `go test ./...`.
+
+5. **CI/CD with GitHub Actions:**
+   - Automated pipeline for linting (`golangci-lint`), unit testing, and containerized integration tests.
 
 ---
 

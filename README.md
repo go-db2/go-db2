@@ -61,6 +61,40 @@ func main() {
 
 ---
 
+## 🧪 Testing with Local Db2 Container
+
+### 1. Run Unit Tests (Mock / Isolated)
+```bash
+go test -v ./...
+```
+
+### 2. Run Live Tests against IBM Db2 Container
+
+Start the official IBM Db2 Community Edition container using Podman or Docker:
+
+```bash
+podman run -d \
+  --name db2-test \
+  --privileged \
+  -p 50000:50000 \
+  -e LICENSE=accept \
+  -e DB2INST1_PASSWORD=MinhaSenhaForte123 \
+  -e DBNAME=testdb \
+  -e PERSISTENT_HOME=false \
+  icr.io/db2_community/db2
+```
+
+> [!NOTE]
+> Wait approximately 1-2 minutes on first run for Db2 to finish creating the database. You can check logs via `podman logs -f db2-test` until `(*) Setup has completed.` appears.
+
+Once the container is active, execute the live connection test:
+
+```bash
+go run examples/basic_connect/main.go
+```
+
+---
+
 ## 📄 References & Inspiration
 - [pydrda](https://github.com/nakagami/pydrda): Pure Python DRDA database driver for Db2.
 - [go-ora](https://github.com/sijms/go-ora): Pure Go Oracle database driver.
