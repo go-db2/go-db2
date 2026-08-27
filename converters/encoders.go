@@ -322,12 +322,13 @@ func toBytes(val any) []byte {
 // BuildSQLDTA constructs the complete SQLDTA object containing FDODSC and FDODTA blocks for the parameters.
 func BuildSQLDTA(colTypes []types.SQLType, colLens []int64, precs, scales []int, args []any, endian binary.ByteOrder) ([]byte, error) {
 	numParams := len(args)
-	fdodsc := make([]byte, 1+2)
+	fdodsc := make([]byte, 3, 3+numParams*3+6)
 	fdodsc[0] = byte((1 + numParams) * 3)
 	fdodsc[1] = 0x76
 	fdodsc[2] = 0xD0
 
 	var fdodta bytes.Buffer
+	fdodta.Grow(numParams * 32)
 
 	for i := 0; i < numParams; i++ {
 		st := colTypes[i]
@@ -350,30 +351,26 @@ func BuildSQLDTA(colTypes []types.SQLType, colLens []int64, precs, scales []int,
 		dtaBytes = append([]byte{0x00}, dtaBytes...)
 	}
 
-	fdodsc = append(fdodsc, []byte{0x06, 0x71, 0xE4, 0xD0, 0x00, 0x01}...)
+	fdodsc = append(fdodsc, 0x06, 0x71, 0xE4, 0xD0, 0x00, 0x01)
 
 	// Wrap FDODSC and FDODTA
-	var body bytes.Buffer
-
-	// FDODSC object header
-	fdodscObj := make([]byte, 4+len(fdodsc))
-	binary.BigEndian.PutUint16(fdodscObj[0:2], uint16(len(fdodscObj)))
-	binary.BigEndian.PutUint16(fdodscObj[2:4], 0x0010) // FDODSC
-	copy(fdodscObj[4:], fdodsc)
-	body.Write(fdodscObj)
-
-	// FDODTA object header
-	fdodtaObj := make([]byte, 4+len(dtaBytes))
-	binary.BigEndian.PutUint16(fdodtaObj[0:2], uint16(len(fdodtaObj)))
-	binary.BigEndian.PutUint16(fdodtaObj[2:4], 0x147A) // FDODTA
-	copy(fdodtaObj[4:], dtaBytes)
-	body.Write(fdodtaObj)
+	bodyLen := 4 + (4 + len(fdodsc)) + (4 + len(dtaBytes))
+	sqldta := make([]byte, bodyLen)
 
 	// SQLDTA object header
-	sqldtaObj := make([]byte, 4+body.Len())
-	binary.BigEndian.PutUint16(sqldtaObj[0:2], uint16(len(sqldtaObj)))
-	binary.BigEndian.PutUint16(sqldtaObj[2:4], 0x2412) // SQLDTA
-	copy(sqldtaObj[4:], body.Bytes())
+	binary.BigEndian.PutUint16(sqldta[0:2], uint16(bodyLen))
+	binary.BigEndian.PutUint16(sqldta[2:4], 0x2412) // SQLDTA
 
-	return sqldtaObj, nil
+	// FDODSC object header
+	binary.BigEndian.PutUint16(sqldta[4:6], uint16(4+len(fdodsc)))
+	binary.BigEndian.PutUint16(sqldta[6:8], 0x0010) // FDODSC
+	copy(sqldta[8:8+len(fdodsc)], fdodsc)
+
+	// FDODTA object header
+	offset := 8 + len(fdodsc)
+	binary.BigEndian.PutUint16(sqldta[offset:offset+2], uint16(4+len(dtaBytes)))
+	binary.BigEndian.PutUint16(sqldta[offset+2:offset+4], 0x147A) // FDODTA
+	copy(sqldta[offset+4:], dtaBytes)
+
+	return sqldta, nil
 }

@@ -182,6 +182,11 @@ func (c *Conn) Ping(ctx context.Context) error {
 }
 
 // Interface assertions
+// CheckNamedValue implements driver.NamedValueChecker interface.
+func (c *Conn) CheckNamedValue(nv *driver.NamedValue) error {
+	return nil
+}
+
 var (
 	_ driver.Conn               = (*Conn)(nil)
 	_ driver.ConnPrepareContext = (*Conn)(nil)
@@ -189,4 +194,5 @@ var (
 	_ driver.Pinger             = (*Conn)(nil)
 	_ driver.ExecerContext      = (*Conn)(nil)
 	_ driver.QueryerContext     = (*Conn)(nil)
+	_ driver.NamedValueChecker  = (*Conn)(nil)
 )

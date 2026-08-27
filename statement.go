@@ -2,8 +2,10 @@ package db2
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/go-db2/go-db2/network"
@@ -35,7 +37,7 @@ func (s *Stmt) Close() error {
 	return nil
 }
 
-// NumInput returns the number of placeholder parameters expected by the statement.
+// NumInput returns the number of placeholder parameters.
 func (s *Stmt) NumInput() int {
 	return len(s.paramCols)
 }
@@ -60,8 +62,35 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 	}
 
 	rawArgs := make([]any, len(args))
+	type outInfo struct {
+		index int
+		dest  any
+	}
+	var outTargets []outInfo
+
 	for i, arg := range args {
-		rawArgs[i] = arg.Value
+		switch v := arg.Value.(type) {
+		case sql.Out:
+			outTargets = append(outTargets, outInfo{index: i, dest: v.Dest})
+			if v.Dest != nil {
+				rawArgs[i] = reflect.ValueOf(v.Dest).Elem().Interface()
+			} else {
+				rawArgs[i] = 0
+			}
+		case *sql.Out:
+			if v != nil {
+				outTargets = append(outTargets, outInfo{index: i, dest: v.Dest})
+				if v.Dest != nil {
+					rawArgs[i] = reflect.ValueOf(v.Dest).Elem().Interface()
+				} else {
+					rawArgs[i] = 0
+				}
+			} else {
+				rawArgs[i] = 0
+			}
+		default:
+			rawArgs[i] = arg.Value
+		}
 	}
 
 	if hasBlobParams(s.paramCols, rawArgs) {
@@ -77,9 +106,18 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 		if err != nil {
 			return nil, err
 		}
-		affected, err := s.conn.session.ExecWithParams(ctx, newParamCols, newArgs)
+		affected, outValues, err := s.conn.session.ExecWithParams(ctx, newParamCols, newArgs)
 		if err != nil {
 			return nil, err
+		}
+		if len(outTargets) > 0 && len(outValues) > 0 {
+			for _, target := range outTargets {
+				if target.index < len(outValues) {
+					if err := assignOutParam(target.dest, outValues[target.index]); err != nil {
+						return nil, err
+					}
+				}
+			}
 		}
 		return NewResult(affected, 0), nil
 	}
@@ -89,9 +127,19 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 		return nil, err
 	}
 
-	affected, err := s.conn.session.ExecWithParams(ctx, newParamCols, rawArgs)
+	affected, outValues, err := s.conn.session.ExecWithParams(ctx, newParamCols, rawArgs)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(outTargets) > 0 && len(outValues) > 0 {
+		for _, target := range outTargets {
+			if target.index < len(outValues) {
+				if err := assignOutParam(target.dest, outValues[target.index]); err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 
 	return NewResult(affected, 0), nil
@@ -192,8 +240,43 @@ func rewriteBinaryParams(query string, paramCols []network.ColumnDescription, ar
 	return rewrittenQuery.String(), rewrittenCols, rewrittenArgs
 }
 
+func assignOutParam(dest any, val any) error {
+	if dest == nil || val == nil {
+		return nil
+	}
+	destVal := reflect.ValueOf(dest)
+	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
+		return fmt.Errorf("db2: sql.Out destination must be a non-nil pointer, got %T", dest)
+	}
+	elem := destVal.Elem()
+	valVal := reflect.ValueOf(val)
+
+	if valVal.Type().AssignableTo(elem.Type()) {
+		elem.Set(valVal)
+		return nil
+	}
+	if valVal.Type().ConvertibleTo(elem.Type()) {
+		elem.Set(valVal.Convert(elem.Type()))
+		return nil
+	}
+
+	// String fallback
+	if elem.Kind() == reflect.String {
+		elem.SetString(fmt.Sprint(val))
+		return nil
+	}
+
+	return fmt.Errorf("db2: cannot assign value %v (%T) to output parameter %v (%T)", val, val, elem.Interface(), elem.Type())
+}
+
+// CheckNamedValue implements driver.NamedValueChecker interface.
+func (s *Stmt) CheckNamedValue(nv *driver.NamedValue) error {
+	return nil
+}
+
 var (
-	_ driver.Stmt             = (*Stmt)(nil)
-	_ driver.StmtExecContext  = (*Stmt)(nil)
-	_ driver.StmtQueryContext = (*Stmt)(nil)
+	_ driver.Stmt              = (*Stmt)(nil)
+	_ driver.StmtExecContext   = (*Stmt)(nil)
+	_ driver.StmtQueryContext  = (*Stmt)(nil)
+	_ driver.NamedValueChecker = (*Stmt)(nil)
 )
