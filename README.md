@@ -13,6 +13,22 @@
 
 ---
 
+## ✨ Feature Status
+
+| Feature | Status | Notes |
+| :--- | :---: | :--- |
+| **Pure Go Engine** | ✅ Supported | Zero CGO, native DRDA/DDM binary protocol parser |
+| **Authentication & Handshake** | ✅ Supported | SECMEC Plain User/Password (SECMEC 3), EBCDIC CP500 exchange |
+| **`database/sql` Registration** | ✅ Supported | `sql.Register("db2", ...)` with URL and Key-Value DSN parsers |
+| **Connection Pooling & Liveness** | ✅ Supported | `db.PingContext()`, `driver.Connector`, connection lifecycle |
+| **Transactions** | ✅ Supported | `db.BeginTx()`, `tx.Commit()` (`RDBCMM`), `tx.Rollback()` (`RDBRLLBCK`) |
+| **DDL & DML Execution** | ✅ Supported | `db.ExecContext()` for `CREATE`, `DROP`, `INSERT`, `UPDATE`, `DELETE` |
+| **Query & Rows Stream** | ✅ Supported | `db.QueryContext()`, `db.QueryRowContext()`, `rows.Scan()`, `rows.Columns()` |
+| **Type Conversions & NULLs** | ✅ Supported | Integers, Strings/Varchars, Floats, Dates, Timestamps, Decimals, `NULL` values |
+| **Prepared Statements & Params** | 🚧 *In Progress* | Planned for Phase 3 |
+
+---
+
 ## 📋 Project Planning & Architecture
 
 For the complete architectural design, scope, roadmap, and milestone definitions, please refer to:
@@ -22,40 +38,48 @@ For the complete architectural design, scope, roadmap, and milestone definitions
 
 ---
 
-## 🛠️ Quick Example (Target API)
+## 🛠️ Quick Example
 
 ```go
 package main
 
 import (
-    "database/sql"
-    "fmt"
-    "log"
+	"context"
+	"database/sql"
+	"fmt"
+	"log"
+	"time"
 
-    _ "github.com/go-db2/go-db2"
+	_ "github.com/go-db2/go-db2"
 )
 
 func main() {
-    // Connection string via URL format
-    connStr := "db2://db2inst1:password@localhost:50000/testdb?ssl=false"
-    
-    db, err := sql.Open("db2", connStr)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer db.Close()
+	// Connection string format:
+	// db2://user:password@host:port/database?ssl=false
+	connStr := "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false"
 
-    if err := db.Ping(); err != nil {
-        log.Fatal(err)
-    }
+	db, err := sql.Open("db2", connStr)
+	if err != nil {
+		log.Fatalf("Failed to open db: %v", err)
+	}
+	defer db.Close()
 
-    var serviceLevel string
-    err = db.QueryRow("SELECT service_level FROM sysibmadm.env_inst_info").Scan(&serviceLevel)
-    if err != nil {
-        log.Fatal(err)
-    }
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-    fmt.Printf("Connected to Db2! Version: %s\n", serviceLevel)
+	// 1. Verify connection
+	if err := db.PingContext(ctx); err != nil {
+		log.Fatalf("Ping failed: %v", err)
+	}
+	fmt.Println("Connected to IBM Db2 successfully!")
+
+	// 2. Query system or user table
+	var count int
+	err = db.QueryRowContext(ctx, "SELECT 1 FROM SYSIBM.SYSDUMMY1").Scan(&count)
+	if err != nil {
+		log.Fatalf("Query failed: %v", err)
+	}
+	fmt.Printf("Query result: %d\n", count)
 }
 ```
 
@@ -87,11 +111,17 @@ podman run -d \
 > [!NOTE]
 > Wait approximately 1-2 minutes on first run for Db2 to finish creating the database. You can check logs via `podman logs -f db2-test` until `(*) Setup has completed.` appears.
 
-Once the container is active, execute the live connection test:
+Once the container is active, you can run the live examples:
 
-```bash
-go run examples/basic_connect/main.go
-```
+- **Basic Connection & Handshake Test:**
+  ```bash
+  go run examples/basic_connect/main.go
+  ```
+
+- **Full CRUD (DDL, DML, DQL) Demo:**
+  ```bash
+  go run examples/crud_demo/main.go
+  ```
 
 ---
 

@@ -1,16 +1,20 @@
 package network
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/go-db2/go-db2/converters"
 )
 
 // SessionConfig holds configuration parameters for establishing a Db2 session.
@@ -399,6 +403,159 @@ func (s *Session) Rollback(ctx context.Context) error {
 
 	_, err = s.readReplyChain()
 	return err
+}
+
+// ExecDirect executes a DDL or DML statement immediately without parameter binding.
+func (s *Session) ExecDirect(ctx context.Context, sql string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.conn == nil {
+		return 0, errors.New("db2: connection is closed")
+	}
+
+	s.correlationID = 1
+	var err error
+
+	// 1. EXCSQLIMM (Execute Immediate)
+	imm := PackEXCSQLIMM(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	s.correlationID, err = WriteRequestDSS(s.conn, imm, s.correlationID, true, false)
+	if err != nil {
+		return 0, fmt.Errorf("failed to write EXCSQLIMM: %w", err)
+	}
+
+	// 2. SQLSTT (SQL Statement Text)
+	stt := PackSQLSTT(sql)
+	s.correlationID, err = WriteRequestDSS(s.conn, stt, s.correlationID, false, false)
+	if err != nil {
+		return 0, fmt.Errorf("failed to write SQLSTT: %w", err)
+	}
+
+	// 3. RDBCMM (Commit)
+	cmm := PackRDBCMM()
+	s.correlationID, err = WriteRequestDSS(s.conn, cmm, s.correlationID, false, true)
+	if err != nil {
+		return 0, fmt.Errorf("failed to write RDBCMM: %w", err)
+	}
+
+	replies, err := s.readReplyChain()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var affectedRows int64
+	for _, r := range replies {
+		if r.CodePoint == CodePointSQLCARD {
+			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			if parseErr != nil {
+				return 0, parseErr
+			}
+			if code < 0 {
+				return 0, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
+			}
+		}
+		if r.CodePoint == CodePointSQLERRRM {
+			sub, _ := ParseDDMReply(r.Data)
+			return 0, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+		}
+	}
+
+	return affectedRows, nil
+}
+
+// QueryDirect prepares, describes and executes a query statement returning raw column headers and decoded row data.
+func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescription, [][]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.conn == nil {
+		return nil, nil, errors.New("db2: connection is closed")
+	}
+
+	s.correlationID = 1
+	var err error
+
+	// 1. PRPSQLSTT
+	prp := PackPRPSQLSTT(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	s.correlationID, err = WriteRequestDSS(s.conn, prp, s.correlationID, true, false)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to write PRPSQLSTT: %w", err)
+	}
+
+	// 2. SQLSTT
+	stt := PackSQLSTT(sql)
+	s.correlationID, err = WriteRequestDSS(s.conn, stt, s.correlationID, false, false)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to write SQLSTT: %w", err)
+	}
+
+	// 3. OPNQRY
+	opn := PackOPNQRY(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database, s.qryblksz)
+	s.correlationID, err = WriteRequestDSS(s.conn, opn, s.correlationID, false, true)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to write OPNQRY: %w", err)
+	}
+
+	replies, err := s.readReplyChain()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read query response: %w", err)
+	}
+
+	var columns []ColumnDescription
+	var fields []FieldDescriptor
+	var rows [][]any
+
+	for _, r := range replies {
+		if r.CodePoint == CodePointSQLDARD {
+			cols, err := ParseSQLDARD(r.Data, s.endian)
+			if err != nil {
+				return nil, nil, err
+			}
+			if len(cols) > 0 {
+				columns = cols
+			}
+		} else if r.CodePoint == CodePointQRYDSC {
+			flds, err := ParseQRYDSC(r.Data)
+			if err != nil {
+				return nil, nil, err
+			}
+			fields = flds
+		} else if r.CodePoint == CodePointQRYDTA {
+			reader := bytes.NewReader(r.Data)
+			for reader.Len() >= 2 {
+				var rowHdr [2]byte
+				if _, err := io.ReadFull(reader, rowHdr[:]); err != nil {
+					break
+				}
+				if rowHdr[0] != 0xFF {
+					break
+				}
+
+				row := make([]any, len(fields))
+				for i, f := range fields {
+					val, err := converters.DecodeField(f.Type, f.PS, reader, s.endian)
+					if err != nil {
+						return nil, nil, fmt.Errorf("failed to decode column %d: %w", i+1, err)
+					}
+					row[i] = val
+				}
+				rows = append(rows, row)
+			}
+		} else if r.CodePoint == CodePointSQLERRRM {
+			sub, _ := ParseDDMReply(r.Data)
+			return nil, nil, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+		} else if r.CodePoint == CodePointSQLCARD {
+			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			if parseErr != nil {
+				return nil, nil, parseErr
+			}
+			if code < 0 {
+				return nil, nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
+			}
+		}
+	}
+
+	return columns, rows, nil
 }
 
 // Close gracefully closes the session and underlying network connection.

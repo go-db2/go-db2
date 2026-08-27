@@ -336,6 +336,215 @@ func ParseDDMReply(data []byte) (map[CodePoint][]byte, error) {
 	return results, nil
 }
 
+// PackEXCSQLIMM builds an EXCSQLIMM (Execute Immediate SQL) DDM command.
+func PackEXCSQLIMM(pkgid, pkgcnstkn string, pkgsn uint16, database string) []byte {
+	body := append(
+		PackPKGNAMCSN(database, pkgid, pkgcnstkn, pkgsn),
+		PackBytes(CodePointRDBCMTOK, []byte{241})...,
+	)
+	return PackDDMObject(CodePointEXCSQLIMM, body)
+}
+
+// PackPRPSQLSTT builds a PRPSQLSTT (Prepare SQL Statement) DDM command.
+func PackPRPSQLSTT(pkgid, pkgcnstkn string, pkgsn uint16, database string) []byte {
+	body := append(
+		PackPKGNAMCSN(database, pkgid, pkgcnstkn, pkgsn),
+		PackBytes(CodePointRTNSQLDA, []byte{241})...,
+	)
+	return PackDDMObject(CodePointPRPSQLSTT, body)
+}
+
+// PackDSCSQLSTT builds a DSCSQLSTT (Describe SQL Statement) DDM command.
+func PackDSCSQLSTT(pkgid, pkgcnstkn string, pkgsn uint16, database string) []byte {
+	body := append(
+		PackPKGNAMCSN(database, pkgid, pkgcnstkn, pkgsn),
+		PackBytes(CodePointTYPSQLDA, []byte{1})...,
+	)
+	return PackDDMObject(CodePointDSCSQLSTT, body)
+}
+
+// PackOPNQRY builds an OPNQRY (Open Query) DDM command.
+func PackOPNQRY(pkgid, pkgcnstkn string, pkgsn uint16, database string, qryblksz uint32) []byte {
+	var body []byte
+	body = append(body, PackPKGNAMCSN(database, pkgid, pkgcnstkn, pkgsn)...)
+	body = append(body, PackUint32(CodePointQRYBLKSZ, qryblksz)...)
+	body = append(body, PackUint16(CodePointMAXBLKEXT, uint16(qryblksz))...)
+	body = append(body, PackBytes(CodePointQRYCLSIMP, []byte{0x01})...)
+	return PackDDMObject(CodePointOPNQRY, body)
+}
+
+// ColumnDescription holds column metadata decoded from SQLDARD.
+type ColumnDescription struct {
+	Name      string
+	SQLType   uint16
+	Length    int64
+	Precision int
+	Scale     int
+	Nullable  bool
+}
+
+// FieldDescriptor represents a single column descriptor from QRYDSC.
+type FieldDescriptor struct {
+	Type uint8
+	PS   []byte
+}
+
+func parseString(b []byte) (string, []byte) {
+	if len(b) < 2 {
+		return "", nil
+	}
+	ln := int(binary.BigEndian.Uint16(b[:2]))
+	if ln == 0 || len(b) < 2+ln {
+		return "", b[2:]
+	}
+	data := b[2 : 2+ln]
+	return string(data), b[2+ln:]
+}
+
+func parseName(b []byte) (string, []byte) {
+	s1, rest1 := parseString(b)
+	s2, rest2 := parseString(rest1)
+	if s1 != "" {
+		return s1, rest2
+	}
+	return s2, rest2
+}
+
+// ParseSQLDARD decodes column metadata from an SQLDARD reply packet.
+func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, error) {
+	if len(obj) == 0 {
+		return nil, nil
+	}
+
+	hasName := (obj[0] == 0x00)
+	sqlcode, sqlstate, msg, err := ParseSQLCARD(obj, endian)
+	if err != nil {
+		return nil, err
+	}
+	if sqlcode < 0 {
+		return nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s: %s", sqlcode, sqlstate, msg)
+	}
+
+	// Move past SQLCARD
+	var rest []byte
+	if len(obj) > 36+18 {
+		rest = obj[36+18:]
+		// Skip RDB name, messages, etc.
+		for i := 0; i < 3; i++ {
+			if len(rest) >= 2 {
+				ln := int(binary.BigEndian.Uint16(rest[:2]))
+				if len(rest) >= 2+ln {
+					rest = rest[2+ln:]
+				}
+			}
+		}
+		if len(rest) > 0 && rest[0] == 0xFF {
+			rest = rest[1:]
+		}
+	} else {
+		rest = obj
+	}
+
+	if len(rest) < 2 {
+		return nil, nil
+	}
+
+	if rest[0] == 0x00 {
+		if len(rest) > 13 {
+			rest = rest[13:]
+			_, rest = parseString(rest)
+			_, rest = parseName(rest)
+		}
+	} else {
+		rest = rest[1:]
+	}
+
+	if len(rest) < 2 {
+		return nil, nil
+	}
+
+	numCols := int(endian.Uint16(rest[:2]))
+	rest = rest[2:]
+
+	var cols []ColumnDescription
+	for i := 0; i < numCols && len(rest) >= 16; i++ {
+		prec := int(endian.Uint16(rest[0:2]))
+		scale := int(endian.Uint16(rest[2:4]))
+		sqllen := int64(endian.Uint64(rest[4:12]))
+		sqltype := endian.Uint16(rest[12:14])
+
+		rest = rest[16:]
+		var colName string
+		if hasName {
+			if len(rest) >= 9 {
+				rest = rest[9:] // skip 6 bytes + 3 bytes header
+				var name string
+				name, rest = parseName(rest)
+				label, r2 := parseName(rest)
+				rest = r2
+				_, r3 := parseName(rest) // comments
+				rest = r3
+				if len(rest) >= 7 {
+					rest = rest[7:]
+				}
+				if label != "" {
+					colName = label
+				} else {
+					colName = name
+				}
+			}
+		} else {
+			if len(rest) >= 29 {
+				rest = rest[29:]
+			}
+		}
+
+		if colName == "" {
+			colName = fmt.Sprintf("COL%d", i+1)
+		}
+
+		cols = append(cols, ColumnDescription{
+			Name:      colName,
+			SQLType:   sqltype,
+			Length:    sqllen,
+			Precision: prec,
+			Scale:     scale,
+			Nullable:  (sqltype % 2) != 0,
+		})
+	}
+
+	return cols, nil
+}
+
+// ParseQRYDSC decodes the QRYDSC (Query Descriptor) into a slice of field descriptors.
+func ParseQRYDSC(obj []byte) ([]FieldDescriptor, error) {
+	if len(obj) < 3 {
+		return nil, errors.New("QRYDSC payload too short")
+	}
+
+	ln := int(obj[0])
+	if ln == 0 || len(obj) < ln {
+		ln = len(obj)
+	}
+
+	data := obj[1:ln]
+	if len(data) >= 2 && data[0] == 0x76 && data[1] == 0xD0 {
+		data = data[2:]
+	}
+
+	var fields []FieldDescriptor
+	for i := 0; i+3 <= len(data); i += 3 {
+		fType := data[i]
+		ps := data[i+1 : i+3]
+		fields = append(fields, FieldDescriptor{
+			Type: fType,
+			PS:   ps,
+		})
+	}
+
+	return fields, nil
+}
+
 // ParseSQLCARD parses the SQL Communications Area (SQLCARD) structure into SQLCODE, SQLSTATE, and Message.
 func ParseSQLCARD(obj []byte, endian binary.ByteOrder) (int32, string, string, error) {
 	if len(obj) == 0 {
