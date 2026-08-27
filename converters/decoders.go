@@ -12,64 +12,70 @@ import (
 
 // DRDA Wire Data Types
 const (
-	DRDATypeInteger     uint8 = 0x02
-	DRDATypeNInteger    uint8 = 0x03
-	DRDATypeSmall       uint8 = 0x04
-	DRDATypeNSmall      uint8 = 0x05
-	DRDAType1ByteInt    uint8 = 0x06
-	DRDATypeN1ByteInt   uint8 = 0x07
-	DRDATypeFloat8      uint8 = 0x0A
-	DRDATypeNFloat8     uint8 = 0x0B
-	DRDATypeFloat4      uint8 = 0x0C
-	DRDATypeNFloat4     uint8 = 0x0D
-	DRDATypeDecimal     uint8 = 0x0E
-	DRDATypeNDecimal    uint8 = 0x0F
-	DRDATypeInteger8    uint8 = 0x16
-	DRDATypeNInteger8   uint8 = 0x17
-	DRDATypeRowID       uint8 = 0x1E
-	DRDATypeNRowID      uint8 = 0x1F
-	DRDATypeDate        uint8 = 0x20
-	DRDATypeNDate       uint8 = 0x21
-	DRDATypeTime        uint8 = 0x22
-	DRDATypeNTime       uint8 = 0x23
-	DRDATypeTimestamp   uint8 = 0x24
-	DRDATypeNTimestamp  uint8 = 0x25
-	DRDATypeFixByte     uint8 = 0x26
-	DRDATypeNFixByte    uint8 = 0x27
-	DRDATypeVarByte     uint8 = 0x28
-	DRDATypeNVarByte    uint8 = 0x29
-	DRDATypeLongVarByte uint8 = 0x2A
+	DRDATypeInteger      uint8 = 0x02
+	DRDATypeNInteger     uint8 = 0x03
+	DRDATypeSmall        uint8 = 0x04
+	DRDATypeNSmall       uint8 = 0x05
+	DRDAType1ByteInt     uint8 = 0x06
+	DRDATypeN1ByteInt    uint8 = 0x07
+	DRDATypeFloat8       uint8 = 0x0A
+	DRDATypeNFloat8      uint8 = 0x0B
+	DRDATypeFloat4       uint8 = 0x0C
+	DRDATypeNFloat4      uint8 = 0x0D
+	DRDATypeDecimal      uint8 = 0x0E
+	DRDATypeNDecimal     uint8 = 0x0F
+	DRDATypeInteger8     uint8 = 0x16
+	DRDATypeNInteger8    uint8 = 0x17
+	DRDATypeLOBLOC       uint8 = 0x18
+	DRDATypeNLOBLOC      uint8 = 0x19
+	DRDATypeCLOBLOC      uint8 = 0x1A
+	DRDATypeNCLOBLOC     uint8 = 0x1B
+	DRDATypeDBCSCLOBLOC  uint8 = 0x1C
+	DRDATypeNDBCSCLOBLOC uint8 = 0x1D
+	DRDATypeRowID        uint8 = 0x1E
+	DRDATypeNRowID       uint8 = 0x1F
+	DRDATypeDate         uint8 = 0x20
+	DRDATypeNDate        uint8 = 0x21
+	DRDATypeTime         uint8 = 0x22
+	DRDATypeNTime        uint8 = 0x23
+	DRDATypeTimestamp    uint8 = 0x24
+	DRDATypeNTimestamp   uint8 = 0x25
+	DRDATypeFixByte      uint8 = 0x26
+	DRDATypeNFixByte     uint8 = 0x27
+	DRDATypeVarByte      uint8 = 0x28
+	DRDATypeNVarByte     uint8 = 0x29
+	DRDATypeLongVarByte  uint8 = 0x2A
 	DRDATypeNLongVarByte uint8 = 0x2B
-	DRDATypeChar        uint8 = 0x30
-	DRDATypeNChar       uint8 = 0x31
-	DRDATypeVarChar     uint8 = 0x32
-	DRDATypeNVarChar    uint8 = 0x33
-	DRDATypeLong        uint8 = 0x34
-	DRDATypeNLong       uint8 = 0x35
-	DRDATypeGraphic     uint8 = 0x36
-	DRDATypeNGraphic    uint8 = 0x37
-	DRDATypeVarGraph    uint8 = 0x38
-	DRDATypeNVarGraph   uint8 = 0x39
-	DRDATypeLonGraph    uint8 = 0x3A
-	DRDATypeNLonGraph   uint8 = 0x3B
-	DRDATypeMix         uint8 = 0x3C
-	DRDATypeNMix        uint8 = 0x3D
-	DRDATypeVarMix      uint8 = 0x3E
-	DRDATypeNVarMix     uint8 = 0x3F
-	DRDATypeLongMix     uint8 = 0x40
-	DRDATypeNLongMix    uint8 = 0x41
-	DRDATypeCStrMix     uint8 = 0x42
-	DRDATypeNCStrMix    uint8 = 0x43
-	DRDATypeBoolean     uint8 = 0xBE
-	DRDATypeNBoolean    uint8 = 0xBF
-	DRDATypeFixBytes    uint8 = 0xC0
-	DRDATypeNFixBytes   uint8 = 0xC1
-	DRDATypeVarBinary   uint8 = 0xC2
-	DRDATypeNVarBinary  uint8 = 0xC3
-	DRDATypeLOBBytes    uint8 = 0xC8
-	DRDATypeNLOBBytes   uint8 = 0xC9
-	DRDATypeLOBCSBCS    uint8 = 0xCE
-	DRDATypeNLOBCSBCS   uint8 = 0xCF
+	DRDATypeChar         uint8 = 0x30
+	DRDATypeNChar        uint8 = 0x31
+	DRDATypeVarChar      uint8 = 0x32
+	DRDATypeNVarChar     uint8 = 0x33
+	DRDATypeLong         uint8 = 0x34
+	DRDATypeNLong        uint8 = 0x35
+	DRDATypeGraphic      uint8 = 0x36
+	DRDATypeNGraphic     uint8 = 0x37
+	DRDATypeVarGraph     uint8 = 0x38
+	DRDATypeNVarGraph    uint8 = 0x39
+	DRDATypeLonGraph     uint8 = 0x3A
+	DRDATypeNLonGraph    uint8 = 0x3B
+	DRDATypeMix          uint8 = 0x3C
+	DRDATypeNMix         uint8 = 0x3D
+	DRDATypeVarMix       uint8 = 0x3E
+	DRDATypeNVarMix      uint8 = 0x3F
+	DRDATypeLongMix      uint8 = 0x40
+	DRDATypeNLongMix     uint8 = 0x41
+	DRDATypeCStrMix      uint8 = 0x42
+	DRDATypeNCStrMix     uint8 = 0x43
+	DRDATypeBoolean      uint8 = 0xBE
+	DRDATypeNBoolean     uint8 = 0xBF
+	DRDATypeFixBytes     uint8 = 0xC0
+	DRDATypeNFixBytes    uint8 = 0xC1
+	DRDATypeVarBinary    uint8 = 0xC2
+	DRDATypeNVarBinary   uint8 = 0xC3
+	DRDATypeLOBBytes     uint8 = 0xC8
+	DRDATypeNLOBBytes    uint8 = 0xC9
+	DRDATypeLOBCSBCS     uint8 = 0xCE
+	DRDATypeNLOBCSBCS    uint8 = 0xCF
 )
 
 // IsNullableDRDAType returns true if the DRDA wire type supports NULL indicators.
@@ -84,7 +90,9 @@ func IsNullableDRDAType(t uint8) bool {
 		DRDATypeNVarGraph, DRDATypeNLonGraph, DRDATypeNMix,
 		DRDATypeNVarMix, DRDATypeNLongMix, DRDATypeNCStrMix,
 		DRDATypeNBoolean, DRDATypeNFixBytes, DRDATypeNVarBinary,
-		DRDATypeNLOBBytes, DRDATypeNLOBCSBCS:
+		DRDATypeNLOBLOC, DRDATypeNCLOBLOC, DRDATypeNDBCSCLOBLOC,
+		DRDATypeNLOBBytes, DRDATypeNLOBCSBCS,
+		0xF5, 0xF7, 0xF9:
 		return true
 	default:
 		return false
@@ -250,6 +258,22 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 			return nil, err
 		}
 		return DecodePackedDecimal(buf, scale), nil
+
+	case DRDATypeLOBLOC, DRDATypeNLOBLOC, DRDATypeCLOBLOC, DRDATypeNCLOBLOC,
+		DRDATypeDBCSCLOBLOC, DRDATypeNDBCSCLOBLOC,
+		DRDATypeLOBBytes, DRDATypeNLOBBytes, DRDATypeLOBCSBCS, DRDATypeNLOBCSBCS,
+		0x10, 0x11, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9:
+		ln := int(binary.BigEndian.Uint16(ps)) & 0x7FFF
+		if ln > 0 {
+			buf := make([]byte, ln)
+			if _, err := io.ReadFull(r, buf); err != nil {
+				return nil, err
+			}
+		}
+		if drdaType == DRDATypeLOBCSBCS || drdaType == DRDATypeNLOBCSBCS || drdaType == 0xF6 || drdaType == 0xF7 {
+			return "", nil
+		}
+		return []byte{}, nil
 
 	default:
 		// Fallback: try reading ps length

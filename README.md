@@ -18,7 +18,8 @@
 | Feature | Status | Notes |
 | :--- | :---: | :--- |
 | **Pure Go Engine** | ✅ Supported | Zero CGO, native DRDA/DDM binary protocol parser |
-| **Authentication & Handshake** | ✅ Supported | SECMEC Plain User/Password (SECMEC 3), EBCDIC CP500 exchange |
+| **Authentication & Handshake** | ✅ Supported | SECMEC 3 (Plain), SECMEC 9 (Diffie-Hellman + DES Encrypted Password), EBCDIC CP500 exchange |
+| **TLS/SSL Encryption** | ✅ Supported | Native TLS/SSL socket wrapper (`crypto/tls`) with custom CA & cert support |
 | **`database/sql` Registration** | ✅ Supported | `sql.Register("db2", ...)` with URL and Key-Value DSN parsers |
 | **Connection Pooling & Liveness** | ✅ Supported | `db.PingContext()`, `driver.Connector`, connection lifecycle |
 | **Transactions** | ✅ Supported | `db.BeginTx()`, `tx.Commit()` (`RDBCMM`), `tx.Rollback()` (`RDBRLLBCK`) |
@@ -26,8 +27,8 @@
 | **Query & Rows Stream** | ✅ Supported | `db.QueryContext()`, `db.QueryRowContext()`, `rows.Scan()`, `rows.Columns()` |
 | **Type Conversions & NULLs** | ✅ Supported | Integers, Strings/Varchars, Floats, Dates, Timestamps, Decimals, Booleans, `NULL` values |
 | **Prepared Statements & Params** | ✅ Supported | `db.PrepareContext()`, `stmt.ExecContext()`, `stmt.QueryContext()`, `?` binding (`FDODSC`, `FDODTA`, `SQLDTA`) |
-| **Encrypted Auth (SECMEC 9/7) & SSL** | 🚧 *Planned* | Planned for Phase 4 (Milestone M4) |
-| **LOBs (BLOB/CLOB/DBCLOB)** | 🚧 *Planned* | Planned for Phase 4 (Milestone M4) |
+| **LOBs (BLOB / CLOB / DBCLOB)** | ✅ Supported | Binary and long text streaming via DRDA `EXTDTA` (`0x146C`) packet collection |
+| **Automated Benchmarks & CI** | 🚧 *Planned* | Planned for Phase 5 (Milestone M5) |
 
 ---
 
@@ -128,6 +129,11 @@ Once the container is active, you can run the live examples:
 - **Prepared Statements & Parameter Binding Demo:**
   ```bash
   go run examples/params_demo/main.go
+  ```
+
+- **Large Objects (BLOB & CLOB) Demo:**
+  ```bash
+  go run examples/lob_demo/main.go
   ```
 
 ---

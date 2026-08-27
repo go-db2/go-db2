@@ -184,31 +184,45 @@ func PackACCSEC(database string, secmec uint16, sectkn []byte) ([]byte, error) {
 
 // PackSECCHK builds the SECCHK (Security Check) DDM command for user authentication.
 func PackSECCHK(secmec uint16, sectkn []byte, database, user, password string, enc StringEncoding) ([]byte, error) {
+	return PackSECCHKWithBytes(secmec, sectkn, database, user, []byte(password), false, enc)
+}
+
+// PackSECCHKWithBytes builds the SECCHK DDM command supporting raw encrypted password bytes and security tokens.
+func PackSECCHKWithBytes(secmec uint16, sectkn []byte, database, user string, passwordBytes []byte, isEncrypted bool, enc StringEncoding) ([]byte, error) {
 	var body []byte
 
 	// 1. Security Mechanism (SECMEC)
 	body = append(body, PackUint16(CodePointSECMEC, secmec)...)
 
-	// 2. Database Name (RDBNAM)
+	// 2. Security Token (SECTKN) if provided (for SECMEC 9)
+	if len(sectkn) > 0 {
+		body = append(body, PackBytes(CodePointSECTKN, sectkn)...)
+	}
+
+	// 3. Database Name (RDBNAM)
 	rdbNamObj, err := PackString(CodePointRDBNAM, database, enc)
 	if err != nil {
 		return nil, err
 	}
 	body = append(body, rdbNamObj...)
 
-	// 3. User ID (USRID)
+	// 4. User ID (USRID)
 	usrIdObj, err := PackString(CodePointUSRID, user, enc)
 	if err != nil {
 		return nil, err
 	}
 	body = append(body, usrIdObj...)
 
-	// 4. Password (PASSWORD)
-	pwdObj, err := PackString(CodePointPASSWORD, password, enc)
-	if err != nil {
-		return nil, err
+	// 5. Password (PASSWORD)
+	if isEncrypted {
+		body = append(body, PackBytes(CodePointPASSWORD, passwordBytes)...)
+	} else {
+		pwdObj, err := PackString(CodePointPASSWORD, string(passwordBytes), enc)
+		if err != nil {
+			return nil, err
+		}
+		body = append(body, pwdObj...)
 	}
-	body = append(body, pwdObj...)
 
 	return PackDDMObject(CodePointSECCHK, body), nil
 }

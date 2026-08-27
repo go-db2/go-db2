@@ -43,6 +43,8 @@ func FDODSC(sqlType types.SQLType, sqllen int64, prec, scale int) []byte {
 		return []byte{0xBF, 0x00, 0x01}
 	case types.SQLTypeBlob, types.SQLTypeNBlob:
 		return []byte{0xC9, 0x80, 0x02}
+	case types.SQLTypeClob, types.SQLTypeNClob, types.SQLTypeDbClob, types.SQLTypeNDbClob:
+		return []byte{0x39, 0x3F, 0xFF}
 	case types.SQLTypeBinary, types.SQLTypeNBinary:
 		return []byte{0x27, byte(sqllen >> 8), byte(sqllen & 0xFF)}
 	case types.SQLTypeVarBinary, types.SQLTypeNVarBinary:
@@ -70,7 +72,8 @@ func FDODTA(sqlType types.SQLType, sqllen int64, prec, scale int, val any, endia
 	}
 
 	switch sqlType {
-	case types.SQLTypeVarChar, types.SQLTypeNVarChar, types.SQLTypeChar, types.SQLTypeNChar:
+	case types.SQLTypeVarChar, types.SQLTypeNVarChar, types.SQLTypeChar, types.SQLTypeNChar,
+		types.SQLTypeClob, types.SQLTypeNClob, types.SQLTypeDbClob, types.SQLTypeNDbClob:
 		switch v := val.(type) {
 		case []byte:
 			b := make([]byte, 3+len(v))

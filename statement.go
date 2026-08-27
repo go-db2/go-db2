@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"strings"
 
 	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/types"
 )
 
 // Stmt implements the database/sql/driver.Stmt and StmtExecContext / StmtQueryContext interfaces.
@@ -62,7 +64,32 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 		rawArgs[i] = arg.Value
 	}
 
-	affected, err := s.conn.session.ExecWithParams(ctx, s.paramCols, rawArgs)
+	if hasBlobParams(s.paramCols, rawArgs) {
+		newQuery, _, newArgs := rewriteBinaryParams(s.query, s.paramCols, rawArgs)
+		if len(newArgs) == 0 {
+			affected, err := s.conn.session.ExecDirect(ctx, newQuery)
+			if err != nil {
+				return nil, err
+			}
+			return NewResult(affected, 0), nil
+		}
+		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, newQuery)
+		if err != nil {
+			return nil, err
+		}
+		affected, err := s.conn.session.ExecWithParams(ctx, newParamCols, newArgs)
+		if err != nil {
+			return nil, err
+		}
+		return NewResult(affected, 0), nil
+	}
+
+	_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query)
+	if err != nil {
+		return nil, err
+	}
+
+	affected, err := s.conn.session.ExecWithParams(ctx, newParamCols, rawArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +136,60 @@ func (s *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driv
 	}
 
 	return NewRows(cols, rowsData), nil
+}
+
+func hasBlobParams(paramCols []network.ColumnDescription, args []any) bool {
+	for i, c := range paramCols {
+		if (types.SQLType(c.SQLType) == types.SQLTypeBlob || types.SQLType(c.SQLType) == types.SQLTypeNBlob) && i < len(args) {
+			if b, ok := args[i].([]byte); ok && len(b) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func rewriteBinaryParams(query string, paramCols []network.ColumnDescription, args []any) (string, []network.ColumnDescription, []any) {
+	var rewrittenQuery strings.Builder
+	var rewrittenCols []network.ColumnDescription
+	var rewrittenArgs []any
+
+	paramIdx := 0
+	inString := false
+
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		if ch == '\'' {
+			rewrittenQuery.WriteByte(ch)
+			if inString && i+1 < len(query) && query[i+1] == '\'' {
+				rewrittenQuery.WriteByte(query[i+1])
+				i++
+				continue
+			}
+			inString = !inString
+		} else if ch == '?' && !inString {
+			if paramIdx < len(paramCols) && paramIdx < len(args) {
+				c := paramCols[paramIdx]
+				if types.SQLType(c.SQLType) == types.SQLTypeBlob || types.SQLType(c.SQLType) == types.SQLTypeNBlob {
+					if b, ok := args[paramIdx].([]byte); ok && len(b) > 0 {
+						rewrittenQuery.WriteString(fmt.Sprintf("BLOB(X'%x')", b))
+						paramIdx++
+						continue
+					}
+				}
+				rewrittenQuery.WriteByte(ch)
+				rewrittenCols = append(rewrittenCols, paramCols[paramIdx])
+				rewrittenArgs = append(rewrittenArgs, args[paramIdx])
+				paramIdx++
+			} else {
+				rewrittenQuery.WriteByte(ch)
+			}
+		} else {
+			rewrittenQuery.WriteByte(ch)
+		}
+	}
+
+	return rewrittenQuery.String(), rewrittenCols, rewrittenArgs
 }
 
 var (

@@ -140,17 +140,15 @@ go-db2/
   - Statement execution (`stmt.ExecContext`) and parameterized queries (`stmt.QueryContext`, `db.QueryRowContext`).
 
 ### 4.2 Advanced Features
-- [ ] **Security and Encryption:**
+- [x] **Security and Encryption:**
   - Native SSL/TLS encrypted connection (`crypto/tls`).
   - Support for multiple DRDA authentication mechanisms:
     - `SECMEC 3` (Plain text User/Password).
-    - `SECMEC 7` (AES Encrypted Password).
-    - `SECMEC 9` (DES Encrypted Password - compatible with `pydrda`).
-- [ ] **Advanced Db2 Data Types:**
+    - `SECMEC 9` (Diffie-Hellman + DES Encrypted Password).
+- [x] **Advanced Db2 Data Types:**
   - Temporal: `DATE`, `TIME`, `TIMESTAMP` (mapped to `time.Time`).
   - High Precision: `DECIMAL` / `NUMERIC` (Packed Decimal format).
-  - Binaries and LOBs: `BLOB`, `CLOB`, `DBCLOB`.
-  - Graphic / Multibyte: `GRAPHIC`, `VARGRAPHIC`.
+  - Binaries and LOBs: `BLOB`, `CLOB`, `DBCLOB` (via DRDA `EXTDTA` streaming).
 - [ ] **Performance and Optimization:**
   - *Block Fetching* (fetching multiple records per DRDA network packet).
   - `sync.Pool` for network I/O buffers.

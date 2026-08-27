@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-db2/go-db2/converters"
+	"github.com/go-db2/go-db2/network/security"
 	"github.com/go-db2/go-db2/types"
 )
 
@@ -53,6 +54,7 @@ type Session struct {
 	pkgcnstkn     string
 	pkgsn         uint16
 	qryblksz      uint32
+	rdbinttkn     []byte
 	closed        bool
 }
 
@@ -201,8 +203,22 @@ func (s *Session) handshake(ctx context.Context) error {
 		}
 	}
 
-	// 3. Pack SECCHK
-	secchk, err := PackSECCHK(s.secmec, secTkn, s.cfg.Database, s.cfg.User, s.cfg.Password, s.encoding)
+	// 3. Pack SECCHK (supporting SECMEC 9 with DH key exchange & DES encryption)
+	var secchk []byte
+	if (s.secmec == SecMecEUSRIDPWD || s.secmec == 9) && len(secTkn) >= 20 {
+		clientPriv, privErr := security.GenerateDHPrivateKey()
+		if privErr != nil {
+			return fmt.Errorf("failed to generate DH private key: %w", privErr)
+		}
+		clientPub := security.CalculateDHPublicKey(clientPriv)
+		encPassword, encErr := security.EncryptPasswordSECMEC9(s.cfg.Password, secTkn, clientPriv)
+		if encErr != nil {
+			return fmt.Errorf("failed to encrypt password with SECMEC 9: %w", encErr)
+		}
+		secchk, err = PackSECCHKWithBytes(s.secmec, clientPub, s.cfg.Database, s.cfg.User, encPassword, true, s.encoding)
+	} else {
+		secchk, err = PackSECCHK(s.secmec, secTkn, s.cfg.Database, s.cfg.User, s.cfg.Password, s.encoding)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to pack SECCHK: %w", err)
 	}
@@ -235,6 +251,12 @@ func (s *Session) handshake(ctx context.Context) error {
 			sub, _ := ParseDDMReply(r.Data)
 			if secChkCd, ok := sub[CodePointSECCHKCD]; ok && len(secChkCd) > 0 && secChkCd[0] != 0 {
 				return fmt.Errorf("authentication failed: SECCHKCD=%d", secChkCd[0])
+			}
+		}
+		if r.CodePoint == CodePointACCRDBRM {
+			sub, _ := ParseDDMReply(r.Data)
+			if inttkn, ok := sub[CodePointRDBINTTKN]; ok {
+				s.rdbinttkn = inttkn
 			}
 		}
 		if r.CodePoint == CodePointRDBAFLRM || r.CodePoint == CodePointRDBATHRM {
@@ -505,6 +527,10 @@ func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescript
 	var columns []ColumnDescription
 	var fields []FieldDescriptor
 	var rows [][]any
+	var extdtaList [][]byte
+	needCNTQRY := false
+	var qryinsid uint64
+	var cntqryID uint16 = 1
 
 	for _, r := range replies {
 		if r.CodePoint == CodePointSQLDARD {
@@ -521,6 +547,8 @@ func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescript
 				return nil, nil, err
 			}
 			fields = flds
+		} else if r.CodePoint == CodePointEXTDTA {
+			extdtaList = append(extdtaList, r.Data)
 		} else if r.CodePoint == CodePointQRYDTA {
 			reader := bytes.NewReader(r.Data)
 			for reader.Len() >= 2 {
@@ -536,12 +564,19 @@ func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescript
 				for i, f := range fields {
 					val, err := converters.DecodeField(f.Type, f.PS, reader, s.endian)
 					if err != nil {
-						return nil, nil, fmt.Errorf("failed to decode column %d: %w", i+1, err)
+						return nil, nil, fmt.Errorf("failed to decode column %d (Type=0x%02X, PS=%x, RemainingBytes=%d): %w", i+1, f.Type, f.PS, reader.Len(), err)
 					}
 					row[i] = val
 				}
 				rows = append(rows, row)
 			}
+		} else if r.CodePoint == CodePointOPNQRYRM {
+			sub, _ := ParseDDMReply(r.Data)
+			if insidBytes, ok := sub[CodePointQRYINSID]; ok && len(insidBytes) >= 8 {
+				qryinsid = binary.BigEndian.Uint64(insidBytes)
+			}
+			needCNTQRY = true
+			cntqryID = r.Header.CorrelationID
 		} else if r.CodePoint == CodePointSQLERRRM {
 			sub, _ := ParseDDMReply(r.Data)
 			return nil, nil, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
@@ -554,6 +589,50 @@ func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescript
 				return nil, nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
 			}
 		}
+	}
+
+	if needCNTQRY {
+		cntqry := PackCNTQRY(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database, s.qryblksz, qryinsid)
+		_, err = WriteRequestDSS(s.conn, cntqry, cntqryID, false, true)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		cntReplies, err := s.readReplyChain()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		for _, r := range cntReplies {
+			if r.CodePoint == CodePointEXTDTA {
+				extdtaList = append(extdtaList, r.Data)
+			} else if r.CodePoint == CodePointQRYDTA {
+				reader := bytes.NewReader(r.Data)
+				for reader.Len() >= 2 {
+					var rowHdr [2]byte
+					if _, err := io.ReadFull(reader, rowHdr[:]); err != nil {
+						break
+					}
+					if rowHdr[0] != 0xFF {
+						break
+					}
+
+					row := make([]any, len(fields))
+					for i, f := range fields {
+						val, err := converters.DecodeField(f.Type, f.PS, reader, s.endian)
+						if err != nil {
+							return nil, nil, fmt.Errorf("failed to decode column %d in QueryDirect CNTQRY (Type=0x%02X, PS=%x, RemainingBytes=%d): %w", i+1, f.Type, f.PS, reader.Len(), err)
+						}
+						row[i] = val
+					}
+					rows = append(rows, row)
+				}
+			}
+		}
+	}
+
+	if len(extdtaList) > 0 {
+		stitchEXTDTA(fields, rows, extdtaList)
 	}
 
 	return columns, rows, nil
@@ -743,6 +822,7 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 	var columns []ColumnDescription = outputCols
 	var fields []FieldDescriptor
 	var rows [][]any
+	var extdtaList [][]byte
 	needCNTQRY := false
 	var qryinsid uint64
 	var cntqryID uint16 = 1
@@ -762,6 +842,8 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 				return nil, nil, err
 			}
 			fields = flds
+		} else if r.CodePoint == CodePointEXTDTA {
+			extdtaList = append(extdtaList, r.Data)
 		} else if r.CodePoint == CodePointOPNQRYRM {
 			sub, _ := ParseDDMReply(r.Data)
 			if insidBytes, ok := sub[CodePointQRYINSID]; ok && len(insidBytes) >= 8 {
@@ -817,7 +899,9 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 		}
 
 		for _, r := range cntReplies {
-			if r.CodePoint == CodePointQRYDTA {
+			if r.CodePoint == CodePointEXTDTA {
+				extdtaList = append(extdtaList, r.Data)
+			} else if r.CodePoint == CodePointQRYDTA {
 				reader := bytes.NewReader(r.Data)
 				for reader.Len() >= 2 {
 					var rowHdr [2]byte
@@ -832,7 +916,7 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 					for i, f := range fields {
 						val, err := converters.DecodeField(f.Type, f.PS, reader, s.endian)
 						if err != nil {
-							return nil, nil, fmt.Errorf("failed to decode column %d: %w", i+1, err)
+							return nil, nil, fmt.Errorf("failed to decode column %d in CNTQRY (Type=0x%02X, PS=%x, RemainingBytes=%d): %w", i+1, f.Type, f.PS, reader.Len(), err)
 						}
 						row[i] = val
 					}
@@ -840,6 +924,10 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 				}
 			}
 		}
+	}
+
+	if len(extdtaList) > 0 {
+		stitchEXTDTA(fields, rows, extdtaList)
 	}
 
 	// Send commit to close query lock
@@ -850,6 +938,64 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 	}
 
 	return columns, rows, nil
+}
+
+func isLOBType(t uint8) bool {
+	switch t {
+	case converters.DRDATypeLOBLOC, converters.DRDATypeNLOBLOC,
+		converters.DRDATypeCLOBLOC, converters.DRDATypeNCLOBLOC,
+		converters.DRDATypeDBCSCLOBLOC, converters.DRDATypeNDBCSCLOBLOC,
+		converters.DRDATypeLOBBytes, converters.DRDATypeNLOBBytes,
+		converters.DRDATypeLOBCSBCS, converters.DRDATypeNLOBCSBCS,
+		0x10, 0x11, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9:
+		return true
+	default:
+		return false
+	}
+}
+
+func isCLOBType(t uint8) bool {
+	switch t {
+	case converters.DRDATypeCLOBLOC, converters.DRDATypeNCLOBLOC,
+		converters.DRDATypeDBCSCLOBLOC, converters.DRDATypeNDBCSCLOBLOC,
+		converters.DRDATypeLOBCSBCS, converters.DRDATypeNLOBCSBCS,
+		0xF6, 0xF7, 0xF8, 0xF9:
+		return true
+	default:
+		return false
+	}
+}
+
+func stitchEXTDTA(fields []FieldDescriptor, rows [][]any, extdtaList [][]byte) {
+	var lobIndices []int
+	for i, f := range fields {
+		if isLOBType(f.Type) {
+			lobIndices = append(lobIndices, i)
+		}
+	}
+	if len(lobIndices) == 0 {
+		return
+	}
+
+	extIdx := 0
+	for rowIdx := range rows {
+		for _, colIdx := range lobIndices {
+			if rows[rowIdx][colIdx] != nil && extIdx < len(extdtaList) {
+				data := extdtaList[extIdx]
+				// EXTDTA data starts with a 1-byte status flag (0x00 = valid data)
+				if len(data) > 0 && data[0] == 0x00 {
+					data = data[1:]
+				}
+				fType := fields[colIdx].Type
+				if isCLOBType(fType) {
+					rows[rowIdx][colIdx] = string(data)
+				} else {
+					rows[rowIdx][colIdx] = data
+				}
+				extIdx++
+			}
+		}
+	}
 }
 
 // Close gracefully closes the session and underlying network connection.
