@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main, dev ]
 
+env:
+  ACTIONS_RUNNER_FORCED_NODE_VERSION: node24
+
 jobs:
   test:
     name: Unit & Race Tests
@@ -22,7 +25,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go-version }}
-          cache: true
+          cache: false
 
       - name: Go Format Check
         run: |
@@ -49,7 +52,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-          cache: true
+          cache: false
 
       - name: Start IBM Db2 Container
         run: |
@@ -78,3 +81,4 @@ jobs:
           go run examples/crud_demo/main.go
           go run examples/params_demo/main.go
           go run examples/lob_demo/main.go
+          go run examples/sp_demo/main.go
