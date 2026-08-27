@@ -186,6 +186,11 @@ gantt
     Performance Optimizations & Benchmarks   :done, f5_2, after f5_1, 5d
     CI/CD Automation with GitHub Actions     :done, f5_3, after f5_2, 5d
     Release v0.1.0 (Public MVP)              :done, milestone, after f5_3, 0d
+    section Phase 6: Advanced DRDA & Enterprise Capabilities
+    Multi-Result Sets (RowsNextResultSet)    :done, f6_1, after f5_3, 5d
+    Adaptive Block Fetching (QRYBLKSZ)       :done, f6_2, after f6_1, 5d
+    Query Cancellation (SQLINTR)             :done, f6_3, after f6_2, 5d
+    ORM & Struct Mapping (sqlx demo)         :done, f6_4, after f6_3, 5d
 ```
 
 ### Milestone Breakdown
@@ -197,6 +202,7 @@ gantt
 | **M3 - Types & Statements** | ✅ Supported | Full support for everyday CRUD operations | `db.Prepare()`, `?` placeholders, conversions for integers, text, dates, decimals, and booleans. |
 | **M4 - Security & LOBs** | ✅ Supported | Enterprise and cloud readiness | SSL/TLS support, encrypted password authentication (SECMEC 9), `BLOB`/`CLOB` reading and streaming via `EXTDTA`. |
 | **M5 - Quality, SPs & Release** | ✅ Supported | Production quality, Stored Procedures & CI | `CALL` with `sql.Out` (`IN`/`OUT`/`INOUT`), memory benchmarks (`benchmark_test.go`), and GitHub Actions CI workflow. |
+| **M6 - Advanced DRDA & ORMs** | ✅ Supported | Enterprise scalability, multi-result sets & resilience | `driver.RowsNextResultSet` for multi-cursor SPs, configurable block size (`QRYBLKSZ`), `SQLINTR` cancellation, and struct mapping demo. |
 
 ---
 

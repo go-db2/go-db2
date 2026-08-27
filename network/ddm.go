@@ -420,6 +420,12 @@ func PackOPNQRY(pkgid, pkgcnstkn string, pkgsn uint16, database string, qryblksz
 	return PackDDMObject(CodePointOPNQRY, body)
 }
 
+// PackSQLINTR builds an SQLINTR (SQL Interrupt Request) DDM command to cancel active query.
+func PackSQLINTR(pkgid, pkgcnstkn string, pkgsn uint16, database string) []byte {
+	body := PackPKGNAMCSN(database, pkgid, pkgcnstkn, pkgsn)
+	return PackDDMObject(CodePointSQLINTR, body)
+}
+
 // ColumnDescription holds column metadata decoded from SQLDARD.
 type ColumnDescription struct {
 	Name      string

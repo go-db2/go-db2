@@ -29,6 +29,9 @@
 | **Prepared Statements & Params** | ✅ Supported | `db.PrepareContext()`, `stmt.ExecContext()`, `stmt.QueryContext()`, `?` binding (`FDODSC`, `FDODTA`, `SQLDTA`) |
 | **LOBs (BLOB / CLOB / DBCLOB)** | ✅ Supported | Binary and long text streaming via DRDA `EXTDTA` (`0x146C`) packet collection |
 | **Stored Procedures & `sql.Out`** | ✅ Supported | `CALL procedure(?, ...)` with `sql.Out` for `IN`, `OUT`, and `INOUT` parameters via DRDA `SQLDTARD` |
+| **Multi-Result Sets** | ✅ Supported | Full `driver.RowsNextResultSet` implementation for procedures returning multiple cursors |
+| **Adaptive Block Fetching** | ✅ Supported | Configurable buffer block size via DSN (`?block_size=131072`) with `QRYBLKSZ` |
+| **Query Cancellation (`SQLINTR`)** | ✅ Supported | Asynchronous cancellation signal and timeout aborts via DRDA `SQLINTR` (`0x2007`) |
 | **Performance & Benchmarks** | ✅ Supported | Stack-allocated buffers, `BuildSQLDTA` optimizations, `benchmark_test.go` |
 | **Automated CI/CD Pipeline** | ✅ Supported | Multi-version Go matrix (`1.22`, `1.23`, `1.24`), race detector, live Db2 container in GitHub Actions |
 
@@ -141,6 +144,16 @@ Once the container is active, you can run the live examples:
 - **Stored Procedures & `sql.Out` Demo:**
   ```bash
   go run examples/sp_demo/main.go
+  ```
+
+- **Multi-Result Sets (`driver.RowsNextResultSet`) Demo:**
+  ```bash
+  go run examples/sp_multi_results_demo/main.go
+  ```
+
+- **Struct Mapping & ORM Compatibility Demo:**
+  ```bash
+  go run examples/sqlx_demo/main.go
   ```
 
 - **Performance Benchmarks (Latency & Memory Allocs):**
