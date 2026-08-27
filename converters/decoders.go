@@ -3,6 +3,7 @@ package converters
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -106,8 +107,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		if _, err := io.ReadFull(r, nullIndicator); err != nil {
 			return nil, err
 		}
-		if nullIndicator[0] == 0xFF {
-			return nil, nil // Null value
+		if nullIndicator[0] == 0xFF || nullIndicator[0] == 0x80 || nullIndicator[0] == 0x7F {
+			return nil, nil // Null or omitted output value
 		}
 	}
 
@@ -291,35 +292,129 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 
 // DecodePackedDecimal converts IBM Packed Decimal bytes into a decimal string.
 func DecodePackedDecimal(b []byte, scale int) string {
-	var digits bytes.Buffer
-	for i, by := range b {
-		high := (by >> 4) & 0x0F
-		low := by & 0x0F
+	if len(b) == 0 {
+		return "0"
+	}
 
-		if i == len(b)-1 {
-			// Last byte: high nibble is digit, low nibble is sign (0xC, 0xF = +, 0xD = -)
-			digits.WriteByte('0' + high)
-			sign := ""
-			if low == 0x0D || low == 0x0B {
-				sign = "-"
-			}
-			numStr := strings.TrimLeft(digits.String(), "0")
-			if numStr == "" {
-				numStr = "0"
-			}
-			if scale > 0 {
-				if len(numStr) <= scale {
-					numStr = "0." + strings.Repeat("0", scale-len(numStr)) + numStr
-				} else {
-					dotPos := len(numStr) - scale
-					numStr = numStr[:dotPos] + "." + numStr[dotPos:]
-				}
-			}
-			return sign + numStr
+	var digits [64]byte
+	pos := 0
+
+	for i := 0; i < len(b)-1; i++ {
+		digits[pos] = '0' + ((b[i] >> 4) & 0x0F)
+		digits[pos+1] = '0' + (b[i] & 0x0F)
+		pos += 2
+	}
+
+	lastByte := b[len(b)-1]
+	digits[pos] = '0' + ((lastByte >> 4) & 0x0F)
+	pos++
+
+	sign := lastByte & 0x0F
+	isNegative := sign == 0x0D || sign == 0x0B
+
+	start := 0
+	for start < pos-1 && digits[start] == '0' {
+		start++
+	}
+
+	significant := digits[start:pos]
+
+	var res strings.Builder
+	if isNegative {
+		res.WriteByte('-')
+	}
+
+	if scale <= 0 {
+		res.Write(significant)
+		return res.String()
+	}
+
+	if len(significant) <= scale {
+		res.WriteString("0.")
+		for k := 0; k < scale-len(significant); k++ {
+			res.WriteByte('0')
+		}
+		res.Write(significant)
+	} else {
+		dotPos := len(significant) - scale
+		res.Write(significant[:dotPos])
+		res.WriteByte('.')
+		res.Write(significant[dotPos:])
+	}
+
+	return res.String()
+}
+
+// ParseSQLDTARD parses an SQLDTARD (0x2413) DDM reply payload containing output parameter values.
+func ParseSQLDTARD(data []byte, endian binary.ByteOrder) ([]any, error) {
+	if len(data) < 4 {
+		return nil, errors.New("SQLDTARD payload too short")
+	}
+
+	offset := 0
+	var dscBytes []byte
+	var dtaBytes []byte
+
+	for offset < len(data) {
+		if offset+4 > len(data) {
+			break
+		}
+		objLen := int(binary.BigEndian.Uint16(data[offset : offset+2]))
+		codePoint := binary.BigEndian.Uint16(data[offset+2 : offset+4])
+
+		if objLen < 4 || offset+objLen > len(data) {
+			break
 		}
 
-		digits.WriteByte('0' + high)
-		digits.WriteByte('0' + low)
+		payload := data[offset+4 : offset+objLen]
+		if codePoint == 0x0010 { // FDODSC
+			dscBytes = payload
+		} else if codePoint == 0x147A { // FDODTA
+			dtaBytes = payload
+		}
+		offset += objLen
 	}
-	return digits.String()
+
+	if len(dtaBytes) == 0 {
+		return nil, nil
+	}
+
+	type triplet struct {
+		typ uint8
+		ps  []byte
+	}
+	var fields []triplet
+	if len(dscBytes) >= 3 && dscBytes[1] == 0x76 {
+		numFields := int(dscBytes[0])/3 - 1
+		pos := 3
+		for i := 0; i < numFields && pos+3 <= len(dscBytes); i++ {
+			typ := dscBytes[pos]
+			ps := dscBytes[pos+1 : pos+3]
+			fields = append(fields, triplet{typ: typ, ps: ps})
+			pos += 3
+		}
+	}
+
+	r := bytes.NewReader(dtaBytes)
+	if r.Len() >= 2 {
+		var hdr [2]byte
+		_, _ = io.ReadFull(r, hdr[:])
+		if hdr[0] != 0xFF {
+			r = bytes.NewReader(dtaBytes)
+		}
+	}
+
+	var results []any
+	for _, f := range fields {
+		if r.Len() == 0 {
+			break
+		}
+		val, err := DecodeField(f.typ, f.ps, r, endian)
+		if err != nil {
+			return results, err
+		}
+		results = append(results, val)
+	}
+
+	return results, nil
 }

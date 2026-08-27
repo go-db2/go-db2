@@ -705,13 +705,13 @@ func (s *Session) PrepareAndDescribe(ctx context.Context, sql string) ([]ColumnD
 	return outputCols, paramCols, nil
 }
 
-// ExecWithParams executes an already prepared statement with parameter arguments.
-func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescription, args []any) (int64, error) {
+// ExecWithParams executes a prepared statement with parameter arguments and returns affected rows and any output parameters.
+func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescription, args []any) (int64, []any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.closed || s.conn == nil {
-		return 0, errors.New("db2: connection is closed")
+		return 0, nil, errors.New("db2: connection is closed")
 	}
 
 	colTypes := make([]types.SQLType, len(paramCols))
@@ -728,51 +728,72 @@ func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescript
 
 	sqldta, err := converters.BuildSQLDTA(colTypes, colLens, precs, scales, args, s.endian)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
 	// 1. EXCSQLSTT
 	exc := PackEXCSQLSTT(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
-	_, err = WriteRequestDSS(s.conn, exc, 1, true, false)
+	curID, err := WriteRequestDSS(s.conn, exc, 1, true, false)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
 	// 2. SQLDTA
-	_, err = WriteRequestDSS(s.conn, sqldta, 1, false, false)
+	_, err = WriteRequestDSS(s.conn, sqldta, curID, false, false)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
 	// 3. RDBCMM
 	cmm := PackRDBCMM()
 	_, err = WriteRequestDSS(s.conn, cmm, 1, false, true)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
 	replies, err := s.readReplyChain()
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
-	var affectedRows int64
+	// If the server sent SQLDARD in the first chain, a second chain follows with SQLDTARD / SQLCARD
+	hasOnlyDARD := true
 	for _, r := range replies {
-		if r.CodePoint == CodePointSQLCARD {
-			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
-			if parseErr != nil {
-				return 0, parseErr
-			}
-			if code < 0 {
-				return 0, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
-			}
-		} else if r.CodePoint == CodePointSQLERRRM {
-			sub, _ := ParseDDMReply(r.Data)
-			return 0, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+		if r.CodePoint != CodePointSQLDARD {
+			hasOnlyDARD = false
+			break
+		}
+	}
+	if hasOnlyDARD {
+		replies2, err := s.readReplyChain()
+		if err == nil {
+			replies = append(replies, replies2...)
 		}
 	}
 
-	return affectedRows, nil
+	var affectedRows int64
+	var outValues []any
+	for _, r := range replies {
+		if r.CodePoint == CodePointSQLDTARD {
+			vals, parseErr := converters.ParseSQLDTARD(r.Data, s.endian)
+			if parseErr == nil && len(vals) > 0 {
+				outValues = vals
+			}
+		} else if r.CodePoint == CodePointSQLCARD {
+			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			if parseErr != nil {
+				return 0, nil, parseErr
+			}
+			if code < 0 {
+				return 0, nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
+			}
+		} else if r.CodePoint == CodePointSQLERRRM {
+			sub, _ := ParseDDMReply(r.Data)
+			return 0, nil, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+		}
+	}
+
+	return affectedRows, outValues, nil
 }
 
 // QueryWithParams opens a query on a prepared statement with parameter arguments.

@@ -1,0 +1,80 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Unit & Race Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.22.x', '1.23.x', '1.24.x']
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Go Format Check
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "The following files are not formatted properly:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Go Vet
+        run: go vet ./...
+
+      - name: Run Unit Tests with Race Detector
+        run: go test -v -race -timeout 3m ./converters/... ./network/... ./types/...
+
+  integration:
+    name: Live Db2 Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Start IBM Db2 Container
+        run: |
+          docker run -d \
+            --name db2-ci \
+            --privileged \
+            -p 50000:50000 \
+            -e LICENSE=accept \
+            -e DB2INST1_PASSWORD=MinhaSenhaForte123 \
+            -e DBNAME=testdb \
+            -e PERSISTENT_HOME=false \
+            icr.io/db2_community/db2
+
+      - name: Wait for Db2 Readiness
+        run: |
+          echo "Waiting for IBM Db2 container to complete initialization..."
+          timeout 300 bash -c 'until docker logs db2-ci 2>&1 | grep "(*) Setup has completed."; do sleep 5; done'
+          echo "Db2 is ready for integration tests!"
+
+      - name: Run Live Examples & Integration Demos
+        env:
+          DB2_DSN: "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false"
+        run: |
+          go test -v ./...
+          go run examples/basic_connect/main.go
+          go run examples/crud_demo/main.go
+          go run examples/params_demo/main.go
+          go run examples/lob_demo/main.go

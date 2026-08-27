@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -520,30 +521,55 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 		scale := int(endian.Uint16(rest[2:4]))
 		sqllen := int64(endian.Uint64(rest[4:12]))
 		sqltype := endian.Uint16(rest[12:14])
-
 		rest = rest[16:]
+
 		var colName string
-		if hasName {
-			if len(rest) >= 9 {
-				rest = rest[9:]
-				var name string
-				name, rest = parseName(rest)
-				label, r2 := parseName(rest)
-				rest = r2
-				_, r3 := parseName(rest)
-				rest = r3
-				if len(rest) >= 7 {
-					rest = rest[7:]
-				}
-				if label != "" {
-					colName = label
-				} else {
-					colName = name
+		// Check for ffffff delimiter (used in SP descriptors)
+		delimPos := bytes.Index(rest, []byte{0xFF, 0xFF, 0xFF})
+		if delimPos != -1 {
+			nameChunk := rest[:delimPos]
+			rest = rest[delimPos+3:]
+			// Extract ASCII name from chunk
+			for k := 0; k < len(nameChunk)-1; k++ {
+				nlen := int(nameChunk[k])
+				if nlen > 0 && k+1+nlen <= len(nameChunk) {
+					cand := nameChunk[k+1 : k+1+nlen]
+					isASCII := true
+					for _, c := range cand {
+						if c < 32 || c > 126 {
+							isASCII = false
+							break
+						}
+					}
+					if isASCII {
+						colName = string(cand)
+						break
+					}
 				}
 			}
 		} else {
-			if len(rest) >= 29 {
-				rest = rest[29:]
+			if hasName {
+				if len(rest) >= 9 {
+					rest = rest[9:]
+					var name string
+					name, rest = parseName(rest)
+					label, r2 := parseName(rest)
+					rest = r2
+					_, r3 := parseName(rest)
+					rest = r3
+					if len(rest) >= 7 {
+						rest = rest[7:]
+					}
+					if label != "" {
+						colName = label
+					} else {
+						colName = name
+					}
+				}
+			} else {
+				if len(rest) >= 29 {
+					rest = rest[29:]
+				}
 			}
 		}
 

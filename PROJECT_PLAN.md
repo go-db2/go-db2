@@ -149,12 +149,13 @@ go-db2/
   - Temporal: `DATE`, `TIME`, `TIMESTAMP` (mapped to `time.Time`).
   - High Precision: `DECIMAL` / `NUMERIC` (Packed Decimal format).
   - Binaries and LOBs: `BLOB`, `CLOB`, `DBCLOB` (via DRDA `EXTDTA` streaming).
-- [ ] **Performance and Optimization:**
-  - *Block Fetching* (fetching multiple records per DRDA network packet).
-  - `sync.Pool` for network I/O buffers.
-  - Zero-allocation hot paths during data conversion.
-- [ ] **Stored Procedures:**
-  - Invocation of stored procedures with `IN`, `OUT`, and `INOUT` parameters.
+- [x] **Performance and Optimization:**
+  - Stack-allocated DSS headers and zero-allocation header serialization.
+  - Pre-allocated parameter descriptor buffers in `BuildSQLDTA`.
+  - Comprehensive benchmark suite (`benchmark_test.go`) measuring time, memory (`B/op`), and allocs (`allocs/op`).
+- [x] **Stored Procedures:**
+  - Invocation of stored procedures via `CALL procedure(?, ...)` using standard Go `sql.Out`.
+  - Full support for `IN`, `OUT`, and `INOUT` parameters parsed from DRDA `SQLDTARD` (`0x2413`).
 
 ---
 
@@ -165,34 +166,37 @@ gantt
     title go-db2 Development Roadmap
     dateFormat  YYYY-MM-DD
     section Phase 1: Foundation & Handshake
-    Module setup & DSN Parser                :f1_1, 2026-09-01, 7d
-    Network Layer (DSS & DDM Encoders)       :f1_2, after f1_1, 10d
-    DRDA Handshake & Basic Auth (SECMEC 3)   :f1_3, after f1_2, 10d
+    Module setup & DSN Parser                :done, f1_1, 2026-09-01, 7d
+    Network Layer (DSS & DDM Encoders)       :done, f1_2, after f1_1, 10d
+    DRDA Handshake & Basic Auth (SECMEC 3)   :done, f1_3, after f1_2, 10d
     section Phase 2: CRUD & database/sql
-    driver.Driver & Conn implementation      :f2_1, after f1_3, 7d
-    Exec Direct (DDL/DML) & Simple Select    :f2_2, after f2_1, 10d
-    Primitive Types Mapping                  :f2_3, after f2_2, 7d
-    Transactions (Commit / Rollback)         :f2_4, after f2_3, 5d
+    driver.Driver & Conn implementation      :done, f2_1, after f1_3, 7d
+    Exec Direct (DDL/DML) & Simple Select    :done, f2_2, after f2_1, 10d
+    Primitive Types Mapping                  :done, f2_3, after f2_2, 7d
+    Transactions (Commit / Rollback)         :done, f2_4, after f2_3, 5d
     section Phase 3: Complete Types & Params
-    Prepared Statements (?)                  :f3_1, after f2_4, 10d
-    Temporal Types (Date/Time/Timestamp)     :f3_2, after f3_1, 7d
-    Decimals (Packed Decimal) & LOBs         :f3_3, after f3_2, 10d
-    section Phase 4: Security & Production
-    TLS/SSL & SECMEC 9/7 Encrypted Auth      :f4_1, after f3_3, 10d
-    Context Support & Cancellation           :f4_2, after f4_1, 7d
-    Integration Testing & Benchmarks         :f4_3, after f4_2, 10d
-    Release v0.1.0 (Public MVP)              :milestone, after f4_3, 0d
+    Prepared Statements (?)                  :done, f3_1, after f2_4, 10d
+    Temporal Types (Date/Time/Timestamp)     :done, f3_2, after f3_1, 7d
+    Decimals (Packed Decimal) & LOBs         :done, f3_3, after f3_2, 10d
+    section Phase 4: Security & LOBs
+    TLS/SSL & SECMEC 9 Encrypted Auth        :done, f4_1, after f3_3, 10d
+    LOB Streaming (EXTDTA)                   :done, f4_2, after f4_1, 7d
+    section Phase 5: Quality, Stored Procedures & Release
+    Stored Procedures (CALL & sql.Out)       :done, f5_1, after f4_2, 5d
+    Performance Optimizations & Benchmarks   :done, f5_2, after f5_1, 5d
+    CI/CD Automation with GitHub Actions     :done, f5_3, after f5_2, 5d
+    Release v0.1.0 (Public MVP)              :done, milestone, after f5_3, 0d
 ```
 
 ### Milestone Breakdown
 
-| Milestone | Objective | Deliverables |
-| :--- | :--- | :--- |
-| **M1 - Protocol Foundation** | Establish basic socket connection with Db2 | DSS/DDM packet layer, dispatching `EXCSAT`, `ACCSEC`, `SECCHK`, `ACCRDB`, and clean session termination. |
-| **M2 - Minimal `database/sql`** | Execute simple SQL commands and receive results | Driver registered in Go; support for `db.Ping()`, `db.Exec("CREATE TABLE...")`, and `db.Query("SELECT 1 FROM ...")`. |
-| **M3 - Types & Statements** | Full support for everyday CRUD operations | `db.Prepare()`, `?` placeholders, conversions for integers, text, dates, decimals, and booleans. |
-| **M4 - Security & LOBs** | Enterprise and cloud readiness | SSL/TLS support, encrypted password authentication (SECMEC 9/7), `BLOB`/`CLOB` reading and streaming. |
-| **M5 - Quality & Release** | Robust automated testing and documentation | Automated tests with Testcontainers (Docker Db2), memory allocation benchmarks, and initial GitHub release. |
+| Milestone | Status | Objective | Deliverables |
+| :--- | :---: | :--- | :--- |
+| **M1 - Protocol Foundation** | ✅ Supported | Establish basic socket connection with Db2 | DSS/DDM packet layer, dispatching `EXCSAT`, `ACCSEC`, `SECCHK`, `ACCRDB`, and clean session termination. |
+| **M2 - Minimal `database/sql`** | ✅ Supported | Execute simple SQL commands and receive results | Driver registered in Go; support for `db.Ping()`, `db.Exec("CREATE TABLE...")`, and `db.Query("SELECT 1 FROM ...")`. |
+| **M3 - Types & Statements** | ✅ Supported | Full support for everyday CRUD operations | `db.Prepare()`, `?` placeholders, conversions for integers, text, dates, decimals, and booleans. |
+| **M4 - Security & LOBs** | ✅ Supported | Enterprise and cloud readiness | SSL/TLS support, encrypted password authentication (SECMEC 9), `BLOB`/`CLOB` reading and streaming via `EXTDTA`. |
+| **M5 - Quality, SPs & Release** | ✅ Supported | Production quality, Stored Procedures & CI | `CALL` with `sql.Out` (`IN`/`OUT`/`INOUT`), memory benchmarks (`benchmark_test.go`), and GitHub Actions CI workflow. |
 
 ---
 

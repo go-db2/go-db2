@@ -28,7 +28,9 @@
 | **Type Conversions & NULLs** | ✅ Supported | Integers, Strings/Varchars, Floats, Dates, Timestamps, Decimals, Booleans, `NULL` values |
 | **Prepared Statements & Params** | ✅ Supported | `db.PrepareContext()`, `stmt.ExecContext()`, `stmt.QueryContext()`, `?` binding (`FDODSC`, `FDODTA`, `SQLDTA`) |
 | **LOBs (BLOB / CLOB / DBCLOB)** | ✅ Supported | Binary and long text streaming via DRDA `EXTDTA` (`0x146C`) packet collection |
-| **Automated Benchmarks & CI** | 🚧 *Planned* | Planned for Phase 5 (Milestone M5) |
+| **Stored Procedures & `sql.Out`** | ✅ Supported | `CALL procedure(?, ...)` with `sql.Out` for `IN`, `OUT`, and `INOUT` parameters via DRDA `SQLDTARD` |
+| **Performance & Benchmarks** | ✅ Supported | Stack-allocated buffers, `BuildSQLDTA` optimizations, `benchmark_test.go` |
+| **Automated CI/CD Pipeline** | ✅ Supported | Multi-version Go matrix (`1.22`, `1.23`, `1.24`), race detector, live Db2 container in GitHub Actions |
 
 ---
 
@@ -134,6 +136,16 @@ Once the container is active, you can run the live examples:
 - **Large Objects (BLOB & CLOB) Demo:**
   ```bash
   go run examples/lob_demo/main.go
+  ```
+
+- **Stored Procedures & `sql.Out` Demo:**
+  ```bash
+  go run examples/sp_demo/main.go
+  ```
+
+- **Performance Benchmarks (Latency & Memory Allocs):**
+  ```bash
+  go test -bench=. -benchmem -run=^$ ./...
   ```
 
 ---

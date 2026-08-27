@@ -77,9 +77,22 @@ func WriteRequestDSS(w io.Writer, payload []byte, curID uint16, nextHasSameID, l
 	}
 
 	chained := !lastPacket
-	hdr := BuildDSSHeader(len(payload), dssType, chained, nextHasSameID, false, curID)
+	var hdr [6]byte
+	totalLen := uint16(len(payload) + 6)
+	binary.BigEndian.PutUint16(hdr[0:2], totalLen)
+	hdr[2] = DSSMagic
 
-	if _, err := w.Write(hdr); err != nil {
+	flags := dssType & 0x0F
+	if chained {
+		flags |= DSSFlagChained
+	}
+	if nextHasSameID {
+		flags |= DSSFlagSameID
+	}
+	hdr[3] = flags
+	binary.BigEndian.PutUint16(hdr[4:6], curID)
+
+	if _, err := w.Write(hdr[:]); err != nil {
 		return curID, fmt.Errorf("failed to write DSS header: %w", err)
 	}
 	if _, err := w.Write(payload); err != nil {
@@ -95,8 +108,8 @@ func WriteRequestDSS(w io.Writer, payload []byte, curID uint16, nextHasSameID, l
 // ReadDSS reads a complete DSS packet from the reader.
 // Returns the DSS header, the outer DDM codepoint, the payload bytes, a boolean indicating if more query data pages follow, and an error.
 func ReadDSS(r io.Reader) (*DSSHeader, CodePoint, []byte, bool, error) {
-	hdrBuf := make([]byte, 6)
-	if _, err := io.ReadFull(r, hdrBuf); err != nil {
+	var hdrBuf [6]byte
+	if _, err := io.ReadFull(r, hdrBuf[:]); err != nil {
 		return nil, 0, nil, false, err
 	}
 
