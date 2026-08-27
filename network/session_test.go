@@ -96,9 +96,9 @@ func TestSessionMockHandshake(t *testing.T) {
 
 		// Respond with dummy SQLCARD
 		sqlcardPayload := make([]byte, 20)
-		sqlcardPayload[0] = 0x00 // Valid SQLCARD
+		sqlcardPayload[0] = 0x00                              // Valid SQLCARD
 		binary.LittleEndian.PutUint32(sqlcardPayload[1:5], 0) // SQLCODE = 0
-		copy(sqlcardPayload[5:10], "00000")                  // SQLSTATE = 00000
+		copy(sqlcardPayload[5:10], "00000")                   // SQLSTATE = 00000
 		sqlcardObj := PackDDMObject(CodePointSQLCARD, sqlcardPayload)
 		sqlcardHdr := BuildDSSHeader(len(sqlcardObj), DSSTypeReply, false, false, false, 1)
 
