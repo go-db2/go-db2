@@ -114,27 +114,30 @@ go-db2/
 
 ## 4. Escopo de Funcionalidades
 
-### 4.1 Funcionalidades Essenciais (Core)
-- [ ] **Connection String / DSN:**
-  - Formato URL: `db2://user:pass@host:port/dbname?ssl=true&timeout=30s`
+### 4.1 Recursos Essenciais (Core)
+- [x] **Connection String / DSN:**
+  - Formato URL: `db2://usuario:senha@host:porta/nomedb?ssl=true&timeout=30s`
   - Formato DSN: `host=localhost;port=50000;database=testdb;user=db2inst1;password=secret;`
-- [ ] **Handshake DRDA:**
-  - `EXCSAT` (Troca de atributos cliente/servidor).
-  - `ACCSEC` e autenticação com `SECCHK`.
-  - `ACCRDB` (Abertura e fixação do banco de dados).
-- [ ] **Suporte a Tipos de Dados Básicos:**
+- [x] **Handshake DRDA:**
+  - `EXCSAT` (Troca de atributos entre cliente e servidor).
+  - `ACCSEC` e autenticação de segurança via `SECCHK`.
+  - `ACCRDB` (Acesso e acoplamento ao banco de dados relacional).
+- [x] **Suporte a Tipos de Dados Básicos:**
   - Inteiros: `SMALLINT` (int16), `INTEGER` (int32), `BIGINT` (int64).
   - Ponto Flutuante: `REAL` (float32), `DOUBLE` (float64).
-  - Texto: `CHAR`, `VARCHAR`, `LONG VARCHAR`.
-  - Lógicos / Nulos: Detecção de colunas `NULL` (`sql.NullString`, `sql.NullInt64`, etc.).
-- [ ] **Execução de Instruções SQL:**
+  - Textos: `CHAR`, `VARCHAR`, `LONG VARCHAR`.
+  - Nulos: Detecção adequada de colunas `NULL` (`sql.NullString`, `sql.NullInt64`, etc.).
+  - Temporais e Booleanos: `DATE`, `TIME`, `TIMESTAMP`, `BOOLEAN`.
+- [x] **Execução de Comandos SQL:**
   - `Exec` / `ExecContext` para DDL e DML (`CREATE`, `INSERT`, `UPDATE`, `DELETE`).
   - `Query` / `QueryContext` para DQL (`SELECT`).
-  - Retorno de metadados de colunas (`Rows.Columns()`, `Rows.ColumnTypeScanType()`).
-- [ ] **Transações:**
-  - `Begin` / `BeginTx` com `Commit` e `Rollback`.
-- [ ] **Prepared Statements:**
-  - `Prepare` / `PrepareContext` com suporte a marcadores posicionais `?`.
+  - Metadados completos de colunas (`Rows.Columns()`, `Rows.ColumnTypeScanType()`, `Rows.ColumnTypeDatabaseTypeName()`, `Rows.ColumnTypeNullable()`, `Rows.ColumnTypeLength()`, `Rows.ColumnTypePrecisionScale()`).
+- [x] **Transações:**
+  - `Begin` / `BeginTx` com `Commit` (`RDBCMM`) e `Rollback` (`RDBRLLBCK`).
+- [x] **Prepared Statements:**
+  - `Prepare` / `PrepareContext` com marcadores posicionais `?`.
+  - Codificação de parâmetros (`FDODSC`, `FDODTA`, `SQLDTA`) com valores tipados e nulos.
+  - Execução de statements (`stmt.ExecContext`) e queries parametrizadas (`stmt.QueryContext`, `db.QueryRowContext`).
 
 ### 4.2 Funcionalidades Avançadas
 - [ ] **Segurança e Criptografia:**

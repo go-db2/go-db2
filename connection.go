@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/go-db2/go-db2/network"
@@ -40,7 +39,12 @@ func (c *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, e
 		return nil, ErrConnectionClosed
 	}
 
-	return nil, errors.New("db2: prepared statements with parameters will be implemented in Phase 3")
+	outCols, paramCols, err := c.session.PrepareAndDescribe(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewStmt(c, query, outCols, paramCols), nil
 }
 
 // Exec executes a query that doesn't return rows (legacy interface).
@@ -61,16 +65,22 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		return nil, ErrConnectionClosed
 	}
 
-	if len(args) > 0 {
-		return nil, fmt.Errorf("db2: parameter binding in direct Exec is not supported yet (args count=%d)", len(args))
+	if len(args) == 0 {
+		affected, err := c.session.ExecDirect(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		return NewResult(affected, 0), nil
 	}
 
-	affected, err := c.session.ExecDirect(ctx, query)
+	// Prepare and execute with parameters
+	outCols, paramCols, err := c.session.PrepareAndDescribe(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 
-	return NewResult(affected, 0), nil
+	stmt := NewStmt(c, query, outCols, paramCols)
+	return stmt.ExecContext(ctx, args)
 }
 
 // Query executes a query that may return rows (legacy interface).
@@ -91,25 +101,32 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		return nil, ErrConnectionClosed
 	}
 
-	if len(args) > 0 {
-		return nil, fmt.Errorf("db2: parameter binding in direct Query is not supported yet (args count=%d)", len(args))
+	if len(args) == 0 {
+		cols, rawRows, err := c.session.QueryDirect(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+
+		rowsData := make([][]driver.Value, len(rawRows))
+		for i, r := range rawRows {
+			row := make([]driver.Value, len(r))
+			for j, v := range r {
+				row[j] = driver.Value(v)
+			}
+			rowsData[i] = row
+		}
+
+		return NewRows(cols, rowsData), nil
 	}
 
-	cols, rawRows, err := c.session.QueryDirect(ctx, query)
+	// Prepare and query with parameters
+	outCols, paramCols, err := c.session.PrepareAndDescribe(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 
-	rowsData := make([][]driver.Value, len(rawRows))
-	for i, r := range rawRows {
-		row := make([]driver.Value, len(r))
-		for j, v := range r {
-			row[j] = driver.Value(v)
-		}
-		rowsData[i] = row
-	}
-
-	return NewRows(cols, rowsData), nil
+	stmt := NewStmt(c, query, outCols, paramCols)
+	return stmt.QueryContext(ctx, args)
 }
 
 // Close invalidates and closes the database connection.

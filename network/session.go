@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-db2/go-db2/converters"
+	"github.com/go-db2/go-db2/types"
 )
 
 // SessionConfig holds configuration parameters for establishing a Db2 session.
@@ -553,6 +554,299 @@ func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescript
 				return nil, nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
 			}
 		}
+	}
+
+	return columns, rows, nil
+}
+
+// PrepareAndDescribe prepares a query/statement and retrieves its output columns and input parameter descriptors.
+func (s *Session) PrepareAndDescribe(ctx context.Context, sql string) ([]ColumnDescription, []ColumnDescription, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.conn == nil {
+		return nil, nil, errors.New("db2: connection is closed")
+	}
+
+	s.correlationID = 1
+	var err error
+
+	// 1. PRPSQLSTT
+	prp := PackPRPSQLSTT(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	s.correlationID, err = WriteRequestDSS(s.conn, prp, s.correlationID, true, false)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// 2. SQLSTT
+	stt := PackSQLSTT(sql)
+	s.correlationID, err = WriteRequestDSS(s.conn, stt, s.correlationID, false, false)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// 3. DSCSQLSTT
+	dsc := PackDSCSQLSTT(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	s.correlationID, err = WriteRequestDSS(s.conn, dsc, s.correlationID, false, true)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	replies, err := s.readReplyChain()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var outputCols, paramCols []ColumnDescription
+	for _, r := range replies {
+		if r.CodePoint == CodePointSQLDARD {
+			cols, err := ParseSQLDARD(r.Data, s.endian)
+			if err != nil {
+				return nil, nil, err
+			}
+			if len(r.Data) > 0 && r.Data[0] == 0xFF {
+				paramCols = cols
+			} else {
+				outputCols = cols
+			}
+		} else if r.CodePoint == CodePointSQLCARD {
+			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			if parseErr != nil {
+				return nil, nil, parseErr
+			}
+			if code < 0 {
+				return nil, nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
+			}
+		} else if r.CodePoint == CodePointSQLERRRM {
+			sub, _ := ParseDDMReply(r.Data)
+			return nil, nil, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+		}
+	}
+
+	return outputCols, paramCols, nil
+}
+
+// ExecWithParams executes an already prepared statement with parameter arguments.
+func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescription, args []any) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.conn == nil {
+		return 0, errors.New("db2: connection is closed")
+	}
+
+	colTypes := make([]types.SQLType, len(paramCols))
+	colLens := make([]int64, len(paramCols))
+	precs := make([]int, len(paramCols))
+	scales := make([]int, len(paramCols))
+
+	for i, c := range paramCols {
+		colTypes[i] = types.SQLType(c.SQLType)
+		colLens[i] = c.Length
+		precs[i] = c.Precision
+		scales[i] = c.Scale
+	}
+
+	sqldta, err := converters.BuildSQLDTA(colTypes, colLens, precs, scales, args, s.endian)
+	if err != nil {
+		return 0, err
+	}
+
+	// 1. EXCSQLSTT
+	exc := PackEXCSQLSTT(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	_, err = WriteRequestDSS(s.conn, exc, 1, true, false)
+	if err != nil {
+		return 0, err
+	}
+
+	// 2. SQLDTA
+	_, err = WriteRequestDSS(s.conn, sqldta, 1, false, false)
+	if err != nil {
+		return 0, err
+	}
+
+	// 3. RDBCMM
+	cmm := PackRDBCMM()
+	_, err = WriteRequestDSS(s.conn, cmm, 1, false, true)
+	if err != nil {
+		return 0, err
+	}
+
+	replies, err := s.readReplyChain()
+	if err != nil {
+		return 0, err
+	}
+
+	var affectedRows int64
+	for _, r := range replies {
+		if r.CodePoint == CodePointSQLCARD {
+			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			if parseErr != nil {
+				return 0, parseErr
+			}
+			if code < 0 {
+				return 0, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
+			}
+		} else if r.CodePoint == CodePointSQLERRRM {
+			sub, _ := ParseDDMReply(r.Data)
+			return 0, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+		}
+	}
+
+	return affectedRows, nil
+}
+
+// QueryWithParams opens a query on a prepared statement with parameter arguments.
+func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []ColumnDescription, args []any) ([]ColumnDescription, [][]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.conn == nil {
+		return nil, nil, errors.New("db2: connection is closed")
+	}
+
+	colTypes := make([]types.SQLType, len(paramCols))
+	colLens := make([]int64, len(paramCols))
+	precs := make([]int, len(paramCols))
+	scales := make([]int, len(paramCols))
+
+	for i, c := range paramCols {
+		colTypes[i] = types.SQLType(c.SQLType)
+		colLens[i] = c.Length
+		precs[i] = c.Precision
+		scales[i] = c.Scale
+	}
+
+	sqldta, err := converters.BuildSQLDTA(colTypes, colLens, precs, scales, args, s.endian)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// 1. OPNQRY with params
+	opn := PackOPNQRYWithParams(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database, s.qryblksz)
+	_, err = WriteRequestDSS(s.conn, opn, 1, true, false)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// 2. SQLDTA
+	_, err = WriteRequestDSS(s.conn, sqldta, 1, false, true)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	replies, err := s.readReplyChain()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var columns []ColumnDescription = outputCols
+	var fields []FieldDescriptor
+	var rows [][]any
+	needCNTQRY := false
+	var qryinsid uint64
+	var cntqryID uint16 = 1
+
+	for _, r := range replies {
+		if r.CodePoint == CodePointSQLDARD {
+			cols, err := ParseSQLDARD(r.Data, s.endian)
+			if err != nil {
+				return nil, nil, err
+			}
+			if len(cols) > 0 {
+				columns = cols
+			}
+		} else if r.CodePoint == CodePointQRYDSC {
+			flds, err := ParseQRYDSC(r.Data)
+			if err != nil {
+				return nil, nil, err
+			}
+			fields = flds
+		} else if r.CodePoint == CodePointOPNQRYRM {
+			sub, _ := ParseDDMReply(r.Data)
+			if insidBytes, ok := sub[CodePointQRYINSID]; ok && len(insidBytes) >= 8 {
+				qryinsid = binary.BigEndian.Uint64(insidBytes)
+			}
+			needCNTQRY = true
+			cntqryID = r.Header.CorrelationID
+		} else if r.CodePoint == CodePointQRYDTA {
+			reader := bytes.NewReader(r.Data)
+			for reader.Len() >= 2 {
+				var rowHdr [2]byte
+				if _, err := io.ReadFull(reader, rowHdr[:]); err != nil {
+					break
+				}
+				if rowHdr[0] != 0xFF {
+					break
+				}
+
+				row := make([]any, len(fields))
+				for i, f := range fields {
+					val, err := converters.DecodeField(f.Type, f.PS, reader, s.endian)
+					if err != nil {
+						return nil, nil, fmt.Errorf("failed to decode column %d: %w", i+1, err)
+					}
+					row[i] = val
+				}
+				rows = append(rows, row)
+			}
+		} else if r.CodePoint == CodePointSQLCARD {
+			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			if parseErr != nil {
+				return nil, nil, parseErr
+			}
+			if code < 0 {
+				return nil, nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
+			}
+		} else if r.CodePoint == CodePointSQLERRRM {
+			sub, _ := ParseDDMReply(r.Data)
+			return nil, nil, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+		}
+	}
+
+	if needCNTQRY {
+		cntqry := PackCNTQRY(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database, s.qryblksz, qryinsid)
+		_, err = WriteRequestDSS(s.conn, cntqry, cntqryID, false, true)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		cntReplies, err := s.readReplyChain()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		for _, r := range cntReplies {
+			if r.CodePoint == CodePointQRYDTA {
+				reader := bytes.NewReader(r.Data)
+				for reader.Len() >= 2 {
+					var rowHdr [2]byte
+					if _, err := io.ReadFull(reader, rowHdr[:]); err != nil {
+						break
+					}
+					if rowHdr[0] != 0xFF {
+						break
+					}
+
+					row := make([]any, len(fields))
+					for i, f := range fields {
+						val, err := converters.DecodeField(f.Type, f.PS, reader, s.endian)
+						if err != nil {
+							return nil, nil, fmt.Errorf("failed to decode column %d: %w", i+1, err)
+						}
+						row[i] = val
+					}
+					rows = append(rows, row)
+				}
+			}
+		}
+	}
+
+	// Send commit to close query lock
+	s.correlationID = 1
+	s.correlationID, err = WriteRequestDSS(s.conn, PackRDBCMM(), s.correlationID, false, true)
+	if err == nil {
+		_, _ = s.readReplyChain()
 	}
 
 	return columns, rows, nil

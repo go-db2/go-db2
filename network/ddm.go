@@ -363,6 +363,38 @@ func PackDSCSQLSTT(pkgid, pkgcnstkn string, pkgsn uint16, database string) []byt
 	return PackDDMObject(CodePointDSCSQLSTT, body)
 }
 
+// PackEXCSQLSTT builds an EXCSQLSTT (Execute SQL Statement) DDM command with parameters.
+func PackEXCSQLSTT(pkgid, pkgcnstkn string, pkgsn uint16, database string) []byte {
+	body := append(
+		PackPKGNAMCSN(database, pkgid, pkgcnstkn, pkgsn),
+		PackBytes(CodePointRDBCMTOK, []byte{241})...,
+	)
+	return PackDDMObject(CodePointEXCSQLSTT, body)
+}
+
+// PackOPNQRYWithParams builds an OPNQRY command with parameter dynamic format enabled.
+func PackOPNQRYWithParams(pkgid, pkgcnstkn string, pkgsn uint16, database string, qryblksz uint32) []byte {
+	var body []byte
+	body = append(body, PackPKGNAMCSN(database, pkgid, pkgcnstkn, pkgsn)...)
+	body = append(body, PackUint32(CodePointQRYBLKSZ, qryblksz)...)
+	body = append(body, PackUint16(CodePointMAXBLKEXT, uint16(qryblksz))...)
+	body = append(body, PackBytes(CodePointQRYCLSIMP, []byte{0x01})...)
+	body = append(body, PackBytes(CodePointDYNDTAFMT, []byte{0xF1})...)
+	return PackDDMObject(CodePointOPNQRY, body)
+}
+
+// PackCNTQRY builds a CNTQRY (Continue Query) DDM command to stream row data from open query.
+func PackCNTQRY(pkgid, pkgcnstkn string, pkgsn uint16, database string, qryblksz uint32, qryinsid uint64) []byte {
+	var body []byte
+	body = append(body, PackPKGNAMCSN(database, pkgid, pkgcnstkn, pkgsn)...)
+	body = append(body, PackUint32(CodePointQRYBLKSZ, qryblksz)...)
+	insidBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(insidBytes, qryinsid)
+	body = append(body, PackBytes(CodePointQRYINSID, insidBytes)...)
+	body = append(body, PackBytes(CodePointRTNEXTDTA, []byte{0x02})...)
+	return PackDDMObject(CodePointCNTQRY, body)
+}
+
 // PackOPNQRY builds an OPNQRY (Open Query) DDM command.
 func PackOPNQRY(pkgid, pkgcnstkn string, pkgsn uint16, database string, qryblksz uint32) []byte {
 	var body []byte
@@ -417,32 +449,34 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 	}
 
 	hasName := (obj[0] == 0x00)
-	sqlcode, sqlstate, msg, err := ParseSQLCARD(obj, endian)
-	if err != nil {
-		return nil, err
-	}
-	if sqlcode < 0 {
-		return nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s: %s", sqlcode, sqlstate, msg)
-	}
 
-	// Move past SQLCARD
 	var rest []byte
-	if len(obj) > 36+18 {
-		rest = obj[36+18:]
-		// Skip RDB name, messages, etc.
-		for i := 0; i < 3; i++ {
-			if len(rest) >= 2 {
+	if obj[0] == 0xFF {
+		rest = obj[1:]
+	} else {
+		// Parse leading SQLCARD
+		sqlcode, sqlstate, msg, err := ParseSQLCARD(obj, endian)
+		if err != nil {
+			return nil, err
+		}
+		if sqlcode < 0 {
+			return nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s: %s", sqlcode, sqlstate, msg)
+		}
+
+		if len(obj) > 54 {
+			rest = obj[54:]
+			for i := 0; i < 3 && len(rest) >= 2; i++ {
 				ln := int(binary.BigEndian.Uint16(rest[:2]))
 				if len(rest) >= 2+ln {
 					rest = rest[2+ln:]
 				}
 			}
+			if len(rest) > 0 && rest[0] == 0xFF {
+				rest = rest[1:]
+			}
+		} else {
+			rest = obj
 		}
-		if len(rest) > 0 && rest[0] == 0xFF {
-			rest = rest[1:]
-		}
-	} else {
-		rest = obj
 	}
 
 	if len(rest) < 2 {
@@ -477,12 +511,12 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 		var colName string
 		if hasName {
 			if len(rest) >= 9 {
-				rest = rest[9:] // skip 6 bytes + 3 bytes header
+				rest = rest[9:]
 				var name string
 				name, rest = parseName(rest)
 				label, r2 := parseName(rest)
 				rest = r2
-				_, r3 := parseName(rest) // comments
+				_, r3 := parseName(rest)
 				rest = r3
 				if len(rest) >= 7 {
 					rest = rest[7:]
@@ -500,7 +534,7 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 		}
 
 		if colName == "" {
-			colName = fmt.Sprintf("COL%d", i+1)
+			colName = fmt.Sprintf("PARAM%d", i+1)
 		}
 
 		cols = append(cols, ColumnDescription{

@@ -24,8 +24,10 @@
 | **Transactions** | ✅ Supported | `db.BeginTx()`, `tx.Commit()` (`RDBCMM`), `tx.Rollback()` (`RDBRLLBCK`) |
 | **DDL & DML Execution** | ✅ Supported | `db.ExecContext()` for `CREATE`, `DROP`, `INSERT`, `UPDATE`, `DELETE` |
 | **Query & Rows Stream** | ✅ Supported | `db.QueryContext()`, `db.QueryRowContext()`, `rows.Scan()`, `rows.Columns()` |
-| **Type Conversions & NULLs** | ✅ Supported | Integers, Strings/Varchars, Floats, Dates, Timestamps, Decimals, `NULL` values |
-| **Prepared Statements & Params** | 🚧 *In Progress* | Planned for Phase 3 |
+| **Type Conversions & NULLs** | ✅ Supported | Integers, Strings/Varchars, Floats, Dates, Timestamps, Decimals, Booleans, `NULL` values |
+| **Prepared Statements & Params** | ✅ Supported | `db.PrepareContext()`, `stmt.ExecContext()`, `stmt.QueryContext()`, `?` binding (`FDODSC`, `FDODTA`, `SQLDTA`) |
+| **Encrypted Auth (SECMEC 9/7) & SSL** | 🚧 *Planned* | Planned for Phase 4 (Milestone M4) |
+| **LOBs (BLOB/CLOB/DBCLOB)** | 🚧 *Planned* | Planned for Phase 4 (Milestone M4) |
 
 ---
 
@@ -121,6 +123,11 @@ Once the container is active, you can run the live examples:
 - **Full CRUD (DDL, DML, DQL) Demo:**
   ```bash
   go run examples/crud_demo/main.go
+  ```
+
+- **Prepared Statements & Parameter Binding Demo:**
+  ```bash
+  go run examples/params_demo/main.go
   ```
 
 ---

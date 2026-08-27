@@ -115,26 +115,29 @@ go-db2/
 ## 4. Feature Scope
 
 ### 4.1 Core Features (Essential)
-- [ ] **Connection String / DSN:**
+- [x] **Connection String / DSN:**
   - URL Format: `db2://user:pass@host:port/dbname?ssl=true&timeout=30s`
   - DSN Format: `host=localhost;port=50000;database=testdb;user=db2inst1;password=secret;`
-- [ ] **DRDA Handshake:**
+- [x] **DRDA Handshake:**
   - `EXCSAT` (Exchange server/client attributes).
   - `ACCSEC` and security authentication with `SECCHK`.
   - `ACCRDB` (Access and bind to relational database).
-- [ ] **Basic Data Type Support:**
+- [x] **Basic Data Type Support:**
   - Integers: `SMALLINT` (int16), `INTEGER` (int32), `BIGINT` (int64).
   - Floating Point: `REAL` (float32), `DOUBLE` (float64).
   - Strings: `CHAR`, `VARCHAR`, `LONG VARCHAR`.
   - Nulls: Proper `NULL` column detection (`sql.NullString`, `sql.NullInt64`, etc.).
-- [ ] **SQL Statement Execution:**
+  - Temporal & Booleans: `DATE`, `TIME`, `TIMESTAMP`, `BOOLEAN`.
+- [x] **SQL Statement Execution:**
   - `Exec` / `ExecContext` for DDL and DML (`CREATE`, `INSERT`, `UPDATE`, `DELETE`).
   - `Query` / `QueryContext` for DQL (`SELECT`).
-  - Column metadata support (`Rows.Columns()`, `Rows.ColumnTypeScanType()`).
-- [ ] **Transactions:**
-  - `Begin` / `BeginTx` with `Commit` and `Rollback`.
-- [ ] **Prepared Statements:**
+  - Column metadata support (`Rows.Columns()`, `Rows.ColumnTypeScanType()`, `Rows.ColumnTypeDatabaseTypeName()`, `Rows.ColumnTypeNullable()`, `Rows.ColumnTypeLength()`, `Rows.ColumnTypePrecisionScale()`).
+- [x] **Transactions:**
+  - `Begin` / `BeginTx` with `Commit` (`RDBCMM`) and `Rollback` (`RDBRLLBCK`).
+- [x] **Prepared Statements:**
   - `Prepare` / `PrepareContext` with positional `?` parameter markers.
+  - Parameter encoding (`FDODSC`, `FDODTA`, `SQLDTA`) with typed parameters & null values.
+  - Statement execution (`stmt.ExecContext`) and parameterized queries (`stmt.QueryContext`, `db.QueryRowContext`).
 
 ### 4.2 Advanced Features
 - [ ] **Security and Encryption:**

@@ -93,6 +93,7 @@ const (
 	CodePointQRYCLSIMP  CodePoint = 0x215D // Query Close Implicit
 	CodePointQRYCLSRLS  CodePoint = 0x215E // Query Close Release
 	CodePointQRYOPTVAL  CodePoint = 0x215F // Query Option Value
+	CodePointOUTOVRPRI  CodePoint = 0x2123 // Output Override Priority
 	CodePointQRYINSID   CodePoint = 0x215B // Query Instance Identifier
 	CodePointQRYATTUPD  CodePoint = 0x2150 // Query Attribute Update
 	CodePointQRYRELSCR  CodePoint = 0x213C // Query Relative Scroll
