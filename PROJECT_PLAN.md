@@ -193,8 +193,8 @@ gantt
     ORM & Struct Mapping (sqlx demo)         :done, f6_4, after f6_3, 5d
     section Phase 7: Types, Bulk Ops & Feature Parity
     LastInsertId (IDENTITY_VAL_LOCAL)        :done, f7_1, after f6_4, 5d
-    Extended Types (DECFLOAT, XML, TZ)       :active, f7_2, after f7_1, 7d
-    Batch / Array Parameter Binding          :f7_3, after f7_2, 7d
+    Extended Types (DECFLOAT, XML, TZ)       :done, f7_2, after f7_1, 7d
+    Batch / Array Parameter Binding          :active, f7_3, after f7_2, 7d
     DBCS & Graphic Types (DBCLOB, CODEUNITS) :f7_4, after f7_3, 5d
     Admin DB Management (CreateDb / DropDb)  :f7_5, after f7_4, 5d
     section Phase 8: Extended Authentication & Security
@@ -213,7 +213,7 @@ gantt
 | **M4 - Security & LOBs** | ✅ Supported | Secure connections and large object handling | SSL/TLS support, encrypted password authentication (SECMEC 9), `BLOB`/`CLOB` reading and streaming via `EXTDTA`. |
 | **M5 - Quality, SPs & Release** | ✅ Supported | Production quality, Stored Procedures & CI | `CALL` with `sql.Out` (`IN`/`OUT`/`INOUT`), memory benchmarks (`benchmark_test.go`), and GitHub Actions CI workflow. |
 | **M6 - Advanced DRDA & ORMs** | ✅ Supported | Protocol scalability, multi-result sets & resilience | `driver.RowsNextResultSet` for multi-cursor SPs, configurable block size (`QRYBLKSZ`), `SQLINTR` cancellation, and struct mapping demo. |
-| **M7 - Extended Types & Bulk Ops** | 🔄 Next | Parity with `go_ibm_db` advanced types & bulk operations | `LastInsertId()` via `IDENTITY_VAL_LOCAL()`, `DECFLOAT(16/34)`, `XML`, `TIMESTAMP WITH TIME ZONE`, parameter arrays for bulk insert, and `CreateDb`/`DropDb`. |
+| **M7 - Extended Types & Bulk Ops** | 🔄 In Progress | Parity with `go_ibm_db` advanced types & bulk operations | `LastInsertId()` via `IDENTITY_VAL_LOCAL()`, `DECFLOAT(16/34)`, `XML`, `TIMESTAMP WITH TIME ZONE`, parameter arrays for bulk insert, and `CreateDb`/`DropDb`. |
 | **M8 - Extended Security & Auth** | 📋 Planned | Extended directory authentication & context switching | Kerberos SSO (SECMEC 7/11), Trusted Context multi-tenant switching, and client application accounting (`EXCSQLSET`). |
 
 ---
@@ -233,7 +233,7 @@ gantt
 | **Block Fetching** | ✅ `FETCHSIZE` / `ROWARRAYSIZE` | ✅ `block_size` / `QRYBLKSZ` | ✅ Parity |
 | **Query Cancellation** | ✅ Supported | ✅ Supported via `SQLINTR` (`0x2007`) | ✅ Parity |
 | **`Result.LastInsertId()`** | ✅ `IDENTITY_VAL_LOCAL()` | ✅ `IDENTITY_VAL_LOCAL()` on `INSERT` | ✅ Parity |
-| **Extended Types (`DECFLOAT`, `XML`)**| ✅ Supported | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.2) |
+| **Extended Types (`DECFLOAT`, `XML`)**| ✅ Supported | ✅ `DECFLOAT(16/34)`, `XML`, `TIMESTAMP TZ` | ✅ Parity |
 | **Batch / Array Parameter DML** | ✅ `Array<Type>` for bulk insert | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.3) |
 | **Graphic & DBCS Types** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.4) |
 | **Admin DB APIs (`CreateDb`/`DropDb`)**| ✅ Supported | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.5) |

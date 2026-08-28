@@ -193,8 +193,8 @@ gantt
     Mapeamento de Structs e ORMs (sqlx demo) :done, f6_4, after f6_3, 5d
     section Fase 7: Tipos Avançados, Operações em Lote e Paridade
     LastInsertId (IDENTITY_VAL_LOCAL)        :done, f7_1, after f6_4, 5d
-    Tipos Estendidos (DECFLOAT, XML, TZ)     :active, f7_2, after f7_1, 7d
-    Batch / Array Parameter Binding (DML)    :f7_3, after f7_2, 7d
+    Tipos Estendidos (DECFLOAT, XML, TZ)     :done, f7_2, after f7_1, 7d
+    Batch / Array Parameter Binding (DML)    :active, f7_3, after f7_2, 7d
     Tipos Gráficos & DBCS (DBCLOB, CODEUNITS):f7_4, after f7_3, 5d
     Gerenciamento de Banco (CreateDb/DropDb) :f7_5, after f7_4, 5d
     section Fase 8: Autenticação Estendida e Segurança
@@ -213,7 +213,7 @@ gantt
 | **M4 - Segurança & LOBs** | ✅ Suportado | Conexões seguras e manipulação de grandes objetos | Suporte a SSL/TLS, senhas criptografadas (SECMEC 9), leitura e gravação de `BLOB`/`CLOB` via `EXTDTA`. |
 | **M5 - Qualidade, SPs & Release** | ✅ Suportado | Qualidade de produção, Stored Procedures e CI | `CALL` com `sql.Out` (`IN`/`OUT`/`INOUT`), benchmarks de memória (`benchmark_test.go`) e pipeline no GitHub Actions. |
 | **M6 - DRDA Avançado & ORMs** | ✅ Suportado | Escalabilidade de protocolo, múltiplos cursores e resiliência | `driver.RowsNextResultSet` para procedures com múltiplos cursores, buffer configurável (`QRYBLKSZ`), cancelamento via `SQLINTR` e demo de struct mapping. |
-| **M7 - Tipos Estendidos & Lote** | 🔄 Próximo | Paridade com `go_ibm_db` em tipos avançados e operações em lote | `LastInsertId()` via `IDENTITY_VAL_LOCAL()`, `DECFLOAT(16/34)`, `XML`, `TIMESTAMP WITH TIME ZONE`, arrays de parâmetros para bulk insert e APIs `CreateDb`/`DropDb`. |
+| **M7 - Tipos Estendidos & Lote** | 🔄 Em Andamento | Paridade com `go_ibm_db` em tipos avançados e operações em lote | `LastInsertId()` via `IDENTITY_VAL_LOCAL()`, `DECFLOAT(16/34)`, `XML`, `TIMESTAMP WITH TIME ZONE`, arrays de parâmetros para bulk insert e APIs `CreateDb`/`DropDb`. |
 | **M8 - Segurança Estendida & Auth** | 📋 Planejado | Autenticação em diretório de rede e troca de contexto | Kerberos SSO (SECMEC 7/11), alternância de identidade via Trusted Context e metadados de aplicação (`EXCSQLSET`). |
 
 ---
@@ -233,7 +233,7 @@ gantt
 | **Block Fetching** | ✅ `FETCHSIZE` / `ROWARRAYSIZE` | ✅ `block_size` / `QRYBLKSZ` | ✅ Paridade |
 | **Cancelamento de Queries** | ✅ Suportado | ✅ Suportado via `SQLINTR` (`0x2007`) | ✅ Paridade |
 | **`Result.LastInsertId()`** | ✅ `IDENTITY_VAL_LOCAL()` | ✅ `IDENTITY_VAL_LOCAL()` no `INSERT` | ✅ Paridade |
-| **Tipos Estendidos (`DECFLOAT`, `XML`)**| ✅ Suportado | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.2) |
+| **Tipos Estendidos (`DECFLOAT`, `XML`)**| ✅ Suportado | ✅ `DECFLOAT(16/34)`, `XML`, `TIMESTAMP TZ` | ✅ Paridade |
 | **DML com Arrays de Parâmetros** | ✅ `Array<Type>` para inserção em lote | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.3) |
 | **Tipos Gráficos e DBCS** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.4) |
 | **APIs Administrativas (`CreateDb`/`DropDb`)**| ✅ Suportado | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.5) |

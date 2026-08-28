@@ -47,10 +47,15 @@ func FDODSC(sqlType types.SQLType, sqllen int64, prec, scale int) []byte {
 		return []byte{0x39, 0x3F, 0xFF}
 	case types.SQLTypeBinary, types.SQLTypeNBinary:
 		return []byte{0x27, byte(sqllen >> 8), byte(sqllen & 0xFF)}
-	case types.SQLTypeVarBinary, types.SQLTypeNVarBinary:
-		return []byte{0x29, byte(sqllen >> 8), byte(sqllen & 0xFF)}
 	case types.SQLTypeDecimal, types.SQLTypeNDecimal:
 		return []byte{0x0F, byte(prec), byte(scale)}
+	case types.SQLTypeDecFloat, types.SQLTypeNDecFloat:
+		if sqllen == 16 {
+			return []byte{0xBB, 0x00, 0x10}
+		}
+		return []byte{0xBB, 0x00, 0x08}
+	case types.SQLTypeXML, types.SQLTypeNXML:
+		return []byte{0x39, 0x3F, 0xFF}
 	default:
 		return []byte{0x39, 0x3F, 0xFF}
 	}
@@ -176,6 +181,30 @@ func FDODTA(sqlType types.SQLType, sqllen int64, prec, scale int, val any, endia
 
 	case types.SQLTypeDecimal, types.SQLTypeNDecimal:
 		return encodePackedDecimalParam(val, prec, scale)
+
+	case types.SQLTypeDecFloat, types.SQLTypeNDecFloat:
+		nBytes := 8
+		if sqllen == 16 {
+			nBytes = 16
+		}
+		dfpBytes, err := EncodeDFP(val, nBytes)
+		if err != nil {
+			return nil, err
+		}
+		return append([]byte{0x00}, dfpBytes...), nil
+
+	case types.SQLTypeXML, types.SQLTypeNXML:
+		str := fmt.Sprint(val)
+		utf16Runes := utf16.Encode([]rune(str))
+		utf16Bytes := make([]byte, len(utf16Runes)*2)
+		for i, r := range utf16Runes {
+			binary.BigEndian.PutUint16(utf16Bytes[i*2:i*2+2], r)
+		}
+		b := make([]byte, 3+len(utf16Bytes))
+		b[0] = 0x00
+		binary.BigEndian.PutUint16(b[1:3], uint16(len(utf16Bytes)))
+		copy(b[3:], utf16Bytes)
+		return b, nil
 
 	default:
 		// Fallback as UTF-16 string

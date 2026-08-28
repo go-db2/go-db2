@@ -77,6 +77,8 @@ const (
 	DRDATypeNLOBBytes    uint8 = 0xC9
 	DRDATypeLOBCSBCS     uint8 = 0xCE
 	DRDATypeNLOBCSBCS    uint8 = 0xCF
+	DRDATypeDecFloat     uint8 = 0xBA
+	DRDATypeNDecFloat    uint8 = 0xBB
 )
 
 // IsNullableDRDAType returns true if the DRDA wire type supports NULL indicators.
@@ -92,7 +94,7 @@ func IsNullableDRDAType(t uint8) bool {
 		DRDATypeNVarMix, DRDATypeNLongMix, DRDATypeNCStrMix,
 		DRDATypeNBoolean, DRDATypeNFixBytes, DRDATypeNVarBinary,
 		DRDATypeNLOBLOC, DRDATypeNCLOBLOC, DRDATypeNDBCSCLOBLOC,
-		DRDATypeNLOBBytes, DRDATypeNLOBCSBCS,
+		DRDATypeNLOBBytes, DRDATypeNLOBCSBCS, DRDATypeNDecFloat,
 		0xF5, 0xF7, 0xF9:
 		return true
 	default:
@@ -215,17 +217,38 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 			return nil, err
 		}
 		s := strings.TrimRight(string(buf), " ")
-		// Formats: "2006-01-02-15.04.05" or "2006-01-02-15.04.05.000000"
-		if len(s) >= 19 {
-			layout := "2006-01-02-15.04.05"
-			if len(s) > 19 && s[19] == '.' {
-				layout = "2006-01-02-15.04.05.000000"
-			}
+		layouts := []string{
+			"2006-01-02-15.04.05.000000-07:00",
+			"2006-01-02-15.04.05.000000+07:00",
+			"2006-01-02-15.04.05-07:00",
+			"2006-01-02-15.04.05+07:00",
+			"2006-01-02-15.04.05.000000",
+			"2006-01-02-15.04.05",
+			"2006-01-02 15:04:05.000000-07:00",
+			"2006-01-02 15:04:05.000000",
+			"2006-01-02 15:04:05",
+			time.RFC3339Nano,
+			time.RFC3339,
+		}
+		for _, layout := range layouts {
 			if t, err := time.Parse(layout, s); err == nil {
 				return t, nil
 			}
 		}
 		return s, nil
+
+	case DRDATypeDecFloat, DRDATypeNDecFloat:
+		nBytes := 8
+		if len(ps) > 1 && ps[1] == 16 {
+			nBytes = 16
+		} else if len(ps) > 0 && ps[0] == 16 {
+			nBytes = 16
+		}
+		buf := make([]byte, nBytes)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return nil, err
+		}
+		return DecodeDFP(buf)
 
 	case DRDATypeVarBinary, DRDATypeNVarBinary, DRDATypeVarByte, DRDATypeNVarByte:
 		var lenBuf [2]byte
