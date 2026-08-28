@@ -186,11 +186,21 @@ gantt
     Performance Optimizations & Benchmarks   :done, f5_2, after f5_1, 5d
     CI/CD Automation with GitHub Actions     :done, f5_3, after f5_2, 5d
     Release v0.1.0 (Public MVP)              :done, milestone, after f5_3, 0d
-    section Phase 6: Advanced DRDA & Enterprise Capabilities
+    section Phase 6: Advanced Protocol Capabilities
     Multi-Result Sets (RowsNextResultSet)    :done, f6_1, after f5_3, 5d
     Adaptive Block Fetching (QRYBLKSZ)       :done, f6_2, after f6_1, 5d
     Query Cancellation (SQLINTR)             :done, f6_3, after f6_2, 5d
     ORM & Struct Mapping (sqlx demo)         :done, f6_4, after f6_3, 5d
+    section Phase 7: Types, Bulk Ops & Feature Parity
+    LastInsertId (IDENTITY_VAL_LOCAL)        :active, f7_1, after f6_4, 5d
+    Extended Types (DECFLOAT, XML, TZ)       :f7_2, after f7_1, 7d
+    Batch / Array Parameter Binding          :f7_3, after f7_2, 7d
+    DBCS & Graphic Types (DBCLOB, CODEUNITS) :f7_4, after f7_3, 5d
+    Admin DB Management (CreateDb / DropDb)  :f7_5, after f7_4, 5d
+    section Phase 8: Extended Authentication & Security
+    Kerberos / GSSAPI Auth (SECMEC 7/11)     :f8_1, after f7_5, 10d
+    Trusted Context (Multi-Tenant Switch)    :f8_2, after f8_1, 7d
+    Client Workstation & App Accounting      :f8_3, after f8_2, 5d
 ```
 
 ### Milestone Breakdown
@@ -200,9 +210,34 @@ gantt
 | **M1 - Protocol Foundation** | ✅ Supported | Establish basic socket connection with Db2 | DSS/DDM packet layer, dispatching `EXCSAT`, `ACCSEC`, `SECCHK`, `ACCRDB`, and clean session termination. |
 | **M2 - Minimal `database/sql`** | ✅ Supported | Execute simple SQL commands and receive results | Driver registered in Go; support for `db.Ping()`, `db.Exec("CREATE TABLE...")`, and `db.Query("SELECT 1 FROM ...")`. |
 | **M3 - Types & Statements** | ✅ Supported | Full support for everyday CRUD operations | `db.Prepare()`, `?` placeholders, conversions for integers, text, dates, decimals, and booleans. |
-| **M4 - Security & LOBs** | ✅ Supported | Enterprise and cloud readiness | SSL/TLS support, encrypted password authentication (SECMEC 9), `BLOB`/`CLOB` reading and streaming via `EXTDTA`. |
+| **M4 - Security & LOBs** | ✅ Supported | Secure connections and large object handling | SSL/TLS support, encrypted password authentication (SECMEC 9), `BLOB`/`CLOB` reading and streaming via `EXTDTA`. |
 | **M5 - Quality, SPs & Release** | ✅ Supported | Production quality, Stored Procedures & CI | `CALL` with `sql.Out` (`IN`/`OUT`/`INOUT`), memory benchmarks (`benchmark_test.go`), and GitHub Actions CI workflow. |
-| **M6 - Advanced DRDA & ORMs** | ✅ Supported | Enterprise scalability, multi-result sets & resilience | `driver.RowsNextResultSet` for multi-cursor SPs, configurable block size (`QRYBLKSZ`), `SQLINTR` cancellation, and struct mapping demo. |
+| **M6 - Advanced DRDA & ORMs** | ✅ Supported | Protocol scalability, multi-result sets & resilience | `driver.RowsNextResultSet` for multi-cursor SPs, configurable block size (`QRYBLKSZ`), `SQLINTR` cancellation, and struct mapping demo. |
+| **M7 - Extended Types & Bulk Ops** | 🔄 Next | Parity with `go_ibm_db` advanced types & bulk operations | `LastInsertId()` via `IDENTITY_VAL_LOCAL()`, `DECFLOAT(16/34)`, `XML`, `TIMESTAMP WITH TIME ZONE`, parameter arrays for bulk insert, and `CreateDb`/`DropDb`. |
+| **M8 - Extended Security & Auth** | 📋 Planned | Extended directory authentication & context switching | Kerberos SSO (SECMEC 7/11), Trusted Context multi-tenant switching, and client application accounting (`EXCSQLSET`). |
+
+---
+
+## 5.1 Comparative Analysis: `go_ibm_db` vs Pure-Go `go-db2`
+
+| Capability | `go_ibm_db` (IBM Official) | `go-db2` (Pure Go) | Status in `go-db2` |
+| :--- | :--- | :--- | :---: |
+| **Runtime Architecture** | CGO wrapper around IBM CLI (`clidriver` ~100MB) | Pure Go binary protocol (`DRDA` / `DDM`) | 🏆 Superior (Zero CGO) |
+| **Cross-Compilation** | Complex (requires C toolchain & platform binaries) | Instant (`CGO_ENABLED=0`, ARM, Alpine, WebAssembly) | 🏆 Superior |
+| **Network Latency & Memory** | CGO bridge overhead on every row iteration | Stack allocations, zero-alloc DSS headers, direct wire | 🏆 Superior |
+| **Transactions & Savepoints** | ✅ Full support (`Commit`, `Rollback`) | ✅ Full support (`RDBCMM`, `RDBRLLBCK`) | ✅ Parity |
+| **Prepared Statements & Params** | ✅ Positional `?` | ✅ Positional `?` with `FDODSC`/`FDODTA` | ✅ Parity |
+| **LOBs (BLOB / CLOB)** | ✅ Supported | ✅ Supported via DRDA `EXTDTA` streaming | ✅ Parity |
+| **Stored Procedures & `sql.Out`**| ✅ Supported (`IN`, `OUT`, `INOUT`) | ✅ Supported via DRDA `SQLDTARD` | ✅ Parity |
+| **Multi-Result Sets** | ✅ Supported | ✅ Supported via `driver.RowsNextResultSet` | ✅ Parity |
+| **Block Fetching** | ✅ `FETCHSIZE` / `ROWARRAYSIZE` | ✅ `block_size` / `QRYBLKSZ` | ✅ Parity |
+| **Query Cancellation** | ✅ Supported | ✅ Supported via `SQLINTR` (`0x2007`) | ✅ Parity |
+| **`Result.LastInsertId()`** | ✅ `IDENTITY_VAL_LOCAL()` | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.1) |
+| **Extended Types (`DECFLOAT`, `XML`)**| ✅ Supported | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.2) |
+| **Batch / Array Parameter DML** | ✅ `Array<Type>` for bulk insert | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.3) |
+| **Graphic & DBCS Types** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.4) |
+| **Admin DB APIs (`CreateDb`/`DropDb`)**| ✅ Supported | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.5) |
+| **Kerberos & Trusted Context** | ✅ Supported | 📋 Planned in Phase 8 | 🎯 Phase 8 (M8.1/M8.2) |
 
 ---
 
