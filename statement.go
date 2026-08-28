@@ -93,6 +93,23 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 		}
 	}
 
+	isBatch, batchRows, err := detectAndExtractBatch(rawArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	if isBatch {
+		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query)
+		if err != nil {
+			return nil, err
+		}
+		totalAffected, err := s.conn.session.ExecBatchWithParams(ctx, newParamCols, batchRows)
+		if err != nil {
+			return nil, err
+		}
+		return NewResultWithConn(s.conn, totalAffected, isInsertQuery(s.query)), nil
+	}
+
 	if hasBlobParams(s.paramCols, rawArgs) {
 		newQuery, _, newArgs := rewriteBinaryParams(s.query, s.paramCols, rawArgs)
 		if len(newArgs) == 0 {
@@ -281,6 +298,58 @@ func assignOutParam(dest any, val any) error {
 // CheckNamedValue implements driver.NamedValueChecker interface.
 func (s *Stmt) CheckNamedValue(nv *driver.NamedValue) error {
 	return nil
+}
+
+func detectAndExtractBatch(rawArgs []any) (bool, [][]any, error) {
+	batchSize := 0
+	hasSlice := false
+
+	for _, arg := range rawArgs {
+		if arg == nil {
+			continue
+		}
+		if _, isBytes := arg.([]byte); isBytes {
+			continue
+		}
+		val := reflect.ValueOf(arg)
+		if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
+			hasSlice = true
+			sliceLen := val.Len()
+			if batchSize == 0 {
+				batchSize = sliceLen
+			} else if sliceLen != batchSize {
+				return false, nil, fmt.Errorf("db2: mismatched batch parameter lengths (expected %d, got %d)", batchSize, sliceLen)
+			}
+		}
+	}
+
+	if !hasSlice || batchSize == 0 {
+		return false, nil, nil
+	}
+
+	batchRows := make([][]any, batchSize)
+	for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+		row := make([]any, len(rawArgs))
+		for colIdx, arg := range rawArgs {
+			if arg == nil {
+				row[colIdx] = nil
+				continue
+			}
+			if _, isBytes := arg.([]byte); isBytes {
+				row[colIdx] = arg
+				continue
+			}
+			val := reflect.ValueOf(arg)
+			if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
+				row[colIdx] = val.Index(rowIdx).Interface()
+			} else {
+				row[colIdx] = arg
+			}
+		}
+		batchRows[rowIdx] = row
+	}
+
+	return true, batchRows, nil
 }
 
 var (

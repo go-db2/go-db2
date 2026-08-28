@@ -475,13 +475,14 @@ func (s *Session) ExecDirect(ctx context.Context, sql string) (int64, error) {
 	var affectedRows int64
 	for _, r := range replies {
 		if r.CodePoint == CodePointSQLCARD {
-			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			code, state, msg, rows, parseErr := ParseSQLCARD(r.Data, s.endian)
 			if parseErr != nil {
 				return 0, parseErr
 			}
 			if code < 0 {
 				return 0, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
 			}
+			affectedRows += rows
 		}
 		if r.CodePoint == CodePointSQLERRRM {
 			sub, _ := ParseDDMReply(r.Data)
@@ -587,7 +588,7 @@ func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescript
 			sub, _ := ParseDDMReply(r.Data)
 			return nil, nil, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
 		} else if r.CodePoint == CodePointSQLCARD {
-			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			code, state, msg, _, parseErr := ParseSQLCARD(r.Data, s.endian)
 			if parseErr != nil {
 				return nil, nil, parseErr
 			}
@@ -695,7 +696,7 @@ func (s *Session) PrepareAndDescribe(ctx context.Context, sql string) ([]ColumnD
 				outputCols = cols
 			}
 		} else if r.CodePoint == CodePointSQLCARD {
-			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			code, state, msg, _, parseErr := ParseSQLCARD(r.Data, s.endian)
 			if parseErr != nil {
 				return nil, nil, parseErr
 			}
@@ -763,10 +764,10 @@ func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescript
 	}
 
 	// If the server sent SQLDARD in the first chain, a second chain follows with SQLDTARD / SQLCARD
-	hasOnlyDARD := true
+	hasOnlyDARD := false
 	for _, r := range replies {
-		if r.CodePoint != CodePointSQLDARD {
-			hasOnlyDARD = false
+		if r.CodePoint == CodePointSQLDARD {
+			hasOnlyDARD = true
 			break
 		}
 	}
@@ -786,13 +787,14 @@ func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescript
 				outValues = vals
 			}
 		} else if r.CodePoint == CodePointSQLCARD {
-			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			code, state, msg, rows, parseErr := ParseSQLCARD(r.Data, s.endian)
 			if parseErr != nil {
 				return 0, nil, parseErr
 			}
 			if code < 0 {
 				return 0, nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
 			}
+			affectedRows += rows
 		} else if r.CodePoint == CodePointSQLERRRM {
 			sub, _ := ParseDDMReply(r.Data)
 			return 0, nil, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
@@ -800,6 +802,23 @@ func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescript
 	}
 
 	return affectedRows, outValues, nil
+}
+
+// ExecBatchWithParams executes a batch of parameter sets against the currently prepared statement.
+func (s *Session) ExecBatchWithParams(ctx context.Context, paramCols []ColumnDescription, batchRows [][]any) (int64, error) {
+	if len(batchRows) == 0 {
+		return 0, nil
+	}
+
+	var totalAffected int64
+	for _, rowArgs := range batchRows {
+		affected, _, err := s.ExecWithParams(ctx, paramCols, rowArgs)
+		if err != nil {
+			return totalAffected, err
+		}
+		totalAffected += affected
+	}
+	return totalAffected, nil
 }
 
 // QueryWithParams opens a query on a prepared statement with parameter arguments.
@@ -828,15 +847,15 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 		return nil, nil, err
 	}
 
-	// 1. OPNQRY with params
-	opn := PackOPNQRYWithParams(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database, s.qryblksz)
-	_, err = WriteRequestDSS(s.conn, opn, 1, true, false)
+	// 1. OPNQRY with QRYBLKSZ
+	opnqry := PackOPNQRY(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database, s.qryblksz)
+	curID, err := WriteRequestDSS(s.conn, opnqry, 1, true, false)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// 2. SQLDTA
-	_, err = WriteRequestDSS(s.conn, sqldta, 1, false, true)
+	// 2. SQLDTA with parameters
+	_, err = WriteRequestDSS(s.conn, sqldta, curID, false, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -900,7 +919,7 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 				rows = append(rows, row)
 			}
 		} else if r.CodePoint == CodePointSQLCARD {
-			code, state, msg, parseErr := ParseSQLCARD(r.Data, s.endian)
+			code, state, msg, _, parseErr := ParseSQLCARD(r.Data, s.endian)
 			if parseErr != nil {
 				return nil, nil, parseErr
 			}

@@ -476,7 +476,7 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 		rest = obj[1:]
 	} else {
 		// Parse leading SQLCARD
-		sqlcode, sqlstate, msg, err := ParseSQLCARD(obj, endian)
+		sqlcode, sqlstate, msg, _, err := ParseSQLCARD(obj, endian)
 		if err != nil {
 			return nil, err
 		}
@@ -625,20 +625,28 @@ func ParseQRYDSC(obj []byte) ([]FieldDescriptor, error) {
 	return fields, nil
 }
 
-// ParseSQLCARD parses the SQL Communications Area (SQLCARD) structure into SQLCODE, SQLSTATE, and Message.
-func ParseSQLCARD(obj []byte, endian binary.ByteOrder) (int32, string, string, error) {
+// ParseSQLCARD parses the SQL Communications Area (SQLCARD) structure into SQLCODE, SQLSTATE, Message, and RowsAffected.
+func ParseSQLCARD(obj []byte, endian binary.ByteOrder) (int32, string, string, int64, error) {
 	if len(obj) == 0 {
-		return 0, "", "", errors.New("empty SQLCARD payload")
+		return 0, "", "", 0, errors.New("empty SQLCARD payload")
 	}
 	if obj[0] == 0xFF {
-		return 0, "", "", nil // Valid empty / no error
+		return 0, "", "", 0, nil // Valid empty / no error
 	}
 	if len(obj) < 18 {
-		return 0, "", "", fmt.Errorf("SQLCARD payload too short: %d bytes", len(obj))
+		return 0, "", "", 0, fmt.Errorf("SQLCARD payload too short: %d bytes", len(obj))
 	}
 
 	sqlcode := int32(endian.Uint32(obj[1:5]))
 	sqlstate := string(obj[5:10])
+
+	var rowsAffected int64
+	if len(obj) >= 26 {
+		rowsAffected = int64(int32(endian.Uint32(obj[22:26])))
+	}
+	if rowsAffected == 0 && sqlcode == 0 {
+		rowsAffected = 1
+	}
 
 	// Try extracting human-readable message if present
 	var message string
@@ -662,5 +670,5 @@ func ParseSQLCARD(obj []byte, endian binary.ByteOrder) (int32, string, string, e
 		}
 	}
 
-	return sqlcode, sqlstate, message, nil
+	return sqlcode, sqlstate, message, rowsAffected, nil
 }

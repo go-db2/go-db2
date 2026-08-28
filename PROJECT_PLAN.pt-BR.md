@@ -194,8 +194,8 @@ gantt
     section Fase 7: Tipos Avançados, Operações em Lote e Paridade
     LastInsertId (IDENTITY_VAL_LOCAL)        :done, f7_1, after f6_4, 5d
     Tipos Estendidos (DECFLOAT, XML, TZ)     :done, f7_2, after f7_1, 7d
-    Batch / Array Parameter Binding (DML)    :active, f7_3, after f7_2, 7d
-    Tipos Gráficos & DBCS (DBCLOB, CODEUNITS):f7_4, after f7_3, 5d
+    Batch / Array Parameter Binding (DML)    :done, f7_3, after f7_2, 7d
+    Tipos Gráficos & DBCS (DBCLOB, CODEUNITS):active, f7_4, after f7_3, 5d
     Gerenciamento de Banco (CreateDb/DropDb) :f7_5, after f7_4, 5d
     section Fase 8: Autenticação Estendida e Segurança
     Autenticação Kerberos / GSSAPI (SECMEC)  :f8_1, after f7_5, 10d
@@ -234,7 +234,7 @@ gantt
 | **Cancelamento de Queries** | ✅ Suportado | ✅ Suportado via `SQLINTR` (`0x2007`) | ✅ Paridade |
 | **`Result.LastInsertId()`** | ✅ `IDENTITY_VAL_LOCAL()` | ✅ `IDENTITY_VAL_LOCAL()` no `INSERT` | ✅ Paridade |
 | **Tipos Estendidos (`DECFLOAT`, `XML`)**| ✅ Suportado | ✅ `DECFLOAT(16/34)`, `XML`, `TIMESTAMP TZ` | ✅ Paridade |
-| **DML com Arrays de Parâmetros** | ✅ `Array<Type>` para inserção em lote | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.3) |
+| **DML com Arrays de Parâmetros** | ✅ `Array<Type>` para inserção em lote | ✅ Fatias primitivas (`[]T`) para bulk DML | ✅ Paridade |
 | **Tipos Gráficos e DBCS** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.4) |
 | **APIs Administrativas (`CreateDb`/`DropDb`)**| ✅ Suportado | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.5) |
 | **Kerberos & Trusted Context** | ✅ Suportado | 📋 Planejado na Fase 8 | 🎯 Fase 8 (M8.1/M8.2) |
