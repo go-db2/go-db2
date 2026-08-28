@@ -186,6 +186,11 @@ gantt
     Otimizações de Performance & Benchmarks  :done, f5_2, after f5_1, 5d
     Automação CI/CD no GitHub Actions        :done, f5_3, after f5_2, 5d
     Release v0.1.0 (MVP Público)             :done, milestone, after f5_3, 0d
+    section Fase 6: Capacidades Avançadas de Protocolo e ORMs
+    Multi-Result Sets (RowsNextResultSet)    :done, f6_1, after f5_3, 5d
+    Block Fetching Adaptativo (QRYBLKSZ)     :done, f6_2, after f6_1, 5d
+    Cancelamento de Consultas (SQLINTR)      :done, f6_3, after f6_2, 5d
+    Mapeamento de Structs e ORMs (sqlx demo) :done, f6_4, after f6_3, 5d
 ```
 
 ### Detalhamento dos Milestones
@@ -197,6 +202,7 @@ gantt
 | **M3 - Tipos & Statements** | ✅ Suportado | Suporte completo a operações de CRUD do dia a dia | `db.Prepare()`, placeholders `?`, conversão de tipos inteiros, texto, datas, decimais e booleanos. |
 | **M4 - Segurança & LOBs** | ✅ Suportado | Prontidão para ambientes corporativos e nuvem | Suporte a SSL/TLS, senhas criptografadas (SECMEC 9), leitura e gravação de `BLOB`/`CLOB` via `EXTDTA`. |
 | **M5 - Qualidade, SPs & Release** | ✅ Suportado | Qualidade de produção, Stored Procedures e CI | `CALL` com `sql.Out` (`IN`/`OUT`/`INOUT`), benchmarks de memória (`benchmark_test.go`) e pipeline no GitHub Actions. |
+| **M6 - DRDA Avançado & ORMs** | ✅ Suportado | Escalabilidade empresarial, múltiplos cursores e resiliência | `driver.RowsNextResultSet` para procedures com múltiplos cursores, buffer configurável (`QRYBLKSZ`), cancelamento via `SQLINTR` e demo de struct mapping. |
 
 ---
 

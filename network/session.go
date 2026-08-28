@@ -30,6 +30,7 @@ type SessionConfig struct {
 	SSLClientCertPath string
 	TLSConfig         *tls.Config
 	Timeout           time.Duration
+	BlockSize         int
 }
 
 // ReplyPacket represents a single decoded DSS reply with its outer DDM codepoint and raw payload.
@@ -77,6 +78,11 @@ func NewSession(cfg SessionConfig) *Session {
 	}
 	cfg.Database = dbPadded
 
+	blksz := uint32(cfg.BlockSize)
+	if blksz < 1024 {
+		blksz = 65535
+	}
+
 	return &Session{
 		cfg:           cfg,
 		correlationID: 1,
@@ -87,7 +93,7 @@ func NewSession(cfg SessionConfig) *Session {
 		pkgid:         "SYSSH200",
 		pkgcnstkn:     "SYSLVL01",
 		pkgsn:         65,
-		qryblksz:      65535,
+		qryblksz:      blksz,
 	}
 }
 
@@ -1017,6 +1023,20 @@ func stitchEXTDTA(fields []FieldDescriptor, rows [][]any, extdtaList [][]byte) {
 			}
 		}
 	}
+}
+
+// Interrupt requests cancellation of any active statement on the session via SQLINTR.
+func (s *Session) Interrupt() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.conn == nil {
+		return errors.New("db2: connection is closed")
+	}
+
+	intr := PackSQLINTR(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	_, err := WriteRequestDSS(s.conn, intr, 1, false, true)
+	return err
 }
 
 // Close gracefully closes the session and underlying network connection.

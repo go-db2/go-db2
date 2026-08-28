@@ -50,7 +50,7 @@ func FDODSC(sqlType types.SQLType, sqllen int64, prec, scale int) []byte {
 	case types.SQLTypeVarBinary, types.SQLTypeNVarBinary:
 		return []byte{0x29, byte(sqllen >> 8), byte(sqllen & 0xFF)}
 	case types.SQLTypeDecimal, types.SQLTypeNDecimal:
-		return []byte{0x31, byte(prec), byte(scale)}
+		return []byte{0x0F, byte(prec), byte(scale)}
 	default:
 		return []byte{0x39, 0x3F, 0xFF}
 	}

@@ -20,16 +20,18 @@ type Config struct {
 	UseSSL            bool
 	SSLClientCertPath string
 	Timeout           time.Duration
+	BlockSize         int
 	Params            map[string]string
 }
 
 // NewConfig returns a default Config with standard Db2 settings.
 func NewConfig() *Config {
 	return &Config{
-		Host:    "localhost",
-		Port:    50000,
-		Timeout: 30 * time.Second,
-		Params:  make(map[string]string),
+		Host:      "localhost",
+		Port:      50000,
+		Timeout:   30 * time.Second,
+		BlockSize: 65535,
+		Params:    make(map[string]string),
 	}
 }
 
@@ -151,6 +153,10 @@ func applyParam(cfg *Config, key, val string) {
 		} else if sec, err := strconv.Atoi(val); err == nil {
 			cfg.Timeout = time.Duration(sec) * time.Second
 		}
+	case "block_size", "blocksize", "qryblksz":
+		if sz, err := strconv.Atoi(val); err == nil && sz >= 1024 && sz <= 1048576 {
+			cfg.BlockSize = sz
+		}
 	default:
 		cfg.Params[key] = val
 	}
@@ -167,5 +173,6 @@ func (c *Config) ToSessionConfig() network.SessionConfig {
 		UseSSL:            c.UseSSL,
 		SSLClientCertPath: c.SSLClientCertPath,
 		Timeout:           c.Timeout,
+		BlockSize:         c.BlockSize,
 	}
 }

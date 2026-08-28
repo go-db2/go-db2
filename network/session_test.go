@@ -152,3 +152,20 @@ func TestSessionMockHandshake(t *testing.T) {
 		t.Fatalf("server encountered error: %v", srvErr)
 	}
 }
+
+func TestPackSQLINTR(t *testing.T) {
+	pkgid := "SYSSH200"
+	pkgcnstkn := "SYSLVL01"
+	pkgsn := uint16(4)
+	database := "TESTDB"
+
+	pkt := PackSQLINTR(pkgid, pkgcnstkn, pkgsn, database)
+	if len(pkt) < 4 {
+		t.Fatalf("SQLINTR packet too short: %d", len(pkt))
+	}
+
+	codePoint := binary.BigEndian.Uint16(pkt[2:4])
+	if codePoint != uint16(CodePointSQLINTR) {
+		t.Fatalf("expected codepoint 0x%04X, got 0x%04X", CodePointSQLINTR, codePoint)
+	}
+}

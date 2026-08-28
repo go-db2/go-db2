@@ -22,6 +22,7 @@ const (
 	CodePointPASSWORD    CodePoint = 0x11A1 // Password
 	CodePointNEWPASSWORD CodePoint = 0x11DE // New Password
 	CodePointACCRDB      CodePoint = 0x2001 // Access Relational Database
+	CodePointSQLINTR     CodePoint = 0x2007 // SQL Interrupt Request
 	CodePointRDBNAM      CodePoint = 0x2110 // Relational Database Name
 	CodePointRDBINTTKN   CodePoint = 0x2103 // RDB Interrupt Token
 	CodePointRDBALWUPD   CodePoint = 0x211A // RDB Allow Update

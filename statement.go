@@ -164,6 +164,15 @@ func (s *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driv
 		return nil, fmt.Errorf("db2: expected %d arguments, got %d", len(s.paramCols), len(args))
 	}
 
+	trimmed := strings.TrimSpace(strings.ToUpper(s.query))
+	if strings.HasPrefix(trimmed, "CALL") {
+		_, err := s.ExecContext(ctx, args)
+		if err != nil {
+			return nil, err
+		}
+		return NewRows(nil, nil), nil
+	}
+
 	rawArgs := make([]any, len(args))
 	for i, arg := range args {
 		rawArgs[i] = arg.Value

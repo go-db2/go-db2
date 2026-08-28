@@ -26,15 +26,16 @@ func TestParseDSN_URL(t *testing.T) {
 		},
 		{
 			name: "SSL URL with params",
-			dsn:  "db2s://myuser:secret@db2server:50001/PRODDB?timeout=15s",
+			dsn:  "db2s://myuser:secret@db2server:50001/PRODDB?timeout=15s&block_size=131072",
 			expected: &Config{
-				Host:     "db2server",
-				Port:     50001,
-				Database: "PRODDB",
-				User:     "myuser",
-				Password: "secret",
-				UseSSL:   true,
-				Timeout:  15 * time.Second,
+				Host:      "db2server",
+				Port:      50001,
+				Database:  "PRODDB",
+				User:      "myuser",
+				Password:  "secret",
+				UseSSL:    true,
+				Timeout:   15 * time.Second,
+				BlockSize: 131072,
 			},
 		},
 	}
@@ -65,6 +66,9 @@ func TestParseDSN_URL(t *testing.T) {
 			}
 			if cfg.Timeout != tt.expected.Timeout {
 				t.Errorf("Timeout = %v, want %v", cfg.Timeout, tt.expected.Timeout)
+			}
+			if tt.expected.BlockSize > 0 && cfg.BlockSize != tt.expected.BlockSize {
+				t.Errorf("BlockSize = %d, want %d", cfg.BlockSize, tt.expected.BlockSize)
 			}
 		})
 	}
