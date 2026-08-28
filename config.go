@@ -21,6 +21,12 @@ type Config struct {
 	SSLClientCertPath string
 	Timeout           time.Duration
 	BlockSize         int
+	SecurityMechanism uint16
+	KerberosSPN       string
+	KerberosRealm     string
+	Krb5ConfigFile    string
+	Krb5KeytabFile    string
+	Krb5CCacheFile    string
 	Params            map[string]string
 }
 
@@ -157,6 +163,36 @@ func applyParam(cfg *Config, key, val string) {
 		if sz, err := strconv.Atoi(val); err == nil && sz >= 1024 && sz <= 1048576 {
 			cfg.BlockSize = sz
 		}
+	case "security_mechanism", "secmec", "auth_mechanism", "auth":
+		lowerVal := strings.ToLower(val)
+		switch lowerVal {
+		case "kerberos", "gssapi", "7":
+			cfg.SecurityMechanism = 7
+		case "encrypted_kerberos", "11":
+			cfg.SecurityMechanism = 11
+		case "dh_encrypted_password", "secmec9", "9":
+			cfg.SecurityMechanism = 9
+		case "encrypted_password", "secmec6", "6":
+			cfg.SecurityMechanism = 6
+		case "plaintext", "secmec3", "3":
+			cfg.SecurityMechanism = 3
+		case "user_only", "secmec4", "4":
+			cfg.SecurityMechanism = 4
+		default:
+			if code, err := strconv.Atoi(val); err == nil && code > 0 {
+				cfg.SecurityMechanism = uint16(code)
+			}
+		}
+	case "spn", "service_principal", "server_principal":
+		cfg.KerberosSPN = val
+	case "realm", "krb5_realm":
+		cfg.KerberosRealm = val
+	case "krb5_config", "krb5_conf":
+		cfg.Krb5ConfigFile = val
+	case "krb5_keytab", "keytab":
+		cfg.Krb5KeytabFile = val
+	case "krb5_ccache", "ccache":
+		cfg.Krb5CCacheFile = val
 	default:
 		cfg.Params[key] = val
 	}
@@ -174,5 +210,11 @@ func (c *Config) ToSessionConfig() network.SessionConfig {
 		SSLClientCertPath: c.SSLClientCertPath,
 		Timeout:           c.Timeout,
 		BlockSize:         c.BlockSize,
+		SecurityMechanism: c.SecurityMechanism,
+		KerberosSPN:       c.KerberosSPN,
+		KerberosRealm:     c.KerberosRealm,
+		Krb5ConfigFile:    c.Krb5ConfigFile,
+		Krb5KeytabFile:    c.Krb5KeytabFile,
+		Krb5CCacheFile:    c.Krb5CCacheFile,
 	}
 }

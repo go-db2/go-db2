@@ -198,8 +198,8 @@ gantt
     Tipos Gráficos & DBCS (DBCLOB, CODEUNITS):done, f7_4, after f7_3, 5d
     Gerenciamento de Banco (CreateDb/DropDb) :done, f7_5, after f7_4, 5d
     section Fase 8: Autenticação Estendida e Segurança
-    Autenticação Kerberos / GSSAPI (SECMEC)  :active, f8_1, after f7_5, 10d
-    Trusted Context (Multi-Tenant Switch)    :f8_2, after f8_1, 7d
+    Autenticação Kerberos / GSSAPI (SECMEC)  :done, f8_1, after f7_5, 10d
+    Trusted Context (Multi-Tenant Switch)    :active, f8_2, after f8_1, 7d
     Metadados de Aplicação (EXCSQLSET)       :f8_3, after f8_2, 5d
 ```
 
@@ -214,7 +214,7 @@ gantt
 | **M5 - Qualidade, SPs & Release** | ✅ Suportado | Qualidade de produção, Stored Procedures e CI | `CALL` com `sql.Out` (`IN`/`OUT`/`INOUT`), benchmarks de memória (`benchmark_test.go`) e pipeline no GitHub Actions. |
 | **M6 - DRDA Avançado & ORMs** | ✅ Suportado | Escalabilidade de protocolo, múltiplos cursores e resiliência | `driver.RowsNextResultSet` para procedures com múltiplos cursores, buffer configurável (`QRYBLKSZ`), cancelamento via `SQLINTR` e demo de struct mapping. |
 | **M7 - Tipos Estendidos & Lote** | ✅ Suportado | Paridade com `go_ibm_db` em tipos avançados e operações em lote | `LastInsertId()` via `IDENTITY_VAL_LOCAL()`, `DECFLOAT(16/34)`, `XML`, `TIMESTAMP WITH TIME ZONE`, arrays de parâmetros para bulk insert, `GRAPHIC`/`VARGRAPHIC`/`DBCLOB` e APIs `CreateDb`/`DropDb`. |
-| **M8 - Segurança Estendida & Auth** | 📋 Planejado | Autenticação em diretório de rede e troca de contexto | Kerberos SSO (SECMEC 7/11), alternância de identidade via Trusted Context e metadados de aplicação (`EXCSQLSET`). |
+| **M8 - Segurança Estendida & Auth** | 🔄 Em Andamento | Autenticação em diretório de rede e troca de contexto | Kerberos SSO (SECMEC 7/11), alternância de identidade via Trusted Context e metadados de aplicação (`EXCSQLSET`). |
 
 ---
 
@@ -237,7 +237,8 @@ gantt
 | **DML com Arrays de Parâmetros** | ✅ `Array<Type>` para inserção em lote | ✅ Fatias primitivas (`[]T`) para bulk DML | ✅ Paridade |
 | **Tipos Gráficos e DBCS** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB`, `CODEUNITS32` | ✅ Paridade |
 | **APIs Administrativas (`CreateDb`/`DropDb`)**| ✅ Suportado | ✅ `CreateDb()`, `DropDb()`, `ExecAdminCmd()` | ✅ Paridade |
-| **Kerberos & Trusted Context** | ✅ Suportado | 📋 Planejado na Fase 8 | 🎯 Fase 8 (M8.1/M8.2) |
+| **Kerberos SSO & GSSAPI** | ✅ Suportado | ✅ Kerberos SSO (`SECMEC 7/11`), `ccache`, `keytab` | ✅ Paridade |
+| **Trusted Context (Multi-Tenant)** | ✅ Suportado | 📋 Planejado na Fase 8 | 🎯 Fase 8 (M8.2) |
 
 ---
 

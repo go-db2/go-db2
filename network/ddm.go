@@ -214,15 +214,17 @@ func PackSECCHKWithBytes(secmec uint16, sectkn []byte, database, user string, pa
 	}
 	body = append(body, usrIdObj...)
 
-	// 5. Password (PASSWORD)
-	if isEncrypted {
-		body = append(body, PackBytes(CodePointPASSWORD, passwordBytes)...)
-	} else {
-		pwdObj, err := PackString(CodePointPASSWORD, string(passwordBytes), enc)
-		if err != nil {
-			return nil, err
+	// 5. Password (PASSWORD) - only append if provided (omitted in Kerberos/token auth)
+	if len(passwordBytes) > 0 {
+		if isEncrypted {
+			body = append(body, PackBytes(CodePointPASSWORD, passwordBytes)...)
+		} else {
+			pwdObj, err := PackString(CodePointPASSWORD, string(passwordBytes), enc)
+			if err != nil {
+				return nil, err
+			}
+			body = append(body, pwdObj...)
 		}
-		body = append(body, pwdObj...)
 	}
 
 	return PackDDMObject(CodePointSECCHK, body), nil
