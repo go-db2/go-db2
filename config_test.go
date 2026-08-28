@@ -106,3 +106,35 @@ func TestParseDSN_Invalid(t *testing.T) {
 		t.Errorf("expected error for empty DSN, got nil")
 	}
 }
+
+func TestParseDSN_Kerberos(t *testing.T) {
+	dsn := "db2://localhost:50000/TESTDB?security_mechanism=kerberos&spn=db2/server.corp.local@CORP.LOCAL&krb5_config=/etc/krb5.conf&krb5_keytab=/etc/db2.keytab&krb5_ccache=/tmp/krb5cc_1000"
+	cfg, err := ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("ParseDSN(%q) error: %v", dsn, err)
+	}
+
+	if cfg.SecurityMechanism != 7 {
+		t.Errorf("SecurityMechanism = %d, want 7", cfg.SecurityMechanism)
+	}
+	if cfg.KerberosSPN != "db2/server.corp.local@CORP.LOCAL" {
+		t.Errorf("KerberosSPN = %q, want db2/server.corp.local@CORP.LOCAL", cfg.KerberosSPN)
+	}
+	if cfg.Krb5ConfigFile != "/etc/krb5.conf" {
+		t.Errorf("Krb5ConfigFile = %q, want /etc/krb5.conf", cfg.Krb5ConfigFile)
+	}
+	if cfg.Krb5KeytabFile != "/etc/db2.keytab" {
+		t.Errorf("Krb5KeytabFile = %q, want /etc/db2.keytab", cfg.Krb5KeytabFile)
+	}
+	if cfg.Krb5CCacheFile != "/tmp/krb5cc_1000" {
+		t.Errorf("Krb5CCacheFile = %q, want /tmp/krb5cc_1000", cfg.Krb5CCacheFile)
+	}
+
+	sessCfg := cfg.ToSessionConfig()
+	if sessCfg.SecurityMechanism != 7 {
+		t.Errorf("ToSessionConfig().SecurityMechanism = %d, want 7", sessCfg.SecurityMechanism)
+	}
+	if sessCfg.KerberosSPN != "db2/server.corp.local@CORP.LOCAL" {
+		t.Errorf("ToSessionConfig().KerberosSPN = %q, want db2/server.corp.local@CORP.LOCAL", sessCfg.KerberosSPN)
+	}
+}

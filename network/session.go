@@ -31,6 +31,12 @@ type SessionConfig struct {
 	TLSConfig         *tls.Config
 	Timeout           time.Duration
 	BlockSize         int
+	SecurityMechanism uint16
+	KerberosSPN       string
+	KerberosRealm     string
+	Krb5ConfigFile    string
+	Krb5KeytabFile    string
+	Krb5CCacheFile    string
 }
 
 // ReplyPacket represents a single decoded DSS reply with its outer DDM codepoint and raw payload.
@@ -83,10 +89,15 @@ func NewSession(cfg SessionConfig) *Session {
 		blksz = 65535
 	}
 
+	secmec := cfg.SecurityMechanism
+	if secmec == 0 {
+		secmec = SecMecUSRIDPWD
+	}
+
 	return &Session{
 		cfg:           cfg,
 		correlationID: 1,
-		secmec:        SecMecUSRIDPWD, // Default to plain text or negotiate
+		secmec:        secmec,
 		encoding:      EncodingCP500,
 		endian:        binary.LittleEndian,
 		prdid:         "SQL12010",
@@ -209,9 +220,25 @@ func (s *Session) handshake(ctx context.Context) error {
 		}
 	}
 
-	// 3. Pack SECCHK (supporting SECMEC 9 with DH key exchange & DES encryption)
+	// 3. Pack SECCHK (supporting Kerberos SECMEC 7/11, and SECMEC 9 with DH key exchange & DES encryption)
 	var secchk []byte
-	if (s.secmec == SecMecEUSRIDPWD || s.secmec == 9) && len(secTkn) >= 20 {
+	if s.secmec == security.SecMecKERBEROS || s.secmec == security.SecMecEUSERIDKERBEROS || s.secmec == 7 || s.secmec == 11 {
+		krbCfg := security.KerberosConfig{
+			ServicePrincipal: s.cfg.KerberosSPN,
+			Host:             s.cfg.Host,
+			Realm:            s.cfg.KerberosRealm,
+			ConfigFile:       s.cfg.Krb5ConfigFile,
+			KeytabFile:       s.cfg.Krb5KeytabFile,
+			CCacheFile:       s.cfg.Krb5CCacheFile,
+			Username:         s.cfg.User,
+			Password:         s.cfg.Password,
+		}
+		krbToken, krbErr := security.AcquireKerberosToken(krbCfg)
+		if krbErr != nil {
+			return fmt.Errorf("failed to acquire Kerberos token: %w", krbErr)
+		}
+		secchk, err = PackSECCHKWithBytes(s.secmec, krbToken, s.cfg.Database, s.cfg.User, nil, false, s.encoding)
+	} else if (s.secmec == SecMecEUSRIDPWD || s.secmec == 9) && len(secTkn) >= 20 {
 		clientPriv, privErr := security.GenerateDHPrivateKey()
 		if privErr != nil {
 			return fmt.Errorf("failed to generate DH private key: %w", privErr)

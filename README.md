@@ -34,6 +34,7 @@
 | **Graphic & DBCS Types** | ✅ Supported | `GRAPHIC`, `VARGRAPHIC`, `LONG VARGRAPHIC`, `DBCLOB`, `CODEUNITS32` |
 | **Batch / Array Parameter DML** | ✅ Supported | High-throughput bulk operations with primitive slices (`[]int`, `[]string`, `[]float64`) |
 | **Admin DB Management & APIs** | ✅ Supported | `CreateDb()`, `DropDb()`, and `ExecAdminCmd()` (`SYSPROC.ADMIN_CMD`) |
+| **Kerberos SSO & GSSAPI Auth** | ✅ Supported | Network directory authentication (`SECMEC 7/11`) via `ccache`, `keytab`, or domain credentials |
 | **Multi-Result Sets** | ✅ Supported | Full `driver.RowsNextResultSet` implementation for procedures returning multiple cursors |
 | **Adaptive Block Fetching** | ✅ Supported | Configurable buffer block size via DSN (`?block_size=131072`) with `QRYBLKSZ` |
 | **Query Cancellation (`SQLINTR`)** | ✅ Supported | Asynchronous cancellation signal and timeout aborts via DRDA `SQLINTR` (`0x2007`) |
@@ -184,6 +185,11 @@ Once the container is active, you can run the live examples:
 - **Admin DB Management (`CreateDb`, `DropDb`, `ADMIN_CMD`) Demo:**
   ```bash
   go run examples/admin_db_demo/main.go
+  ```
+
+- **Kerberos / GSSAPI SSO Authentication (`SECMEC 7/11`) Demo:**
+  ```bash
+  go run examples/kerberos_auth_demo/main.go
   ```
 
 - **Performance Benchmarks (Latency & Memory Allocs):**
