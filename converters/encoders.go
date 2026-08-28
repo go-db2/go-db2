@@ -43,7 +43,13 @@ func FDODSC(sqlType types.SQLType, sqllen int64, prec, scale int) []byte {
 		return []byte{0xBF, 0x00, 0x01}
 	case types.SQLTypeBlob, types.SQLTypeNBlob:
 		return []byte{0xC9, 0x80, 0x02}
-	case types.SQLTypeClob, types.SQLTypeNClob, types.SQLTypeDbClob, types.SQLTypeNDbClob:
+	case types.SQLTypeClob, types.SQLTypeNClob, types.SQLTypeDbClob, types.SQLTypeNDbClob,
+		types.SQLTypeClobLocator, types.SQLTypeNClobLocator, types.SQLTypeDbClobLocator, types.SQLTypeNDbClobLocator:
+		return []byte{0x39, 0x3F, 0xFF}
+	case types.SQLTypeGraphic, types.SQLTypeNGraphic:
+		return []byte{0x37, byte(sqllen >> 8), byte(sqllen & 0xFF)}
+	case types.SQLTypeVarGraph, types.SQLTypeNVarGraph,
+		types.SQLTypeLonGraph, types.SQLTypeNLonGraph:
 		return []byte{0x39, 0x3F, 0xFF}
 	case types.SQLTypeBinary, types.SQLTypeNBinary:
 		return []byte{0x27, byte(sqllen >> 8), byte(sqllen & 0xFF)}
@@ -78,7 +84,9 @@ func FDODTA(sqlType types.SQLType, sqllen int64, prec, scale int, val any, endia
 
 	switch sqlType {
 	case types.SQLTypeVarChar, types.SQLTypeNVarChar, types.SQLTypeChar, types.SQLTypeNChar,
-		types.SQLTypeClob, types.SQLTypeNClob, types.SQLTypeDbClob, types.SQLTypeNDbClob:
+		types.SQLTypeClob, types.SQLTypeNClob, types.SQLTypeDbClob, types.SQLTypeNDbClob,
+		types.SQLTypeClobLocator, types.SQLTypeNClobLocator, types.SQLTypeDbClobLocator, types.SQLTypeNDbClobLocator,
+		types.SQLTypeVarGraph, types.SQLTypeNVarGraph, types.SQLTypeLonGraph, types.SQLTypeNLonGraph:
 		switch v := val.(type) {
 		case []byte:
 			b := make([]byte, 3+len(v))
@@ -99,6 +107,19 @@ func FDODTA(sqlType types.SQLType, sqllen int64, prec, scale int, val any, endia
 			copy(b[3:], utf16Bytes)
 			return b, nil
 		}
+
+	case types.SQLTypeGraphic, types.SQLTypeNGraphic:
+		str := fmt.Sprint(val)
+		utf16Bytes := EncodeUTF16BE(str)
+		targetChars := int(sqllen)
+		if targetChars <= 0 {
+			targetChars = len(utf16Bytes) / 2
+		}
+		padded := PadGraphicUTF16BE(utf16Bytes, targetChars)
+		b := make([]byte, 1+len(padded))
+		b[0] = 0x00
+		copy(b[1:], padded)
+		return b, nil
 
 	case types.SQLTypeSmall, types.SQLTypeNSmall:
 		n := toInt64(val)

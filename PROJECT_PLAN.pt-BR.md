@@ -195,8 +195,8 @@ gantt
     LastInsertId (IDENTITY_VAL_LOCAL)        :done, f7_1, after f6_4, 5d
     Tipos Estendidos (DECFLOAT, XML, TZ)     :done, f7_2, after f7_1, 7d
     Batch / Array Parameter Binding (DML)    :done, f7_3, after f7_2, 7d
-    Tipos Gráficos & DBCS (DBCLOB, CODEUNITS):active, f7_4, after f7_3, 5d
-    Gerenciamento de Banco (CreateDb/DropDb) :f7_5, after f7_4, 5d
+    Tipos Gráficos & DBCS (DBCLOB, CODEUNITS):done, f7_4, after f7_3, 5d
+    Gerenciamento de Banco (CreateDb/DropDb) :active, f7_5, after f7_4, 5d
     section Fase 8: Autenticação Estendida e Segurança
     Autenticação Kerberos / GSSAPI (SECMEC)  :f8_1, after f7_5, 10d
     Trusted Context (Multi-Tenant Switch)    :f8_2, after f8_1, 7d
@@ -213,7 +213,7 @@ gantt
 | **M4 - Segurança & LOBs** | ✅ Suportado | Conexões seguras e manipulação de grandes objetos | Suporte a SSL/TLS, senhas criptografadas (SECMEC 9), leitura e gravação de `BLOB`/`CLOB` via `EXTDTA`. |
 | **M5 - Qualidade, SPs & Release** | ✅ Suportado | Qualidade de produção, Stored Procedures e CI | `CALL` com `sql.Out` (`IN`/`OUT`/`INOUT`), benchmarks de memória (`benchmark_test.go`) e pipeline no GitHub Actions. |
 | **M6 - DRDA Avançado & ORMs** | ✅ Suportado | Escalabilidade de protocolo, múltiplos cursores e resiliência | `driver.RowsNextResultSet` para procedures com múltiplos cursores, buffer configurável (`QRYBLKSZ`), cancelamento via `SQLINTR` e demo de struct mapping. |
-| **M7 - Tipos Estendidos & Lote** | 🔄 Em Andamento | Paridade com `go_ibm_db` em tipos avançados e operações em lote | `LastInsertId()` via `IDENTITY_VAL_LOCAL()`, `DECFLOAT(16/34)`, `XML`, `TIMESTAMP WITH TIME ZONE`, arrays de parâmetros para bulk insert e APIs `CreateDb`/`DropDb`. |
+| **M7 - Tipos Estendidos & Lote** | 🔄 Em Andamento | Paridade com `go_ibm_db` em tipos avançados e operações em lote | `LastInsertId()` via `IDENTITY_VAL_LOCAL()`, `DECFLOAT(16/34)`, `XML`, `TIMESTAMP WITH TIME ZONE`, arrays de parâmetros para bulk insert, `GRAPHIC`/`VARGRAPHIC`/`DBCLOB` e APIs `CreateDb`/`DropDb`. |
 | **M8 - Segurança Estendida & Auth** | 📋 Planejado | Autenticação em diretório de rede e troca de contexto | Kerberos SSO (SECMEC 7/11), alternância de identidade via Trusted Context e metadados de aplicação (`EXCSQLSET`). |
 
 ---
@@ -235,7 +235,7 @@ gantt
 | **`Result.LastInsertId()`** | ✅ `IDENTITY_VAL_LOCAL()` | ✅ `IDENTITY_VAL_LOCAL()` no `INSERT` | ✅ Paridade |
 | **Tipos Estendidos (`DECFLOAT`, `XML`)**| ✅ Suportado | ✅ `DECFLOAT(16/34)`, `XML`, `TIMESTAMP TZ` | ✅ Paridade |
 | **DML com Arrays de Parâmetros** | ✅ `Array<Type>` para inserção em lote | ✅ Fatias primitivas (`[]T`) para bulk DML | ✅ Paridade |
-| **Tipos Gráficos e DBCS** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.4) |
+| **Tipos Gráficos e DBCS** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB`, `CODEUNITS32` | ✅ Paridade |
 | **APIs Administrativas (`CreateDb`/`DropDb`)**| ✅ Suportado | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.5) |
 | **Kerberos & Trusted Context** | ✅ Suportado | 📋 Planejado na Fase 8 | 🎯 Fase 8 (M8.1/M8.2) |
 

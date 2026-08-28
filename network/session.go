@@ -993,7 +993,7 @@ func isLOBType(t uint8) bool {
 		converters.DRDATypeDBCSCLOBLOC, converters.DRDATypeNDBCSCLOBLOC,
 		converters.DRDATypeLOBBytes, converters.DRDATypeNLOBBytes,
 		converters.DRDATypeLOBCSBCS, converters.DRDATypeNLOBCSBCS,
-		0x10, 0x11, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9:
+		0x10, 0x11, 0xCD, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9:
 		return true
 	default:
 		return false
@@ -1005,7 +1005,17 @@ func isCLOBType(t uint8) bool {
 	case converters.DRDATypeCLOBLOC, converters.DRDATypeNCLOBLOC,
 		converters.DRDATypeDBCSCLOBLOC, converters.DRDATypeNDBCSCLOBLOC,
 		converters.DRDATypeLOBCSBCS, converters.DRDATypeNLOBCSBCS,
-		0xF6, 0xF7, 0xF8, 0xF9:
+		0xCD, 0xF6, 0xF7, 0xF8, 0xF9:
+		return true
+	default:
+		return false
+	}
+}
+
+func isDBCLOBType(t uint8) bool {
+	switch t {
+	case converters.DRDATypeDBCSCLOBLOC, converters.DRDATypeNDBCSCLOBLOC,
+		0xCD, 0xF8, 0xF9:
 		return true
 	default:
 		return false
@@ -1033,7 +1043,9 @@ func stitchEXTDTA(fields []FieldDescriptor, rows [][]any, extdtaList [][]byte) {
 					data = data[1:]
 				}
 				fType := fields[colIdx].Type
-				if isCLOBType(fType) {
+				if isDBCLOBType(fType) {
+					rows[rowIdx][colIdx] = converters.DecodeUTF16BE(data)
+				} else if isCLOBType(fType) {
 					rows[rowIdx][colIdx] = string(data)
 				} else {
 					rows[rowIdx][colIdx] = data

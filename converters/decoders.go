@@ -95,7 +95,7 @@ func IsNullableDRDAType(t uint8) bool {
 		DRDATypeNBoolean, DRDATypeNFixBytes, DRDATypeNVarBinary,
 		DRDATypeNLOBLOC, DRDATypeNCLOBLOC, DRDATypeNDBCSCLOBLOC,
 		DRDATypeNLOBBytes, DRDATypeNLOBCSBCS, DRDATypeNDecFloat,
-		0xF5, 0xF7, 0xF9:
+		0xCD, 0xF5, 0xF7, 0xF9:
 		return true
 	default:
 		return false
@@ -123,6 +123,15 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		}
 		return strings.TrimRight(string(buf), " "), nil
 
+	case DRDATypeGraphic, DRDATypeNGraphic:
+		charLen := int(binary.BigEndian.Uint16(ps))
+		byteLen := charLen * 2
+		buf := make([]byte, byteLen)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return nil, err
+		}
+		return TrimRightGraphicSpaces(DecodeUTF16BE(buf)), nil
+
 	case DRDATypeVarChar, DRDATypeNVarChar,
 		DRDATypeVarMix, DRDATypeNVarMix,
 		DRDATypeLong, DRDATypeNLong,
@@ -137,6 +146,20 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 			return nil, err
 		}
 		return string(buf), nil
+
+	case DRDATypeVarGraph, DRDATypeNVarGraph,
+		DRDATypeLonGraph, DRDATypeNLonGraph:
+		var lenBuf [2]byte
+		if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
+			return nil, err
+		}
+		rawLen := int(binary.BigEndian.Uint16(lenBuf[:]))
+		byteLen := rawLen * 2
+		buf := make([]byte, byteLen)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return nil, err
+		}
+		return DecodeUTF16BE(buf), nil
 
 	case DRDATypeSmall, DRDATypeNSmall:
 		var buf [2]byte
@@ -288,13 +311,17 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		DRDATypeLOBBytes, DRDATypeNLOBBytes, DRDATypeLOBCSBCS, DRDATypeNLOBCSBCS,
 		0x10, 0x11, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9:
 		ln := int(binary.BigEndian.Uint16(ps)) & 0x7FFF
+		if ln == 0 {
+			ln = 4
+		}
 		if ln > 0 {
 			buf := make([]byte, ln)
 			if _, err := io.ReadFull(r, buf); err != nil {
 				return nil, err
 			}
 		}
-		if drdaType == DRDATypeLOBCSBCS || drdaType == DRDATypeNLOBCSBCS || drdaType == 0xF6 || drdaType == 0xF7 {
+		if drdaType == DRDATypeLOBCSBCS || drdaType == DRDATypeNLOBCSBCS || drdaType == 0xF6 || drdaType == 0xF7 ||
+			drdaType == DRDATypeDBCSCLOBLOC || drdaType == DRDATypeNDBCSCLOBLOC || drdaType == 0xF8 || drdaType == 0xF9 {
 			return "", nil
 		}
 		return []byte{}, nil

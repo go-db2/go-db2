@@ -31,6 +31,7 @@
 | **Stored Procedures & `sql.Out`** | ✅ Supported | `CALL procedure(?, ...)` with `sql.Out` for `IN`, `OUT`, and `INOUT` parameters via DRDA `SQLDTARD` |
 | **`Result.LastInsertId()`** | ✅ Supported | Automatic identity resolution on `INSERT` via `IDENTITY_VAL_LOCAL()` |
 | **Extended Data Types** | ✅ Supported | `DECFLOAT(16/34)` (IEEE 754-2008 DPD), `XML` documents, `TIMESTAMP WITH TIME ZONE` |
+| **Graphic & DBCS Types** | ✅ Supported | `GRAPHIC`, `VARGRAPHIC`, `LONG VARGRAPHIC`, `DBCLOB`, `CODEUNITS32` |
 | **Batch / Array Parameter DML** | ✅ Supported | High-throughput bulk operations with primitive slices (`[]int`, `[]string`, `[]float64`) |
 | **Multi-Result Sets** | ✅ Supported | Full `driver.RowsNextResultSet` implementation for procedures returning multiple cursors |
 | **Adaptive Block Fetching** | ✅ Supported | Configurable buffer block size via DSN (`?block_size=131072`) with `QRYBLKSZ` |
@@ -167,6 +168,11 @@ Once the container is active, you can run the live examples:
 - **Extended Types (`DECFLOAT`, `XML`, `TIMESTAMP`) Demo:**
   ```bash
   go run examples/extended_types_demo/main.go
+  ```
+
+- **Graphic & DBCS Types (`GRAPHIC`, `VARGRAPHIC`, `DBCLOB`, `CODEUNITS32`) Demo:**
+  ```bash
+  go run examples/graphic_dbcs_demo/main.go
   ```
 
 - **Batch / Array Parameter Binding (Bulk DML) Demo:**
