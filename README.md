@@ -33,6 +33,7 @@
 | **Extended Data Types** | ✅ Supported | `DECFLOAT(16/34)` (IEEE 754-2008 DPD), `XML` documents, `TIMESTAMP WITH TIME ZONE` |
 | **Graphic & DBCS Types** | ✅ Supported | `GRAPHIC`, `VARGRAPHIC`, `LONG VARGRAPHIC`, `DBCLOB`, `CODEUNITS32` |
 | **Batch / Array Parameter DML** | ✅ Supported | High-throughput bulk operations with primitive slices (`[]int`, `[]string`, `[]float64`) |
+| **Admin DB Management & APIs** | ✅ Supported | `CreateDb()`, `DropDb()`, and `ExecAdminCmd()` (`SYSPROC.ADMIN_CMD`) |
 | **Multi-Result Sets** | ✅ Supported | Full `driver.RowsNextResultSet` implementation for procedures returning multiple cursors |
 | **Adaptive Block Fetching** | ✅ Supported | Configurable buffer block size via DSN (`?block_size=131072`) with `QRYBLKSZ` |
 | **Query Cancellation (`SQLINTR`)** | ✅ Supported | Asynchronous cancellation signal and timeout aborts via DRDA `SQLINTR` (`0x2007`) |
@@ -178,6 +179,11 @@ Once the container is active, you can run the live examples:
 - **Batch / Array Parameter Binding (Bulk DML) Demo:**
   ```bash
   go run examples/batch_dml_demo/main.go
+  ```
+
+- **Admin DB Management (`CreateDb`, `DropDb`, `ADMIN_CMD`) Demo:**
+  ```bash
+  go run examples/admin_db_demo/main.go
   ```
 
 - **Performance Benchmarks (Latency & Memory Allocs):**
