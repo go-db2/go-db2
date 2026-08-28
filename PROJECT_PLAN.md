@@ -192,8 +192,8 @@ gantt
     Query Cancellation (SQLINTR)             :done, f6_3, after f6_2, 5d
     ORM & Struct Mapping (sqlx demo)         :done, f6_4, after f6_3, 5d
     section Phase 7: Types, Bulk Ops & Feature Parity
-    LastInsertId (IDENTITY_VAL_LOCAL)        :active, f7_1, after f6_4, 5d
-    Extended Types (DECFLOAT, XML, TZ)       :f7_2, after f7_1, 7d
+    LastInsertId (IDENTITY_VAL_LOCAL)        :done, f7_1, after f6_4, 5d
+    Extended Types (DECFLOAT, XML, TZ)       :active, f7_2, after f7_1, 7d
     Batch / Array Parameter Binding          :f7_3, after f7_2, 7d
     DBCS & Graphic Types (DBCLOB, CODEUNITS) :f7_4, after f7_3, 5d
     Admin DB Management (CreateDb / DropDb)  :f7_5, after f7_4, 5d
@@ -232,7 +232,7 @@ gantt
 | **Multi-Result Sets** | ✅ Supported | ✅ Supported via `driver.RowsNextResultSet` | ✅ Parity |
 | **Block Fetching** | ✅ `FETCHSIZE` / `ROWARRAYSIZE` | ✅ `block_size` / `QRYBLKSZ` | ✅ Parity |
 | **Query Cancellation** | ✅ Supported | ✅ Supported via `SQLINTR` (`0x2007`) | ✅ Parity |
-| **`Result.LastInsertId()`** | ✅ `IDENTITY_VAL_LOCAL()` | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.1) |
+| **`Result.LastInsertId()`** | ✅ `IDENTITY_VAL_LOCAL()` | ✅ `IDENTITY_VAL_LOCAL()` on `INSERT` | ✅ Parity |
 | **Extended Types (`DECFLOAT`, `XML`)**| ✅ Supported | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.2) |
 | **Batch / Array Parameter DML** | ✅ `Array<Type>` for bulk insert | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.3) |
 | **Graphic & DBCS Types** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | 🔄 Next in Phase 7 | 🎯 Phase 7 (M7.4) |

@@ -192,8 +192,8 @@ gantt
     Cancelamento de Consultas (SQLINTR)      :done, f6_3, after f6_2, 5d
     Mapeamento de Structs e ORMs (sqlx demo) :done, f6_4, after f6_3, 5d
     section Fase 7: Tipos Avançados, Operações em Lote e Paridade
-    LastInsertId (IDENTITY_VAL_LOCAL)        :active, f7_1, after f6_4, 5d
-    Tipos Estendidos (DECFLOAT, XML, TZ)     :f7_2, after f7_1, 7d
+    LastInsertId (IDENTITY_VAL_LOCAL)        :done, f7_1, after f6_4, 5d
+    Tipos Estendidos (DECFLOAT, XML, TZ)     :active, f7_2, after f7_1, 7d
     Batch / Array Parameter Binding (DML)    :f7_3, after f7_2, 7d
     Tipos Gráficos & DBCS (DBCLOB, CODEUNITS):f7_4, after f7_3, 5d
     Gerenciamento de Banco (CreateDb/DropDb) :f7_5, after f7_4, 5d
@@ -232,7 +232,7 @@ gantt
 | **Multi-Result Sets** | ✅ Suportado | ✅ Suportado via `driver.RowsNextResultSet` | ✅ Paridade |
 | **Block Fetching** | ✅ `FETCHSIZE` / `ROWARRAYSIZE` | ✅ `block_size` / `QRYBLKSZ` | ✅ Paridade |
 | **Cancelamento de Queries** | ✅ Suportado | ✅ Suportado via `SQLINTR` (`0x2007`) | ✅ Paridade |
-| **`Result.LastInsertId()`** | ✅ `IDENTITY_VAL_LOCAL()` | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.1) |
+| **`Result.LastInsertId()`** | ✅ `IDENTITY_VAL_LOCAL()` | ✅ `IDENTITY_VAL_LOCAL()` no `INSERT` | ✅ Paridade |
 | **Tipos Estendidos (`DECFLOAT`, `XML`)**| ✅ Suportado | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.2) |
 | **DML com Arrays de Parâmetros** | ✅ `Array<Type>` para inserção em lote | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.3) |
 | **Tipos Gráficos e DBCS** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | 🔄 Próximo na Fase 7 | 🎯 Fase 7 (M7.4) |

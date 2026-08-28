@@ -70,7 +70,7 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		if err != nil {
 			return nil, err
 		}
-		return NewResult(affected, 0), nil
+		return NewResultWithConn(c, affected, isInsertQuery(query)), nil
 	}
 
 	// Prepare and execute with parameters

@@ -119,7 +119,7 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 				}
 			}
 		}
-		return NewResult(affected, 0), nil
+		return NewResultWithConn(s.conn, affected, isInsertQuery(s.query)), nil
 	}
 
 	_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query)
@@ -142,7 +142,7 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 		}
 	}
 
-	return NewResult(affected, 0), nil
+	return NewResultWithConn(s.conn, affected, isInsertQuery(s.query)), nil
 }
 
 // Query executes a prepared query statement with positional arguments (legacy interface).
