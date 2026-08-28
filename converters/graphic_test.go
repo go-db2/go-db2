@@ -34,7 +34,7 @@ func TestGraphicUTF16BE_EncodeDecode(t *testing.T) {
 
 func TestGraphicPadding(t *testing.T) {
 	str := "DB2"
-	encoded := EncodeUTF16BE(str) // 3 runes = 6 bytes
+	encoded := EncodeUTF16BE(str)            // 3 runes = 6 bytes
 	padded := PadGraphicUTF16BE(encoded, 10) // 10 chars = 20 bytes
 
 	if len(padded) != 20 {
