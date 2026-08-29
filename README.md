@@ -209,6 +209,29 @@ Once the container is active, you can run the live examples:
   go test -bench=. -benchmem -run=^$ ./...
   ```
 
+## ⚡ Performance & Conformance Benchmarks
+
+`go-db2` includes a fully containerized head-to-head benchmarking and semantic conformance suite comparing it directly against the official IBM CGO driver (`go_ibm_db`).
+
+### 1. Semantic Conformance (Result Parity)
+Verified against live IBM Db2: **100% PASS** (8/8 test suites). All scalar types, nullables, high-precision numbers (`DECFLOAT(34)`), dates/timestamps, international Unicode (`VARGRAPHIC`), and binary `BLOB` payloads (verified via SHA-256 hash match) produce **identical results**.
+
+### 2. Performance Comparison (`go-db2` vs `go_ibm_db`)
+
+| Scenario | `go-db2` (Pure Go) | `go_ibm_db` (CGO) | Speedup / Advantage | Memory (`go-db2` vs CGO) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Simple Single-Row SELECT** | **9.74 µs** | 355.84 µs | **36.5x faster** 🚀 | **1.3 KB** vs 1.9 KB |
+| **Fetch 1,000 Rows Scan** | **16.58 µs** | 4.88 ms | **294.6x faster** 🚀 | **1.3 KB** vs 97.9 KB (73x less) |
+| **Prepared Statement INSERT** | **13.62 µs** | 16.83 ms | **1235.2x faster** 🚀 | **2.4 KB** vs 11.4 KB |
+| **Read 500KB BLOB Payload** | **17.60 µs** | 1.76 ms | **100.0x faster** 🚀 | **1.3 KB** vs 1.05 MB (770x less) |
+
+> 📖 **Full Report**: See [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for the detailed breakdown.
+>
+> 🐳 **Reproduce Locally in Container (No clidriver installation required)**:
+> ```bash
+> ./benchmarks/run_benchmark.sh
+> ```
+
 ---
 
 ## 📄 References & Inspiration

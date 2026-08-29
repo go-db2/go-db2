@@ -1,0 +1,38 @@
+FROM golang:1.23-bookworm
+
+# Install required build tools and libraries for IBM clidriver CGO compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    curl \
+    tar \
+    ca-certificates \
+    libxml2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install IBM clidriver (C client library for IBM Db2)
+WORKDIR /opt/ibm
+RUN curl -fSL https://public.dhe.ibm.com/ibmdl/export/pub/software/data/db2/drivers/odbc_cli/linuxx64_odbc_cli.tar.gz -o /tmp/clidriver.tar.gz && \
+    tar -xzf /tmp/clidriver.tar.gz -C /opt/ibm && \
+    rm /tmp/clidriver.tar.gz
+
+# Configure CGO environment variables for IBM CLI Driver
+ENV IBM_DB_HOME=/opt/ibm/clidriver
+ENV CGO_CFLAGS="-I/opt/ibm/clidriver/include"
+ENV CGO_LDFLAGS="-L/opt/ibm/clidriver/lib"
+ENV LD_LIBRARY_PATH="/opt/ibm/clidriver/lib:${LD_LIBRARY_PATH}"
+ENV DB2CLIINIPATH=/opt/ibm/clidriver/cfg
+ENV CGO_ENABLED=1
+
+WORKDIR /workspace/go-db2
+
+# Copy repository source code
+COPY . .
+
+WORKDIR /workspace/go-db2/benchmarks
+
+# Download Go dependencies and build benchmark binary
+RUN go mod download && go mod tidy
+RUN go build -o /usr/local/bin/db2-benchmark .
+
+ENTRYPOINT ["/usr/local/bin/db2-benchmark"]
