@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -1081,6 +1082,81 @@ func stitchEXTDTA(fields []FieldDescriptor, rows [][]any, extdtaList [][]byte) {
 			}
 		}
 	}
+}
+
+// CurrentUser returns the currently active user on the session.
+func (s *Session) CurrentUser() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return strings.TrimSpace(s.cfg.User)
+}
+
+// SwitchUser transitions the active user identity on the existing session.
+// In Db2 Trusted Context and privileged sessions, identity is switched via
+// 'SET SESSION AUTHORIZATION = ?' / 'SET SESSION_USER = ?' or by issuing SECCHK with USRID.
+func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...string) error {
+	trimmedUser := strings.TrimSpace(newUser)
+	if trimmedUser == "" {
+		return errors.New("db2: switch user name cannot be empty")
+	}
+
+	// First try SQL-level session authorization switch
+	setAuthSQL := fmt.Sprintf("SET SESSION AUTHORIZATION = %s", trimmedUser)
+	if _, err := s.ExecDirect(ctx, setAuthSQL); err == nil {
+		s.mu.Lock()
+		s.cfg.User = trimmedUser
+		s.mu.Unlock()
+		return nil
+	}
+
+	// Fallback to SET SESSION_USER
+	setSessionUserSQL := fmt.Sprintf("SET SESSION_USER = %s", trimmedUser)
+	if _, err := s.ExecDirect(ctx, setSessionUserSQL); err == nil {
+		s.mu.Lock()
+		s.cfg.User = trimmedUser
+		s.mu.Unlock()
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.conn == nil {
+		return errors.New("db2: connection is closed")
+	}
+
+	// If password or DRDA-level SECCHK user switch is needed
+	var pwdBytes []byte
+	if len(password) > 0 && password[0] != "" {
+		pwdBytes = []byte(password[0])
+	}
+	secchk, err := PackSECCHKWithBytes(s.secmec, nil, s.cfg.Database, trimmedUser, pwdBytes, false, s.encoding)
+	if err != nil {
+		return fmt.Errorf("failed to pack SECCHK for user switch: %w", err)
+	}
+
+	s.correlationID = 1
+	s.correlationID, err = WriteRequestDSS(s.conn, secchk, s.correlationID, false, true)
+	if err != nil {
+		return fmt.Errorf("failed to send SECCHK for user switch: %w", err)
+	}
+
+	replies, err := s.readReplyChain()
+	if err != nil {
+		return fmt.Errorf("user switch response failed: %w", err)
+	}
+
+	for _, r := range replies {
+		if r.CodePoint == CodePointSECCHKRM {
+			sub, _ := ParseDDMReply(r.Data)
+			if secChkCd, ok := sub[CodePointSECCHKCD]; ok && len(secChkCd) > 0 && secChkCd[0] != 0 {
+				return fmt.Errorf("user switch failed: SECCHKCD=%d", secChkCd[0])
+			}
+		}
+	}
+
+	s.cfg.User = trimmedUser
+	return nil
 }
 
 // Interrupt requests cancellation of any active statement on the session via SQLINTR.

@@ -65,6 +65,13 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		return nil, ErrConnectionClosed
 	}
 
+	// Auto-switch user if specified via WithUser in context
+	if targetUser := UserFromContext(ctx); targetUser != "" && targetUser != c.session.CurrentUser() {
+		if err := c.session.SwitchUser(ctx, targetUser); err != nil {
+			return nil, err
+		}
+	}
+
 	if len(args) == 0 {
 		affected, err := c.session.ExecDirect(ctx, query)
 		if err != nil {
@@ -101,6 +108,13 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		return nil, ErrConnectionClosed
 	}
 
+	// Auto-switch user if specified via WithUser in context
+	if targetUser := UserFromContext(ctx); targetUser != "" && targetUser != c.session.CurrentUser() {
+		if err := c.session.SwitchUser(ctx, targetUser); err != nil {
+			return nil, err
+		}
+	}
+
 	if len(args) == 0 {
 		cols, rawRows, err := c.session.QueryDirect(ctx, query)
 		if err != nil {
@@ -127,6 +141,28 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	stmt := NewStmt(c, query, outCols, paramCols)
 	return stmt.QueryContext(ctx, args)
+}
+
+// CurrentUser returns the currently active user on this connection.
+func (c *Conn) CurrentUser() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.session == nil {
+		return ""
+	}
+	return c.session.CurrentUser()
+}
+
+// SwitchUser transitions the active user identity on this connection within a trusted context or session.
+func (c *Conn) SwitchUser(ctx context.Context, newUser string, password ...string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed || c.session == nil {
+		return ErrConnectionClosed
+	}
+
+	return c.session.SwitchUser(ctx, newUser, password...)
 }
 
 // Close invalidates and closes the database connection.

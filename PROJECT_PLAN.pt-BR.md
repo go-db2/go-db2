@@ -199,8 +199,8 @@ gantt
     Gerenciamento de Banco (CreateDb/DropDb) :done, f7_5, after f7_4, 5d
     section Fase 8: Autenticação Estendida e Segurança
     Autenticação Kerberos / GSSAPI (SECMEC)  :done, f8_1, after f7_5, 10d
-    Trusted Context (Multi-Tenant Switch)    :active, f8_2, after f8_1, 7d
-    Metadados de Aplicação (EXCSQLSET)       :f8_3, after f8_2, 5d
+    Trusted Context (Multi-Tenant Switch)    :done, f8_2, after f8_1, 7d
+    Metadados de Aplicação (EXCSQLSET)       :active, f8_3, after f8_2, 5d
 ```
 
 ### Detalhamento dos Milestones
@@ -238,7 +238,7 @@ gantt
 | **Tipos Gráficos e DBCS** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB`, `CODEUNITS32` | ✅ Paridade |
 | **APIs Administrativas (`CreateDb`/`DropDb`)**| ✅ Suportado | ✅ `CreateDb()`, `DropDb()`, `ExecAdminCmd()` | ✅ Paridade |
 | **Kerberos SSO & GSSAPI** | ✅ Suportado | ✅ Kerberos SSO (`SECMEC 7/11`), `ccache`, `keytab` | ✅ Paridade |
-| **Trusted Context (Multi-Tenant)** | ✅ Suportado | 📋 Planejado na Fase 8 | 🎯 Fase 8 (M8.2) |
+| **Trusted Context (Multi-Tenant)** | ✅ Suportado | ✅ `SwitchUser`, `WithUser(ctx)` comutação rápida | ✅ Paridade |
 
 ---
 

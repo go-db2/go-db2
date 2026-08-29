@@ -51,9 +51,10 @@ func FormatServicePrincipal(spn, host, realm string) string {
 // GSS-API OID for Kerberos v5 is 1.2.840.113554.1.2.2.
 // Token structure:
 // [0x60, len] Application 0 Header
-//   [0x06, oidLen, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 0x02] (Kerberos v5 OID)
-//   [0x01, 0x00] (GSS_KRB5_TOK_AP_REQ token ID)
-//   [raw AP-REQ bytes]
+//
+//	[0x06, oidLen, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 0x02] (Kerberos v5 OID)
+//	[0x01, 0x00] (GSS_KRB5_TOK_AP_REQ token ID)
+//	[raw AP-REQ bytes]
 func BuildGSSAPIToken(apReqBytes []byte) ([]byte, error) {
 	if len(apReqBytes) == 0 {
 		return nil, fmt.Errorf("db2/kerberos: empty AP-REQ ticket bytes")

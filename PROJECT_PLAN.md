@@ -199,8 +199,8 @@ gantt
     Admin DB Management (CreateDb / DropDb)  :done, f7_5, after f7_4, 5d
     section Phase 8: Extended Authentication & Security
     Kerberos / GSSAPI Auth (SECMEC 7/11)     :done, f8_1, after f7_5, 10d
-    Trusted Context (Multi-Tenant Switch)    :active, f8_2, after f8_1, 7d
-    Client Workstation & App Accounting      :f8_3, after f8_2, 5d
+    Trusted Context (Multi-Tenant Switch)    :done, f8_2, after f8_1, 7d
+    Client Workstation & App Accounting      :active, f8_3, after f8_2, 5d
 ```
 
 ### Milestone Breakdown
@@ -238,7 +238,7 @@ gantt
 | **Graphic & DBCS Types** | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB` | ✅ `GRAPHIC`, `VARGRAPHIC`, `DBCLOB`, `CODEUNITS32` | ✅ Parity |
 | **Admin DB APIs (`CreateDb`/`DropDb`)**| ✅ Supported | ✅ `CreateDb()`, `DropDb()`, `ExecAdminCmd()` | ✅ Parity |
 | **Kerberos SSO & GSSAPI** | ✅ Supported | ✅ Kerberos SSO (`SECMEC 7/11`), `ccache`, `keytab` | ✅ Parity |
-| **Trusted Context (Multi-Tenant)** | ✅ Supported | 📋 Planned in Phase 8 | 🎯 Phase 8 (M8.2) |
+| **Trusted Context (Multi-Tenant)** | ✅ Supported | ✅ `SwitchUser`, `WithUser(ctx)` rapid switching | ✅ Parity |
 
 ---
 
