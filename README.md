@@ -7,9 +7,10 @@
 `go-db2` is an open-source driver designed to connect Go applications directly to **IBM Db2** over TCP/TLS using the native **DRDA** (*Distributed Relational Database Architecture*) and **DDM** (*Distributed Data Management*) protocols.
 
 ### Why `go-db2`?
-- **100% Pure Go (`CGO_ENABLED=0`)**: No need to install the IBM DB2 CLI / ODBC Driver (`clidriver`) or any C dependencies.
-- **Trivial Cross-Compilation & Portability**: Build static binaries easily for Linux, macOS (including Apple Silicon / ARM64), Windows, and minimal Docker containers (`scratch`, `distroless`, Alpine).
-- **`database/sql` Standard**: Seamless integration with the standard Go SQL ecosystem and ORMs.
+- **100% Pure Go (`CGO_ENABLED=0`)**: No need to install the IBM DB2 CLI / ODBC Driver (`clidriver`) or any external C/C++ dependencies.
+- **Trivial Cross-Compilation & Portability**: Build static binaries effortlessly for Linux, macOS (including Apple Silicon / ARM64), Windows, and lightweight containers (`scratch`, `distroless`, Alpine).
+- **Standard `database/sql` & Ecosystem Ready**: Native support for Go's connection pooling, transactions, contexts/timeouts/cancellations, and seamless compatibility with ORMs and libraries such as `sqlx`, `GORM`, `sqlc`, and `golang-migrate`.
+- **High Performance & Low Memory Footprint**: Up to 36x faster for single queries, over 290x faster on bulk row scans, and up to 770x lower heap allocations than IBM's CGO driver.
 
 ---
 
