@@ -72,6 +72,11 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		}
 	}
 
+	// Auto-set client info if specified via WithClientInfo in context
+	if clientInfo := ClientInfoFromContext(ctx); !clientInfo.IsEmpty() {
+		_ = c.session.SetClientInfo(ctx, clientInfo.ApplicationName, clientInfo.WorkstationName, clientInfo.UserID, clientInfo.Accounting, clientInfo.CorrelationToken)
+	}
+
 	if len(args) == 0 {
 		affected, err := c.session.ExecDirect(ctx, query)
 		if err != nil {
@@ -113,6 +118,11 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		if err := c.session.SwitchUser(ctx, targetUser); err != nil {
 			return nil, err
 		}
+	}
+
+	// Auto-set client info if specified via WithClientInfo in context
+	if clientInfo := ClientInfoFromContext(ctx); !clientInfo.IsEmpty() {
+		_ = c.session.SetClientInfo(ctx, clientInfo.ApplicationName, clientInfo.WorkstationName, clientInfo.UserID, clientInfo.Accounting, clientInfo.CorrelationToken)
 	}
 
 	if len(args) == 0 {
@@ -163,6 +173,18 @@ func (c *Conn) SwitchUser(ctx context.Context, newUser string, password ...strin
 	}
 
 	return c.session.SwitchUser(ctx, newUser, password...)
+}
+
+// SetClientInfo updates client info registers on this connection.
+func (c *Conn) SetClientInfo(ctx context.Context, info ClientInfo) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed || c.session == nil {
+		return ErrConnectionClosed
+	}
+
+	return c.session.SetClientInfo(ctx, info.ApplicationName, info.WorkstationName, info.UserID, info.Accounting, info.CorrelationToken)
 }
 
 // Close invalidates and closes the database connection.

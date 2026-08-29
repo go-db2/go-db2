@@ -38,6 +38,11 @@ type SessionConfig struct {
 	Krb5ConfigFile    string
 	Krb5KeytabFile    string
 	Krb5CCacheFile    string
+	ClientApplName    string
+	ClientWrkstnName  string
+	ClientUserid      string
+	ClientAcctng      string
+	ClientCorrToken   string
 }
 
 // ReplyPacket represents a single decoded DSS reply with its outer DDM codepoint and raw payload.
@@ -111,6 +116,19 @@ func NewSession(cfg SessionConfig) *Session {
 
 // Connect dials the Db2 server via TCP/TLS and completes the DRDA handshake.
 func (s *Session) Connect(ctx context.Context) error {
+	if err := s.connectRaw(ctx); err != nil {
+		return err
+	}
+
+	// Apply initial Client Info if configured in DSN (outside session mutex)
+	if s.cfg.ClientApplName != "" || s.cfg.ClientWrkstnName != "" || s.cfg.ClientUserid != "" || s.cfg.ClientAcctng != "" || s.cfg.ClientCorrToken != "" {
+		_ = s.SetClientInfo(ctx, s.cfg.ClientApplName, s.cfg.ClientWrkstnName, s.cfg.ClientUserid, s.cfg.ClientAcctng, s.cfg.ClientCorrToken)
+	}
+
+	return nil
+}
+
+func (s *Session) connectRaw(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -323,6 +341,11 @@ func (s *Session) setPostConnectVariables(hostname string) error {
 		return err
 	}
 
+	targetWrkstn := hostname
+	if s.cfg.ClientWrkstnName != "" {
+		targetWrkstn = s.cfg.ClientWrkstnName
+	}
+
 	// EXCSQLSET
 	excSqlSet := PackEXCSQLSET(s.pkgid, "", 1, s.cfg.Database)
 	s.correlationID, err = WriteRequestDSS(s.conn, excSqlSet, s.correlationID, true, false)
@@ -331,7 +354,7 @@ func (s *Session) setPostConnectVariables(hostname string) error {
 	}
 
 	// SET CLIENT WRKSTNNAME
-	sqlWrkStn := PackSQLSTT(fmt.Sprintf("SET CLIENT WRKSTNNAME '%s'", hostname))
+	sqlWrkStn := PackSQLSTT(fmt.Sprintf("SET CLIENT WRKSTNNAME '%s'", escapeSingleQuotes(targetWrkstn)))
 	s.correlationID, err = WriteRequestDSS(s.conn, sqlWrkStn, s.correlationID, false, false)
 	if err != nil {
 		return err
@@ -1157,6 +1180,92 @@ func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...st
 
 	s.cfg.User = trimmedUser
 	return nil
+}
+
+// ExecSQLSet executes special register statements (such as SET CLIENT APPLNAME) via DRDA EXCSQLSET.
+func (s *Session) ExecSQLSet(ctx context.Context, sql string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.conn == nil {
+		return errors.New("db2: connection is closed")
+	}
+
+	s.correlationID = 1
+	var err error
+
+	excSqlSet := PackEXCSQLSET(s.pkgid, "", 1, s.cfg.Database)
+	s.correlationID, err = WriteRequestDSS(s.conn, excSqlSet, s.correlationID, true, false)
+	if err != nil {
+		return fmt.Errorf("failed to write EXCSQLSET: %w", err)
+	}
+
+	sqlStt := PackSQLSTT(sql)
+	s.correlationID, err = WriteRequestDSS(s.conn, sqlStt, s.correlationID, false, false)
+	if err != nil {
+		return fmt.Errorf("failed to write SQLSTT: %w", err)
+	}
+
+	rdbcmm := PackRDBCMM()
+	s.correlationID, err = WriteRequestDSS(s.conn, rdbcmm, s.correlationID, false, true)
+	if err != nil {
+		return fmt.Errorf("failed to write RDBCMM: %w", err)
+	}
+
+	replies, err := s.readReplyChain()
+	if err != nil {
+		return fmt.Errorf("failed to read reply chain for EXCSQLSET: %w", err)
+	}
+
+	for _, r := range replies {
+		if r.CodePoint == CodePointSQLCARD {
+			code, state, msg, _, parseErr := ParseSQLCARD(r.Data, s.endian)
+			if parseErr != nil {
+				return parseErr
+			}
+			if code < 0 {
+				return fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
+			}
+		}
+	}
+
+	return nil
+}
+
+// SetClientInfo updates the Db2 client information special registers
+// (CURRENT CLIENT_APPLNAME, CURRENT CLIENT_WRKSTNNAME, CURRENT CLIENT_USERID, CURRENT CLIENT_ACCTNG)
+// on the active connection via DRDA EXCSQLSET.
+func (s *Session) SetClientInfo(ctx context.Context, applName, wrkstnName, userid, acctng, corrToken string) error {
+	if applName != "" {
+		_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT APPLNAME '%s'", escapeSingleQuotes(applName)))
+	}
+	if wrkstnName != "" {
+		_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT WRKSTNNAME '%s'", escapeSingleQuotes(wrkstnName)))
+	}
+	if userid != "" {
+		_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT USERID '%s'", escapeSingleQuotes(userid)))
+	}
+	if acctng != "" {
+		if err := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT ACCTNG '%s'", escapeSingleQuotes(acctng))); err != nil {
+			if err2 := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT_ACCTNG = '%s'", escapeSingleQuotes(acctng))); err2 != nil {
+				_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT ACCTSTR '%s'", escapeSingleQuotes(acctng)))
+			}
+		}
+	}
+
+	s.mu.Lock()
+	s.cfg.ClientApplName = applName
+	s.cfg.ClientWrkstnName = wrkstnName
+	s.cfg.ClientUserid = userid
+	s.cfg.ClientAcctng = acctng
+	s.cfg.ClientCorrToken = corrToken
+	s.mu.Unlock()
+
+	return nil
+}
+
+func escapeSingleQuotes(val string) string {
+	return strings.ReplaceAll(val, "'", "''")
 }
 
 // Interrupt requests cancellation of any active statement on the session via SQLINTR.

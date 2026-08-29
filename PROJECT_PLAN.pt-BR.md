@@ -200,7 +200,7 @@ gantt
     section Fase 8: Autenticação Estendida e Segurança
     Autenticação Kerberos / GSSAPI (SECMEC)  :done, f8_1, after f7_5, 10d
     Trusted Context (Multi-Tenant Switch)    :done, f8_2, after f8_1, 7d
-    Metadados de Aplicação (EXCSQLSET)       :active, f8_3, after f8_2, 5d
+    Metadados de Aplicação (EXCSQLSET)       :done, f8_3, after f8_2, 5d
 ```
 
 ### Detalhamento dos Milestones
@@ -214,7 +214,7 @@ gantt
 | **M5 - Qualidade, SPs & Release** | ✅ Suportado | Qualidade de produção, Stored Procedures e CI | `CALL` com `sql.Out` (`IN`/`OUT`/`INOUT`), benchmarks de memória (`benchmark_test.go`) e pipeline no GitHub Actions. |
 | **M6 - DRDA Avançado & ORMs** | ✅ Suportado | Escalabilidade de protocolo, múltiplos cursores e resiliência | `driver.RowsNextResultSet` para procedures com múltiplos cursores, buffer configurável (`QRYBLKSZ`), cancelamento via `SQLINTR` e demo de struct mapping. |
 | **M7 - Tipos Estendidos & Lote** | ✅ Suportado | Paridade com `go_ibm_db` em tipos avançados e operações em lote | `LastInsertId()` via `IDENTITY_VAL_LOCAL()`, `DECFLOAT(16/34)`, `XML`, `TIMESTAMP WITH TIME ZONE`, arrays de parâmetros para bulk insert, `GRAPHIC`/`VARGRAPHIC`/`DBCLOB` e APIs `CreateDb`/`DropDb`. |
-| **M8 - Segurança Estendida & Auth** | 🔄 Em Andamento | Autenticação em diretório de rede e troca de contexto | Kerberos SSO (SECMEC 7/11), alternância de identidade via Trusted Context e metadados de aplicação (`EXCSQLSET`). |
+| **M8 - Segurança Estendida & Auth** | ✅ Suportado | Autenticação em diretório de rede e troca de contexto | Kerberos SSO (SECMEC 7/11), alternância de identidade via Trusted Context e metadados de aplicação (`EXCSQLSET`). |
 
 ---
 
@@ -239,6 +239,7 @@ gantt
 | **APIs Administrativas (`CreateDb`/`DropDb`)**| ✅ Suportado | ✅ `CreateDb()`, `DropDb()`, `ExecAdminCmd()` | ✅ Paridade |
 | **Kerberos SSO & GSSAPI** | ✅ Suportado | ✅ Kerberos SSO (`SECMEC 7/11`), `ccache`, `keytab` | ✅ Paridade |
 | **Trusted Context (Multi-Tenant)** | ✅ Suportado | ✅ `SwitchUser`, `WithUser(ctx)` comutação rápida | ✅ Paridade |
+| **Metadados de Aplicação (Accounting)**| ✅ Suportado | ✅ `CLIENT APPLNAME`, `WRKSTNNAME`, `USERID`, `ACCTNG` | ✅ Paridade |
 
 ---
 

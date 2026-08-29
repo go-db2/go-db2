@@ -138,3 +138,35 @@ func TestParseDSN_Kerberos(t *testing.T) {
 		t.Errorf("ToSessionConfig().KerberosSPN = %q, want db2/server.corp.local@CORP.LOCAL", sessCfg.KerberosSPN)
 	}
 }
+
+func TestParseDSN_ClientInfo(t *testing.T) {
+	dsn := "db2://localhost:50000/TESTDB?client_applname=orders-service&client_wrkstnname=k8s-pod-99&client_userid=cust_123&client_acctng=dept_finance&client_corr_token=trace-xyz-789"
+	cfg, err := ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("ParseDSN(%q) error: %v", dsn, err)
+	}
+
+	if cfg.ClientApplName != "orders-service" {
+		t.Errorf("ClientApplName = %q, want orders-service", cfg.ClientApplName)
+	}
+	if cfg.ClientWrkstnName != "k8s-pod-99" {
+		t.Errorf("ClientWrkstnName = %q, want k8s-pod-99", cfg.ClientWrkstnName)
+	}
+	if cfg.ClientUserid != "cust_123" {
+		t.Errorf("ClientUserid = %q, want cust_123", cfg.ClientUserid)
+	}
+	if cfg.ClientAcctng != "dept_finance" {
+		t.Errorf("ClientAcctng = %q, want dept_finance", cfg.ClientAcctng)
+	}
+	if cfg.ClientCorrToken != "trace-xyz-789" {
+		t.Errorf("ClientCorrToken = %q, want trace-xyz-789", cfg.ClientCorrToken)
+	}
+
+	sessCfg := cfg.ToSessionConfig()
+	if sessCfg.ClientApplName != "orders-service" {
+		t.Errorf("ToSessionConfig().ClientApplName = %q, want orders-service", sessCfg.ClientApplName)
+	}
+	if sessCfg.ClientWrkstnName != "k8s-pod-99" {
+		t.Errorf("ToSessionConfig().ClientWrkstnName = %q, want k8s-pod-99", sessCfg.ClientWrkstnName)
+	}
+}

@@ -27,6 +27,11 @@ type Config struct {
 	Krb5ConfigFile    string
 	Krb5KeytabFile    string
 	Krb5CCacheFile    string
+	ClientApplName    string
+	ClientWrkstnName  string
+	ClientUserid      string
+	ClientAcctng      string
+	ClientCorrToken   string
 	Params            map[string]string
 }
 
@@ -193,6 +198,16 @@ func applyParam(cfg *Config, key, val string) {
 		cfg.Krb5KeytabFile = val
 	case "krb5_ccache", "ccache":
 		cfg.Krb5CCacheFile = val
+	case "client_applname", "applname", "application_name", "appname":
+		cfg.ClientApplName = val
+	case "client_wrkstnname", "wrkstnname", "workstation_name", "workstation":
+		cfg.ClientWrkstnName = val
+	case "client_userid", "client_user", "end_user":
+		cfg.ClientUserid = val
+	case "client_acctng", "acctng", "accounting":
+		cfg.ClientAcctng = val
+	case "client_corr_token", "corr_token", "correlation_token":
+		cfg.ClientCorrToken = val
 	default:
 		cfg.Params[key] = val
 	}
@@ -216,5 +231,10 @@ func (c *Config) ToSessionConfig() network.SessionConfig {
 		Krb5ConfigFile:    c.Krb5ConfigFile,
 		Krb5KeytabFile:    c.Krb5KeytabFile,
 		Krb5CCacheFile:    c.Krb5CCacheFile,
+		ClientApplName:    c.ClientApplName,
+		ClientWrkstnName:  c.ClientWrkstnName,
+		ClientUserid:      c.ClientUserid,
+		ClientAcctng:      c.ClientAcctng,
+		ClientCorrToken:   c.ClientCorrToken,
 	}
 }

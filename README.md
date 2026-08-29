@@ -36,6 +36,7 @@
 | **Admin DB Management & APIs** | ✅ Supported | `CreateDb()`, `DropDb()`, and `ExecAdminCmd()` (`SYSPROC.ADMIN_CMD`) |
 | **Kerberos SSO & GSSAPI Auth** | ✅ Supported | Network directory authentication (`SECMEC 7/11`) via `ccache`, `keytab`, or domain credentials |
 | **Trusted Context & User Switching** | ✅ Supported | Fast microsecond user/tenant identity transition (`SwitchUser`, `WithUser`) on persistent pool connections |
+| **Client Workstation & Accounting** | ✅ Supported | Workload identification & APM registers (`CLIENT APPLNAME`, `WRKSTNNAME`, `USERID`, `ACCTNG`, `CORR_TOKEN`) |
 | **Multi-Result Sets** | ✅ Supported | Full `driver.RowsNextResultSet` implementation for procedures returning multiple cursors |
 | **Adaptive Block Fetching** | ✅ Supported | Configurable buffer block size via DSN (`?block_size=131072`) with `QRYBLKSZ` |
 | **Query Cancellation (`SQLINTR`)** | ✅ Supported | Asynchronous cancellation signal and timeout aborts via DRDA `SQLINTR` (`0x2007`) |
@@ -196,6 +197,11 @@ Once the container is active, you can run the live examples:
 - **Trusted Context & Multi-Tenant User Switching Demo:**
   ```bash
   go run examples/trusted_context_demo/main.go
+  ```
+
+- **Client Workstation & App Accounting Demo:**
+  ```bash
+  go run examples/client_accounting_demo/main.go
   ```
 
 - **Performance Benchmarks (Latency & Memory Allocs):**

@@ -200,7 +200,7 @@ gantt
     section Phase 8: Extended Authentication & Security
     Kerberos / GSSAPI Auth (SECMEC 7/11)     :done, f8_1, after f7_5, 10d
     Trusted Context (Multi-Tenant Switch)    :done, f8_2, after f8_1, 7d
-    Client Workstation & App Accounting      :active, f8_3, after f8_2, 5d
+    Client Workstation & App Accounting      :done, f8_3, after f8_2, 5d
 ```
 
 ### Milestone Breakdown
@@ -214,7 +214,7 @@ gantt
 | **M5 - Quality, SPs & Release** | ✅ Supported | Production quality, Stored Procedures & CI | `CALL` with `sql.Out` (`IN`/`OUT`/`INOUT`), memory benchmarks (`benchmark_test.go`), and GitHub Actions CI workflow. |
 | **M6 - Advanced DRDA & ORMs** | ✅ Supported | Protocol scalability, multi-result sets & resilience | `driver.RowsNextResultSet` for multi-cursor SPs, configurable block size (`QRYBLKSZ`), `SQLINTR` cancellation, and struct mapping demo. |
 | **M7 - Extended Types & Bulk Ops** | ✅ Supported | Parity with `go_ibm_db` advanced types & bulk operations | `LastInsertId()` via `IDENTITY_VAL_LOCAL()`, `DECFLOAT(16/34)`, `XML`, `TIMESTAMP WITH TIME ZONE`, parameter arrays for bulk insert, `GRAPHIC`/`VARGRAPHIC`/`DBCLOB`, and `CreateDb`/`DropDb`. |
-| **M8 - Extended Security & Auth** | 🔄 In Progress | Extended directory authentication & context switching | Kerberos SSO (SECMEC 7/11), Trusted Context multi-tenant switching, and client application accounting (`EXCSQLSET`). |
+| **M8 - Extended Security & Auth** | ✅ Supported | Extended directory authentication & context switching | Kerberos SSO (SECMEC 7/11), Trusted Context multi-tenant switching, and client application accounting (`EXCSQLSET`). |
 
 ---
 
@@ -239,6 +239,7 @@ gantt
 | **Admin DB APIs (`CreateDb`/`DropDb`)**| ✅ Supported | ✅ `CreateDb()`, `DropDb()`, `ExecAdminCmd()` | ✅ Parity |
 | **Kerberos SSO & GSSAPI** | ✅ Supported | ✅ Kerberos SSO (`SECMEC 7/11`), `ccache`, `keytab` | ✅ Parity |
 | **Trusted Context (Multi-Tenant)** | ✅ Supported | ✅ `SwitchUser`, `WithUser(ctx)` rapid switching | ✅ Parity |
+| **Client Info & App Accounting** | ✅ Supported | ✅ `CLIENT APPLNAME`, `WRKSTNNAME`, `USERID`, `ACCTNG` | ✅ Parity |
 
 ---
 
