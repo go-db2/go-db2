@@ -27,6 +27,7 @@ func WrapTLS(conn net.Conn, cfg TLSConfig) (net.Conn, error) {
 	tlsConf := &tls.Config{
 		ServerName:         cfg.ServerName,
 		InsecureSkipVerify: cfg.InsecureSkipVerify,
+		MinVersion:         tls.VersionTLS12,
 	}
 
 	if cfg.CACertPath != "" {

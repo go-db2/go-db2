@@ -4,17 +4,32 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
 
 const defaultAdminTimeout = 60 * time.Second
 
+// validSQLIdentRegex enforces strict alphanumeric and Db2 identifier rules.
+var validSQLIdentRegex = regexp.MustCompile(`^[a-zA-Z0-9_#$]{1,128}$`)
+
+func validateSQLIdentifier(val, fieldName string) error {
+	trimmed := strings.TrimSpace(val)
+	if trimmed == "" {
+		return fmt.Errorf("db2: %s cannot be empty", fieldName)
+	}
+	if !validSQLIdentRegex.MatchString(trimmed) {
+		return fmt.Errorf("db2: invalid %s identifier %q (must be alphanumeric or _, #, $)", fieldName, val)
+	}
+	return nil
+}
+
 // CreateDb creates a new database on the IBM Db2 server specified in connStr.
 // Optional options can be provided in "key=value" format (e.g. "codeset=UTF-8", "territory=US", "mode=...").
 func CreateDb(dbname string, connStr string, options ...string) (bool, error) {
-	if strings.TrimSpace(dbname) == "" {
-		return false, fmt.Errorf("db2: database name cannot be empty")
+	if err := validateSQLIdentifier(dbname, "database name"); err != nil {
+		return false, err
 	}
 	if strings.TrimSpace(connStr) == "" {
 		return false, fmt.Errorf("db2: connection string cannot be empty")
@@ -30,10 +45,19 @@ func CreateDb(dbname string, connStr string, options ...string) (bool, error) {
 		val := strings.TrimSpace(parts[1])
 		switch key {
 		case "codeset":
+			if err := validateSQLIdentifier(val, "codeset"); err != nil {
+				return false, err
+			}
 			codeset = val
 		case "territory":
+			if err := validateSQLIdentifier(val, "territory"); err != nil {
+				return false, err
+			}
 			territory = val
 		case "mode":
+			if err := validateSQLIdentifier(val, "mode"); err != nil {
+				return false, err
+			}
 			mode = val
 		default:
 			return false, fmt.Errorf("db2: unsupported option %q", key)
@@ -65,8 +89,7 @@ func CreateDb(dbname string, connStr string, options ...string) (bool, error) {
 	_, err = db.ExecContext(ctx, createSQL)
 	if err != nil {
 		// Also try via SYSPROC.ADMIN_CMD if direct DDL requires administrative routing
-		adminSQL := fmt.Sprintf("CALL SYSPROC.ADMIN_CMD('%s')", strings.ReplaceAll(createSQL, "'", "''"))
-		if _, adminErr := db.ExecContext(ctx, adminSQL); adminErr == nil {
+		if _, adminErr := ExecAdminCmd(ctx, db, createSQL); adminErr == nil {
 			return true, nil
 		}
 		return false, fmt.Errorf("db2: failed to create database %q: %w", dbname, err)
@@ -77,8 +100,8 @@ func CreateDb(dbname string, connStr string, options ...string) (bool, error) {
 
 // DropDb drops the specified database from the IBM Db2 server.
 func DropDb(dbname string, connStr string) (bool, error) {
-	if strings.TrimSpace(dbname) == "" {
-		return false, fmt.Errorf("db2: database name cannot be empty")
+	if err := validateSQLIdentifier(dbname, "database name"); err != nil {
+		return false, err
 	}
 	if strings.TrimSpace(connStr) == "" {
 		return false, fmt.Errorf("db2: connection string cannot be empty")
@@ -96,8 +119,7 @@ func DropDb(dbname string, connStr string) (bool, error) {
 	dropSQL := fmt.Sprintf("DROP DATABASE %s", dbname)
 	_, err = db.ExecContext(ctx, dropSQL)
 	if err != nil {
-		adminSQL := fmt.Sprintf("CALL SYSPROC.ADMIN_CMD('%s')", strings.ReplaceAll(dropSQL, "'", "''"))
-		if _, adminErr := db.ExecContext(ctx, adminSQL); adminErr == nil {
+		if _, adminErr := ExecAdminCmd(ctx, db, dropSQL); adminErr == nil {
 			return true, nil
 		}
 		return false, fmt.Errorf("db2: failed to drop database %q: %w", dbname, err)
@@ -107,11 +129,17 @@ func DropDb(dbname string, connStr string) (bool, error) {
 }
 
 // ExecAdminCmd executes an administrative command via Db2's SYSPROC.ADMIN_CMD stored procedure.
-// It returns sql.Result with execution status.
+// It uses parameterized procedure execution or safe escaping and returns sql.Result with execution status.
 func ExecAdminCmd(ctx context.Context, db *sql.DB, command string) (sql.Result, error) {
-	if strings.TrimSpace(command) == "" {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
 		return nil, fmt.Errorf("db2: admin command cannot be empty")
 	}
-	stmt := fmt.Sprintf("CALL SYSPROC.ADMIN_CMD('%s')", strings.ReplaceAll(command, "'", "''"))
+	// Try parameterized CALL SYSPROC.ADMIN_CMD(?) first
+	if res, err := db.ExecContext(ctx, "CALL SYSPROC.ADMIN_CMD(?)", trimmed); err == nil {
+		return res, nil
+	}
+	// Fallback with safe quote escaping
+	stmt := fmt.Sprintf("CALL SYSPROC.ADMIN_CMD('%s')", strings.ReplaceAll(trimmed, "'", "''"))
 	return db.ExecContext(ctx, stmt)
 }

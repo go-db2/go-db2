@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,8 @@ import (
 	"github.com/go-db2/go-db2/types"
 )
 
+var validUserIdentRegex = regexp.MustCompile(`^[a-zA-Z0-9_#$]{1,128}$`)
+
 // SessionConfig holds configuration parameters for establishing a Db2 session.
 type SessionConfig struct {
 	Host              string
@@ -28,7 +31,9 @@ type SessionConfig struct {
 	User              string
 	Password          string
 	UseSSL            bool
+	SSLRootCAPath     string
 	SSLClientCertPath string
+	SSLClientKeyPath  string
 	TLSConfig         *tls.Config
 	Timeout           time.Duration
 	BlockSize         int
@@ -43,6 +48,17 @@ type SessionConfig struct {
 	ClientUserid      string
 	ClientAcctng      string
 	ClientCorrToken   string
+}
+
+// String implements fmt.Stringer to ensure sensitive credentials (Password) are redacted in logs.
+func (s SessionConfig) String() string {
+	return fmt.Sprintf("SessionConfig{Host:%s, Port:%d, Database:%s, User:%s, Password:\"******\", UseSSL:%t, Timeout:%v}",
+		s.Host, s.Port, s.Database, s.User, s.UseSSL, s.Timeout)
+}
+
+// GoString implements fmt.GoStringer to ensure sensitive credentials (Password) are redacted in logs.
+func (s SessionConfig) GoString() string {
+	return s.String()
 }
 
 // ReplyPacket represents a single decoded DSS reply with its outer DDM codepoint and raw payload.
@@ -149,11 +165,18 @@ func (s *Session) connectRaw(ctx context.Context) error {
 		if tlsConfig == nil {
 			tlsConfig = &tls.Config{
 				ServerName: s.cfg.Host,
+				MinVersion: tls.VersionTLS12,
 			}
-			if s.cfg.SSLClientCertPath != "" {
-				certData, certErr := os.ReadFile(s.cfg.SSLClientCertPath)
+			// 1. Root CA handling (to verify server certificate)
+			caPath := s.cfg.SSLRootCAPath
+			if caPath == "" && s.cfg.SSLClientCertPath != "" && s.cfg.SSLClientKeyPath == "" {
+				// Backward compatibility: If only SSLClientCertPath is provided without key, treat as CA cert
+				caPath = s.cfg.SSLClientCertPath
+			}
+			if caPath != "" {
+				certData, certErr := os.ReadFile(caPath)
 				if certErr != nil {
-					return fmt.Errorf("failed to read SSL certificate file: %w", certErr)
+					return fmt.Errorf("failed to read SSL root CA certificate file: %w", certErr)
 				}
 				rootCAs := x509.NewCertPool()
 				if !rootCAs.AppendCertsFromPEM(certData) {
@@ -161,6 +184,17 @@ func (s *Session) connectRaw(ctx context.Context) error {
 				}
 				tlsConfig.RootCAs = rootCAs
 			}
+
+			// 2. Client Certificate & Private Key (mTLS authentication)
+			if s.cfg.SSLClientCertPath != "" && s.cfg.SSLClientKeyPath != "" {
+				clientCert, certErr := tls.LoadX509KeyPair(s.cfg.SSLClientCertPath, s.cfg.SSLClientKeyPath)
+				if certErr != nil {
+					return fmt.Errorf("failed to load client SSL keypair (cert=%s, key=%s): %w", s.cfg.SSLClientCertPath, s.cfg.SSLClientKeyPath, certErr)
+				}
+				tlsConfig.Certificates = []tls.Certificate{clientCert}
+			}
+		} else if tlsConfig.MinVersion < tls.VersionTLS12 {
+			tlsConfig.MinVersion = tls.VersionTLS12
 		}
 		rawConn, err = tls.DialWithDialer(dialer, "tcp", address, tlsConfig)
 	} else {
@@ -1121,6 +1155,9 @@ func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...st
 	trimmedUser := strings.TrimSpace(newUser)
 	if trimmedUser == "" {
 		return errors.New("db2: switch user name cannot be empty")
+	}
+	if !validUserIdentRegex.MatchString(trimmedUser) {
+		return fmt.Errorf("db2: invalid switch user identifier %q", newUser)
 	}
 
 	// First try SQL-level session authorization switch

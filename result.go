@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Result implements the database/sql/driver.Result interface.
 type Result struct {
+	mu           sync.Mutex
 	conn         *Conn
 	affectedRows int64
 	lastInsertId int64
@@ -36,6 +38,9 @@ func NewResultWithConn(conn *Conn, affectedRows int64, isInsert bool) *Result {
 
 // LastInsertId returns the database's auto-generated ID for the inserted row via IDENTITY_VAL_LOCAL().
 func (r *Result) LastInsertId() (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if r.lastInsertId != 0 {
 		return r.lastInsertId, nil
 	}
@@ -43,6 +48,9 @@ func (r *Result) LastInsertId() (int64, error) {
 	if !r.isInsert || r.conn == nil || r.conn.session == nil {
 		return 0, errors.New("db2: LastInsertId is only available after an INSERT statement")
 	}
+
+	r.conn.mu.Lock()
+	defer r.conn.mu.Unlock()
 
 	// Query IDENTITY_VAL_LOCAL() from SYSIBM.SYSDUMMY1
 	_, rawRows, err := r.conn.session.QueryDirect(context.Background(), "SELECT IDENTITY_VAL_LOCAL() AS LAST_ID FROM SYSIBM.SYSDUMMY1")
@@ -66,6 +74,8 @@ func (r *Result) LastInsertId() (int64, error) {
 
 // RowsAffected returns the number of rows affected by the query.
 func (r *Result) RowsAffected() (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.affectedRows, nil
 }
 

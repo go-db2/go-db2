@@ -172,17 +172,26 @@ func FDODTA(sqlType types.SQLType, sqllen int64, prec, scale int, val any, endia
 		return []byte{0x00, byteVal}, nil
 
 	case types.SQLTypeDate, types.SQLTypeNDate:
-		t := toTime(val)
+		t, err := toTime(val)
+		if err != nil {
+			return nil, err
+		}
 		dateStr := t.Format("2006-01-02")
 		return append([]byte{0x00}, []byte(dateStr)...), nil
 
 	case types.SQLTypeTime, types.SQLTypeNTime:
-		t := toTime(val)
+		t, err := toTime(val)
+		if err != nil {
+			return nil, err
+		}
 		timeStr := t.Format("15:04:05")
 		return append([]byte{0x00}, []byte(timeStr)...), nil
 
 	case types.SQLTypeTimestamp, types.SQLTypeNTimestamp:
-		t := toTime(val)
+		t, err := toTime(val)
+		if err != nil {
+			return nil, err
+		}
 		tsStr := t.Format("2006-01-02-15.04.05.000000      ")
 		return append([]byte{0x00}, []byte(tsStr)...), nil
 
@@ -341,20 +350,31 @@ func toBool(val any) bool {
 	}
 }
 
-func toTime(val any) time.Time {
+func toTime(val any) (time.Time, error) {
 	switch v := val.(type) {
 	case time.Time:
-		return v
+		return v, nil
 	case string:
-		if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
-			return t
+		v = strings.TrimSpace(v)
+		layouts := []string{
+			"2006-01-02 15:04:05.999999999",
+			"2006-01-02 15:04:05",
+			"2006-01-02T15:04:05.999999999",
+			"2006-01-02T15:04:05",
+			"2006-01-02-15.04.05.000000",
+			"2006-01-02",
+			"15:04:05",
+			time.RFC3339Nano,
+			time.RFC3339,
 		}
-		if t, err := time.Parse("2006-01-02", v); err == nil {
-			return t
+		for _, l := range layouts {
+			if t, err := time.Parse(l, v); err == nil {
+				return t, nil
+			}
 		}
-		return time.Now()
+		return time.Time{}, fmt.Errorf("db2: cannot parse %q as valid date/time format", v)
 	default:
-		return time.Now()
+		return time.Time{}, fmt.Errorf("db2: cannot convert %T to time.Time", val)
 	}
 }
 
@@ -370,30 +390,51 @@ func toBytes(val any) []byte {
 }
 
 // BuildSQLDTA constructs the complete SQLDTA object containing FDODSC and FDODTA blocks for the parameters.
+// It supports more than 84 parameters by structuring descriptors into groups to avoid integer overflow.
 func BuildSQLDTA(colTypes []types.SQLType, colLens []int64, precs, scales []int, args []any, endian binary.ByteOrder) ([]byte, error) {
 	numParams := len(args)
-	fdodsc := make([]byte, 3, 3+numParams*3+6)
-	fdodsc[0] = byte((1 + numParams) * 3)
-	fdodsc[1] = 0x76
-	fdodsc[2] = 0xD0
+	if len(colTypes) != numParams || len(colLens) != numParams || len(precs) != numParams || len(scales) != numParams {
+		return nil, fmt.Errorf("db2: mismatched parameter column metadata lengths (expected %d, got %d colTypes)", numParams, len(colTypes))
+	}
 
+	var fdodsc []byte
 	var fdodta bytes.Buffer
 	fdodta.Grow(numParams * 32)
 
-	for i := 0; i < numParams; i++ {
-		st := colTypes[i]
-		sl := colLens[i]
-		p := precs[i]
-		s := scales[i]
-
-		dscBytes := FDODSC(st, sl, p, s)
-		fdodsc = append(fdodsc, dscBytes...)
-
-		dtaBytes, err := FDODTA(st, sl, p, s, args[i], endian)
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode parameter %d: %w", i+1, err)
+	// In DRDA, FDODSC groups parameters in triplets (LL, 0x76, 0xD0).
+	// A single triplet group can describe up to 84 parameters ((255 - 3) / 3 = 84).
+	// For numParams > 84, we divide into multiple groups of up to 84 parameters each to avoid uint8 overflow.
+	for i := 0; i < numParams; {
+		chunkSize := numParams - i
+		if chunkSize > 84 {
+			chunkSize = 84
 		}
-		fdodta.Write(dtaBytes)
+
+		groupHeader := []byte{
+			byte((1 + chunkSize) * 3),
+			0x76,
+			0xD0,
+		}
+		fdodsc = append(fdodsc, groupHeader...)
+
+		for j := 0; j < chunkSize; j++ {
+			idx := i + j
+			st := colTypes[idx]
+			sl := colLens[idx]
+			p := precs[idx]
+			s := scales[idx]
+
+			dscBytes := FDODSC(st, sl, p, s)
+			fdodsc = append(fdodsc, dscBytes...)
+
+			dtaBytes, err := FDODTA(st, sl, p, s, args[idx], endian)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode parameter %d: %w", idx+1, err)
+			}
+			fdodta.Write(dtaBytes)
+		}
+
+		i += chunkSize
 	}
 
 	dtaBytes := fdodta.Bytes()
@@ -405,6 +446,10 @@ func BuildSQLDTA(colTypes []types.SQLType, colLens []int64, precs, scales []int,
 
 	// Wrap FDODSC and FDODTA
 	bodyLen := 4 + (4 + len(fdodsc)) + (4 + len(dtaBytes))
+	if bodyLen > 65529 {
+		return nil, fmt.Errorf("db2: parameter payload length %d exceeds maximum DRDA DSS limit of 65529 bytes", bodyLen)
+	}
+
 	sqldta := make([]byte, bodyLen)
 
 	// SQLDTA object header

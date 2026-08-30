@@ -76,33 +76,50 @@ func WriteRequestDSS(w io.Writer, payload []byte, curID uint16, nextHasSameID, l
 		dssType = DSSTypeObject
 	}
 
-	chained := !lastPacket
-	var hdr [6]byte
-	totalLen := uint16(len(payload) + 6)
-	binary.BigEndian.PutUint16(hdr[0:2], totalLen)
-	hdr[2] = DSSMagic
+	const maxChunkSize = 65529 // 65535 - 6 bytes header
+	offset := 0
+	totalLen := len(payload)
 
-	flags := dssType & 0x0F
-	if chained {
-		flags |= DSSFlagChained
-	}
-	if nextHasSameID {
-		flags |= DSSFlagSameID
-	}
-	hdr[3] = flags
-	binary.BigEndian.PutUint16(hdr[4:6], curID)
+	for offset < totalLen {
+		chunkEnd := offset + maxChunkSize
+		isFinalChunk := false
+		if chunkEnd >= totalLen {
+			chunkEnd = totalLen
+			isFinalChunk = true
+		}
 
-	if _, err := w.Write(hdr[:]); err != nil {
-		return curID, fmt.Errorf("failed to write DSS header: %w", err)
-	}
-	if _, err := w.Write(payload); err != nil {
-		return curID, fmt.Errorf("failed to write DSS payload: %w", err)
+		chunk := payload[offset:chunkEnd]
+		chained := !lastPacket || !isFinalChunk
+
+		var hdr [6]byte
+		binary.BigEndian.PutUint16(hdr[0:2], uint16(len(chunk)+6))
+		hdr[2] = DSSMagic
+
+		flags := dssType & 0x0F
+		if chained {
+			flags |= DSSFlagChained
+		}
+		if nextHasSameID || !isFinalChunk {
+			flags |= DSSFlagSameID
+		}
+		hdr[3] = flags
+		binary.BigEndian.PutUint16(hdr[4:6], curID)
+
+		if _, err := w.Write(hdr[:]); err != nil {
+			return curID, fmt.Errorf("failed to write DSS header: %w", err)
+		}
+		if _, err := w.Write(chunk); err != nil {
+			return curID, fmt.Errorf("failed to write DSS payload: %w", err)
+		}
+
+		offset = chunkEnd
 	}
 
-	if nextHasSameID {
-		return curID, nil
+	if !nextHasSameID {
+		curID++
 	}
-	return curID + 1, nil
+
+	return curID, nil
 }
 
 // ReadDSS reads a complete DSS packet from the reader.

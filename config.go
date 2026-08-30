@@ -18,7 +18,9 @@ type Config struct {
 	User              string
 	Password          string
 	UseSSL            bool
+	SSLRootCAPath     string
 	SSLClientCertPath string
+	SSLClientKeyPath  string
 	Timeout           time.Duration
 	BlockSize         int
 	SecurityMechanism uint16
@@ -33,6 +35,17 @@ type Config struct {
 	ClientAcctng      string
 	ClientCorrToken   string
 	Params            map[string]string
+}
+
+// String implements fmt.Stringer to ensure sensitive credentials (Password) are redacted in logs.
+func (c Config) String() string {
+	return fmt.Sprintf("Config{Host:%s, Port:%d, Database:%s, User:%s, Password:\"******\", UseSSL:%t, Timeout:%v}",
+		c.Host, c.Port, c.Database, c.User, c.UseSSL, c.Timeout)
+}
+
+// GoString implements fmt.GoStringer to ensure sensitive credentials (Password) are redacted in logs.
+func (c Config) GoString() string {
+	return c.String()
 }
 
 // NewConfig returns a default Config with standard Db2 settings.
@@ -68,45 +81,51 @@ func ParseDSN(dsn string) (*Config, error) {
 func parseURL(dsn string) (*Config, error) {
 	u, err := url.Parse(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to parse URL: %v", ErrInvalidConnectionStr, err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidConnectionStr, err)
+	}
+
+	if u.Scheme != "db2" && u.Scheme != "db2s" {
+		return nil, fmt.Errorf("%w: expected scheme 'db2' or 'db2s'", ErrInvalidConnectionStr)
 	}
 
 	cfg := NewConfig()
-
 	if u.Scheme == "db2s" {
 		cfg.UseSSL = true
-		cfg.Port = 50001
 	}
 
-	cfg.Host = u.Hostname()
-	if cfg.Host == "" {
-		cfg.Host = "localhost"
+	// Host and Port
+	if u.Hostname() != "" {
+		cfg.Host = u.Hostname()
 	}
-
-	if portStr := u.Port(); portStr != "" {
-		port, err := strconv.Atoi(portStr)
+	if u.Port() != "" {
+		port, err := strconv.Atoi(u.Port())
 		if err != nil || port <= 0 || port > 65535 {
-			return nil, fmt.Errorf("%w: invalid port %q", ErrInvalidConnectionStr, portStr)
+			return nil, fmt.Errorf("%w: invalid port %s", ErrInvalidConnectionStr, u.Port())
 		}
 		cfg.Port = port
 	}
 
+	// Database name (Path)
+	dbName := strings.TrimPrefix(u.Path, "/")
+	if dbName == "" {
+		return nil, fmt.Errorf("%w: missing database name", ErrInvalidConnectionStr)
+	}
+	cfg.Database = dbName
+
+	// User and Password
 	if u.User != nil {
 		cfg.User = u.User.Username()
-		cfg.Password, _ = u.User.Password()
+		if pwd, set := u.User.Password(); set {
+			cfg.Password = pwd
+		}
 	}
 
-	// Database name is the path without leading slash
-	cfg.Database = strings.TrimPrefix(u.Path, "/")
-
 	// Query parameters
-	queryParams := u.Query()
-	for k, v := range queryParams {
-		val := ""
-		if len(v) > 0 {
-			val = v[0]
+	query := u.Query()
+	for key, values := range query {
+		if len(values) > 0 {
+			applyParam(cfg, key, values[0])
 		}
-		applyParam(cfg, k, val)
 	}
 
 	return cfg, nil
@@ -155,8 +174,14 @@ func applyParam(cfg *Config, key, val string) {
 		if cfg.UseSSL && cfg.Port == 50000 {
 			cfg.Port = 50001
 		}
-	case "ssl_client_cert_path", "sslcert", "cert":
+	case "ssl_root_ca", "ssl_ca", "sslrootcapath", "ssl_ca_path":
+		cfg.SSLRootCAPath = val
+		cfg.UseSSL = true
+	case "ssl_client_cert_path", "ssl_client_cert", "sslcert", "cert":
 		cfg.SSLClientCertPath = val
+		cfg.UseSSL = true
+	case "ssl_client_key_path", "ssl_client_key", "sslkey", "key":
+		cfg.SSLClientKeyPath = val
 		cfg.UseSSL = true
 	case "timeout", "connect_timeout":
 		if d, err := time.ParseDuration(val); err == nil {
@@ -222,7 +247,9 @@ func (c *Config) ToSessionConfig() network.SessionConfig {
 		User:              c.User,
 		Password:          c.Password,
 		UseSSL:            c.UseSSL,
+		SSLRootCAPath:     c.SSLRootCAPath,
 		SSLClientCertPath: c.SSLClientCertPath,
+		SSLClientKeyPath:  c.SSLClientKeyPath,
 		Timeout:           c.Timeout,
 		BlockSize:         c.BlockSize,
 		SecurityMechanism: c.SecurityMechanism,

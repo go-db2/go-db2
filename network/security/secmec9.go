@@ -51,6 +51,16 @@ func CalculateSessionKey(serverSecTkn []byte, clientPriv *big.Int) ([]byte, erro
 		return nil, errors.New("server security token is empty")
 	}
 	serverPub := new(big.Int).SetBytes(serverSecTkn)
+
+	// Security validation: Prevent small-subgroup attacks (SEC-08)
+	if serverPub.Cmp(big.NewInt(1)) <= 0 {
+		return nil, errors.New("db2: invalid DH server public key: value must be greater than 1")
+	}
+	pMinusOne := new(big.Int).Sub(DHSecmec9Prime, big.NewInt(1))
+	if serverPub.Cmp(pMinusOne) >= 0 {
+		return nil, errors.New("db2: invalid DH server public key: value must be less than p-1")
+	}
+
 	shared := new(big.Int).Exp(serverPub, clientPriv, DHSecmec9Prime)
 	b := shared.Bytes()
 	if len(b) < 32 {

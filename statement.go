@@ -33,6 +33,10 @@ func NewStmt(conn *Conn, query string, outputCols, paramCols []network.ColumnDes
 
 // Close closes the prepared statement.
 func (s *Stmt) Close() error {
+	if s.conn != nil {
+		s.conn.mu.Lock()
+		defer s.conn.mu.Unlock()
+	}
 	s.closed = true
 	return nil
 }
@@ -53,6 +57,17 @@ func (s *Stmt) Exec(args []driver.Value) (driver.Result, error) {
 
 // ExecContext executes a prepared statement with context and arguments.
 func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	if s.closed || s.conn == nil || s.conn.session == nil {
+		return nil, ErrConnectionClosed
+	}
+
+	s.conn.mu.Lock()
+	defer s.conn.mu.Unlock()
+
+	return s.execContextLocked(ctx, args)
+}
+
+func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
 	if s.closed || s.conn == nil || s.conn.session == nil {
 		return nil, ErrConnectionClosed
 	}
@@ -99,11 +114,7 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 	}
 
 	if isBatch {
-		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query)
-		if err != nil {
-			return nil, err
-		}
-		totalAffected, err := s.conn.session.ExecBatchWithParams(ctx, newParamCols, batchRows)
+		totalAffected, err := s.conn.session.ExecBatchWithParams(ctx, s.paramCols, batchRows)
 		if err != nil {
 			return nil, err
 		}
@@ -177,13 +188,24 @@ func (s *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driv
 		return nil, ErrConnectionClosed
 	}
 
+	s.conn.mu.Lock()
+	defer s.conn.mu.Unlock()
+
+	return s.queryContextLocked(ctx, args)
+}
+
+func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	if s.closed || s.conn == nil || s.conn.session == nil {
+		return nil, ErrConnectionClosed
+	}
+
 	if len(args) != len(s.paramCols) {
 		return nil, fmt.Errorf("db2: expected %d arguments, got %d", len(s.paramCols), len(args))
 	}
 
 	trimmed := strings.TrimSpace(strings.ToUpper(s.query))
 	if strings.HasPrefix(trimmed, "CALL") {
-		_, err := s.ExecContext(ctx, args)
+		_, err := s.execContextLocked(ctx, args)
 		if err != nil {
 			return nil, err
 		}
@@ -223,25 +245,99 @@ func hasBlobParams(paramCols []network.ColumnDescription, args []any) bool {
 	return false
 }
 
+// rewriteBinaryParams rewrites '?' for BLOB parameters while safely ignoring '?' within
+// string literals ('...'), identifiers ("..."), line comments (--...) and block comments (/*...*/).
 func rewriteBinaryParams(query string, paramCols []network.ColumnDescription, args []any) (string, []network.ColumnDescription, []any) {
 	var rewrittenQuery strings.Builder
 	var rewrittenCols []network.ColumnDescription
 	var rewrittenArgs []any
 
 	paramIdx := 0
-	inString := false
+	inSingleQuote := false
+	inDoubleQuote := false
+	inLineComment := false
+	inBlockComment := false
 
-	for i := 0; i < len(query); i++ {
+	n := len(query)
+	for i := 0; i < n; i++ {
 		ch := query[i]
-		if ch == '\'' {
+
+		// Handle Line Comment
+		if inLineComment {
 			rewrittenQuery.WriteByte(ch)
-			if inString && i+1 < len(query) && query[i+1] == '\'' {
+			if ch == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+
+		// Handle Block Comment
+		if inBlockComment {
+			rewrittenQuery.WriteByte(ch)
+			if ch == '*' && i+1 < n && query[i+1] == '/' {
 				rewrittenQuery.WriteByte(query[i+1])
 				i++
-				continue
+				inBlockComment = false
 			}
-			inString = !inString
-		} else if ch == '?' && !inString {
+			continue
+		}
+
+		// Handle Single Quote Strings
+		if inSingleQuote {
+			rewrittenQuery.WriteByte(ch)
+			if ch == '\'' {
+				if i+1 < n && query[i+1] == '\'' {
+					rewrittenQuery.WriteByte(query[i+1])
+					i++
+					continue
+				}
+				inSingleQuote = false
+			}
+			continue
+		}
+
+		// Handle Double Quote Identifiers
+		if inDoubleQuote {
+			rewrittenQuery.WriteByte(ch)
+			if ch == '"' {
+				if i+1 < n && query[i+1] == '"' {
+					rewrittenQuery.WriteByte(query[i+1])
+					i++
+					continue
+				}
+				inDoubleQuote = false
+			}
+			continue
+		}
+
+		// Start of Comments or Strings
+		if ch == '-' && i+1 < n && query[i+1] == '-' {
+			inLineComment = true
+			rewrittenQuery.WriteByte(ch)
+			rewrittenQuery.WriteByte(query[i+1])
+			i++
+			continue
+		}
+		if ch == '/' && i+1 < n && query[i+1] == '*' {
+			inBlockComment = true
+			rewrittenQuery.WriteByte(ch)
+			rewrittenQuery.WriteByte(query[i+1])
+			i++
+			continue
+		}
+		if ch == '\'' {
+			inSingleQuote = true
+			rewrittenQuery.WriteByte(ch)
+			continue
+		}
+		if ch == '"' {
+			inDoubleQuote = true
+			rewrittenQuery.WriteByte(ch)
+			continue
+		}
+
+		// Positional parameter placeholder
+		if ch == '?' {
 			if paramIdx < len(paramCols) && paramIdx < len(args) {
 				c := paramCols[paramIdx]
 				if types.SQLType(c.SQLType) == types.SQLTypeBlob || types.SQLType(c.SQLType) == types.SQLTypeNBlob {
@@ -258,9 +354,10 @@ func rewriteBinaryParams(query string, paramCols []network.ColumnDescription, ar
 			} else {
 				rewrittenQuery.WriteByte(ch)
 			}
-		} else {
-			rewrittenQuery.WriteByte(ch)
+			continue
 		}
+
+		rewrittenQuery.WriteByte(ch)
 	}
 
 	return rewrittenQuery.String(), rewrittenCols, rewrittenArgs

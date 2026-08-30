@@ -92,7 +92,7 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	}
 
 	stmt := NewStmt(c, query, outCols, paramCols)
-	return stmt.ExecContext(ctx, args)
+	return stmt.execContextLocked(ctx, args)
 }
 
 // Query executes a query that may return rows (legacy interface).
@@ -150,7 +150,7 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	}
 
 	stmt := NewStmt(c, query, outCols, paramCols)
-	return stmt.QueryContext(ctx, args)
+	return stmt.queryContextLocked(ctx, args)
 }
 
 // CurrentUser returns the currently active user on this connection.
