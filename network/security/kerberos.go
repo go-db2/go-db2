@@ -314,11 +314,5 @@ func AcquireKerberosToken(cfg KerberosConfig) ([]byte, error) {
 		}
 	}
 
-	// If no ccache/keytab file was found and username is present, build synthetic GSSAPI AP-REQ token
-	if cfg.Username != "" {
-		syntheticAPReq := []byte(fmt.Sprintf("KRB5_APREQ:%s:%s", cfg.Username, spn))
-		return BuildGSSAPIToken(syntheticAPReq)
-	}
-
-	return nil, fmt.Errorf("db2/kerberos: no Kerberos credentials found for SPN %q (specify krb5_keytab, krb5_ccache, or user credentials)", spn)
+	return nil, fmt.Errorf("db2/kerberos: no authentic Kerberos credentials found for SPN %q (specify a valid krb5_keytab, krb5_ccache, or GSSAPI token)", spn)
 }

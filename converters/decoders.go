@@ -104,6 +104,10 @@ func IsNullableDRDAType(t uint8) bool {
 
 // DecodeField reads and parses a single column value from a binary QRYDTA reader.
 func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder) (any, error) {
+	if len(ps) < 2 {
+		return nil, fmt.Errorf("db2: invalid column parameter scale metadata length %d (expected >= 2)", len(ps))
+	}
+
 	if IsNullableDRDAType(drdaType) {
 		nullIndicator := make([]byte, 1)
 		if _, err := io.ReadFull(r, nullIndicator); err != nil {

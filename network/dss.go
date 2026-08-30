@@ -191,6 +191,10 @@ func ReadDSS(r io.Reader) (*DSSHeader, CodePoint, []byte, bool, error) {
 		return header, codePoint, nil, false, fmt.Errorf("invalid DDM object length: %d", objLen)
 	}
 
+	if dssLen >= 6 && int(objLen) > int(dssLen)-6 {
+		return header, codePoint, nil, false, fmt.Errorf("db2: DDM object length %d exceeds DSS frame payload capacity %d", objLen, dssLen-6)
+	}
+
 	payloadLen := int(objLen - 4)
 	payload := make([]byte, payloadLen)
 	if _, err := io.ReadFull(r, payload); err != nil {

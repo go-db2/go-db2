@@ -26,11 +26,14 @@ type ManagerLevel struct {
 
 // PackDDMObject wraps raw body bytes into a DDM object header (2 bytes length + 2 bytes codepoint + body).
 func PackDDMObject(cp CodePoint, body []byte) []byte {
-	totalLen := uint16(len(body) + 4)
-	buf := make([]byte, 4+len(body))
-	binary.BigEndian.PutUint16(buf[0:2], totalLen)
+	totalLen := len(body) + 4
+	if totalLen > 65535 {
+		totalLen = 65535
+	}
+	buf := make([]byte, totalLen)
+	binary.BigEndian.PutUint16(buf[0:2], uint16(totalLen))
 	binary.BigEndian.PutUint16(buf[2:4], uint16(cp))
-	copy(buf[4:], body)
+	copy(buf[4:], body[:totalLen-4])
 	return buf
 }
 

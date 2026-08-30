@@ -3,6 +3,7 @@ package db2
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
@@ -240,4 +241,190 @@ func TestSecurity_Stmt_And_Result_Concurrency(t *testing.T) {
 	_ = stmt.Close()
 }
 
+// 9. SEC-02: ReadDSS bounds checking on malformed frame length
+func TestSecurity_ReadDSS_MalformedFrameLength(t *testing.T) {
+	// Construct a 20-byte DSS frame claiming to have a 50-byte DDM object
+	var buf []byte
+	// DSS Header (6 bytes): totalLen=20, magic=0xD0, flags=0x01, corrID=1
+	buf = append(buf, 0x00, 20, 0xD0, 0x01, 0x00, 0x01)
+	// DDM Object Header (4 bytes): objLen=50 (exceeds frame!), cp=0x2001
+	buf = append(buf, 0x00, 50, 0x20, 0x01)
+	// Remaining 10 bytes to satisfy the 20-byte frame
+	buf = append(buf, make([]byte, 10)...)
+
+	reader := strings.NewReader(string(buf))
+	_, _, _, _, err := network.ReadDSS(reader)
+	if err == nil {
+		t.Fatal("expected error when objLen > dssLen - 6, got nil")
+	}
+}
+
+// 10. SEC-03: DecodeField panic protection for truncated metadata (len(ps) < 2)
+func TestSecurity_DecodeField_TruncatedMetadataPanicProtection(t *testing.T) {
+	testTypes := []uint8{
+		converters.DRDATypeChar,
+		converters.DRDATypeGraphic,
+		converters.DRDATypeVarChar,
+		converters.DRDATypeDate,
+		converters.DRDATypeTime,
+		converters.DRDATypeTimestamp,
+		converters.DRDATypeDecimal,
+	}
+
+	invalidPSList := [][]byte{
+		nil,
+		{},
+		{0x01},
+	}
+
+	for _, dt := range testTypes {
+		for _, ps := range invalidPSList {
+			t.Run(fmt.Sprintf("Type_0x%02X_PSLen_%d", dt, len(ps)), func(t *testing.T) {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("DecodeField panicked on truncated ps: %v", r)
+					}
+				}()
+
+				dummyData := strings.NewReader("1234567890abcdef")
+				_, err := converters.DecodeField(dt, ps, dummyData, binary.LittleEndian)
+				if err == nil {
+					t.Fatalf("expected error for truncated ps with len %d, got nil", len(ps))
+				}
+			})
+		}
+	}
+}
+
+// 11. SEC-07: PackDDMObject protection against uint16 overflow
+func TestSecurity_PackDDMObject_LargePayloadProtection(t *testing.T) {
+	largeBody := make([]byte, 70000)
+	obj := network.PackDDMObject(network.CodePointSQLSTT, largeBody)
+	if len(obj) > 65535 {
+		t.Fatalf("PackDDMObject exceeded uint16 max: %d bytes", len(obj))
+	}
+	totalLen := binary.BigEndian.Uint16(obj[0:2])
+	if totalLen != 65535 {
+		t.Fatalf("expected totalLen=65535, got %d", totalLen)
+	}
+}
+
+// 12. SEC-01 & SEC-05: Session AutoCommit state and Tx concurrency
+func TestSecurity_Session_AutoCommitSwitching(t *testing.T) {
+	sess := network.NewSession(network.SessionConfig{Database: "TESTDB"})
+	if !sess.AutoCommit() {
+		t.Fatal("expected AutoCommit=true on new session")
+	}
+
+	sess.SetAutoCommit(false)
+	if sess.AutoCommit() {
+		t.Fatal("expected AutoCommit=false after SetAutoCommit(false)")
+	}
+
+	sess.SetAutoCommit(true)
+	if !sess.AutoCommit() {
+		t.Fatal("expected AutoCommit=true after SetAutoCommit(true)")
+	}
+
+	conn := &Conn{session: sess}
+	tx, err := conn.BeginTx(context.Background(), driver.TxOptions{})
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+
+	if sess.AutoCommit() {
+		t.Fatal("expected AutoCommit=false inside transaction")
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = tx.Rollback()
+		}()
+	}
+	wg.Wait()
+
+	if !sess.AutoCommit() {
+		t.Fatal("expected AutoCommit=true after Rollback completion")
+	}
+}
+
+// 13. SEC-01 Integration: Validate that tx.Rollback() does NOT persist data, and tx.Commit() does persist data.
+func TestIntegration_Transaction_RollbackAndCommit(t *testing.T) {
+	dsn := "db2://db2inst1:MinhaSenhaForte123@localhost:50000/TESTDB"
+	db, err := sql.Open("db2", dsn)
+	if err != nil {
+		t.Skip("skipping integration test, cannot open db2:", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		t.Skip("skipping integration test, db2 not reachable:", err)
+	}
+
+	_, _ = db.ExecContext(ctx, "DROP TABLE test_sec_tx_iso")
+	_, err = db.ExecContext(ctx, "CREATE TABLE test_sec_tx_iso (id INT PRIMARY KEY, name VARCHAR(50))")
+	if err != nil {
+		t.Fatalf("failed to create test table: %v", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "DROP TABLE test_sec_tx_iso")
+	}()
+
+	// 1. Begin transaction, insert row, and Rollback
+	tx1, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+
+	_, err = tx1.ExecContext(ctx, "INSERT INTO test_sec_tx_iso (id, name) VALUES (?, ?)", 100, "RolledBackUser")
+	if err != nil {
+		t.Fatalf("tx1.ExecContext failed: %v", err)
+	}
+
+	if err := tx1.Rollback(); err != nil {
+		t.Fatalf("tx1.Rollback failed: %v", err)
+	}
+
+	// Verify row was NOT persisted
+	var count int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM test_sec_tx_iso WHERE id = 100").Scan(&count)
+	if err != nil {
+		t.Fatalf("QueryRowContext failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("ACID FAILURE: Expected 0 rows after Rollback, got %d (auto-commit bug!)", count)
+	}
+
+	// 2. Begin transaction, insert row, and Commit
+	tx2, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx 2 failed: %v", err)
+	}
+
+	_, err = tx2.ExecContext(ctx, "INSERT INTO test_sec_tx_iso (id, name) VALUES (?, ?)", 200, "CommittedUser")
+	if err != nil {
+		t.Fatalf("tx2.ExecContext failed: %v", err)
+	}
+
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("tx2.Commit failed: %v", err)
+	}
+
+	// Verify row WAS persisted
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM test_sec_tx_iso WHERE id = 200").Scan(&count)
+	if err != nil {
+		t.Fatalf("QueryRowContext 2 failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("Expected 1 row after Commit, got %d", count)
+	}
+}
+
 var _ driver.Stmt = (*Stmt)(nil)
+

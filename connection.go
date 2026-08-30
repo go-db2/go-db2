@@ -221,9 +221,12 @@ func (c *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 		return nil, errors.New("db2: read-only transactions are not supported")
 	}
 
+	// Disable auto-commit for explicit transaction scope
+	c.session.SetAutoCommit(false)
+
 	return &Tx{
-		session: c.session,
-		ctx:     ctx,
+		conn: c,
+		ctx:  ctx,
 	}, nil
 }
 

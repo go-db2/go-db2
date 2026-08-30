@@ -14,11 +14,12 @@ import (
 
 // Stmt implements the database/sql/driver.Stmt and StmtExecContext / StmtQueryContext interfaces.
 type Stmt struct {
-	conn       *Conn
-	query      string
-	outputCols []network.ColumnDescription
-	paramCols  []network.ColumnDescription
-	closed     bool
+	conn              *Conn
+	query             string
+	outputCols        []network.ColumnDescription
+	paramCols         []network.ColumnDescription
+	rewrittenOnServer bool
+	closed            bool
 }
 
 // NewStmt creates a prepared statement wrapper.
@@ -122,6 +123,7 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 	}
 
 	if hasBlobParams(s.paramCols, rawArgs) {
+		s.rewrittenOnServer = true
 		newQuery, _, newArgs := rewriteBinaryParams(s.query, s.paramCols, rawArgs)
 		if len(newArgs) == 0 {
 			affected, err := s.conn.session.ExecDirect(ctx, newQuery)
@@ -150,12 +152,16 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		return NewResultWithConn(s.conn, affected, isInsertQuery(s.query)), nil
 	}
 
-	_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query)
-	if err != nil {
-		return nil, err
+	if s.rewrittenOnServer {
+		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query)
+		if err != nil {
+			return nil, err
+		}
+		s.paramCols = newParamCols
+		s.rewrittenOnServer = false
 	}
 
-	affected, outValues, err := s.conn.session.ExecWithParams(ctx, newParamCols, rawArgs)
+	affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.paramCols, rawArgs)
 	if err != nil {
 		return nil, err
 	}

@@ -84,6 +84,7 @@ type Session struct {
 	pkgsn         uint16
 	qryblksz      uint32
 	rdbinttkn     []byte
+	autoCommit    bool
 	closed        bool
 }
 
@@ -127,7 +128,22 @@ func NewSession(cfg SessionConfig) *Session {
 		pkgcnstkn:     "SYSLVL01",
 		pkgsn:         65,
 		qryblksz:      blksz,
+		autoCommit:    true,
 	}
+}
+
+// AutoCommit returns the current auto-commit state of the session.
+func (s *Session) AutoCommit() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.autoCommit
+}
+
+// SetAutoCommit sets the auto-commit mode for subsequent operations.
+func (s *Session) SetAutoCommit(auto bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.autoCommit = auto
 }
 
 // Connect dials the Db2 server via TCP/TLS and completes the DRDA handshake.
@@ -540,16 +556,23 @@ func (s *Session) ExecDirect(ctx context.Context, sql string) (int64, error) {
 
 	// 2. SQLSTT (SQL Statement Text)
 	stt := PackSQLSTT(sql)
-	s.correlationID, err = WriteRequestDSS(s.conn, stt, s.correlationID, false, false)
-	if err != nil {
-		return 0, fmt.Errorf("failed to write SQLSTT: %w", err)
-	}
+	if s.autoCommit {
+		s.correlationID, err = WriteRequestDSS(s.conn, stt, s.correlationID, false, false)
+		if err != nil {
+			return 0, fmt.Errorf("failed to write SQLSTT: %w", err)
+		}
 
-	// 3. RDBCMM (Commit)
-	cmm := PackRDBCMM()
-	s.correlationID, err = WriteRequestDSS(s.conn, cmm, s.correlationID, false, true)
-	if err != nil {
-		return 0, fmt.Errorf("failed to write RDBCMM: %w", err)
+		// 3. RDBCMM (Commit)
+		cmm := PackRDBCMM()
+		s.correlationID, err = WriteRequestDSS(s.conn, cmm, s.correlationID, false, true)
+		if err != nil {
+			return 0, fmt.Errorf("failed to write RDBCMM: %w", err)
+		}
+	} else {
+		s.correlationID, err = WriteRequestDSS(s.conn, stt, s.correlationID, false, true)
+		if err != nil {
+			return 0, fmt.Errorf("failed to write SQLSTT: %w", err)
+		}
 	}
 
 	replies, err := s.readReplyChain()
@@ -831,16 +854,23 @@ func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescript
 	}
 
 	// 2. SQLDTA
-	_, err = WriteRequestDSS(s.conn, sqldta, curID, false, false)
-	if err != nil {
-		return 0, nil, err
-	}
+	if s.autoCommit {
+		_, err = WriteRequestDSS(s.conn, sqldta, curID, false, false)
+		if err != nil {
+			return 0, nil, err
+		}
 
-	// 3. RDBCMM
-	cmm := PackRDBCMM()
-	_, err = WriteRequestDSS(s.conn, cmm, 1, false, true)
-	if err != nil {
-		return 0, nil, err
+		// 3. RDBCMM
+		cmm := PackRDBCMM()
+		_, err = WriteRequestDSS(s.conn, cmm, 1, false, true)
+		if err != nil {
+			return 0, nil, err
+		}
+	} else {
+		_, err = WriteRequestDSS(s.conn, sqldta, curID, false, true)
+		if err != nil {
+			return 0, nil, err
+		}
 	}
 
 	replies, err := s.readReplyChain()
@@ -1061,11 +1091,13 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 		stitchEXTDTA(fields, rows, extdtaList)
 	}
 
-	// Send commit to close query lock
-	s.correlationID = 1
-	s.correlationID, err = WriteRequestDSS(s.conn, PackRDBCMM(), s.correlationID, false, true)
-	if err == nil {
-		_, _ = s.readReplyChain()
+	if s.autoCommit {
+		// Send commit to close query lock
+		s.correlationID = 1
+		s.correlationID, err = WriteRequestDSS(s.conn, PackRDBCMM(), s.correlationID, false, true)
+		if err == nil {
+			_, _ = s.readReplyChain()
+		}
 	}
 
 	return columns, rows, nil

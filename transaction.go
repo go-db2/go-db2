@@ -3,30 +3,49 @@ package db2
 import (
 	"context"
 	"database/sql/driver"
-
-	"github.com/go-db2/go-db2/network"
 )
 
 // Tx represents an in-progress transaction on an IBM Db2 database.
 type Tx struct {
-	session *network.Session
-	ctx     context.Context
+	conn   *Conn
+	ctx    context.Context
+	closed bool
 }
 
 // Commit commits the transaction.
 func (tx *Tx) Commit() error {
-	if tx.session == nil {
+	if tx.conn == nil || tx.conn.session == nil {
 		return ErrConnectionClosed
 	}
-	return tx.session.Commit(tx.ctx)
+
+	tx.conn.mu.Lock()
+	defer tx.conn.mu.Unlock()
+
+	if tx.closed {
+		return ErrConnectionClosed
+	}
+	tx.closed = true
+
+	defer tx.conn.session.SetAutoCommit(true)
+	return tx.conn.session.Commit(tx.ctx)
 }
 
 // Rollback aborts the transaction.
 func (tx *Tx) Rollback() error {
-	if tx.session == nil {
+	if tx.conn == nil || tx.conn.session == nil {
 		return ErrConnectionClosed
 	}
-	return tx.session.Rollback(tx.ctx)
+
+	tx.conn.mu.Lock()
+	defer tx.conn.mu.Unlock()
+
+	if tx.closed {
+		return ErrConnectionClosed
+	}
+	tx.closed = true
+
+	defer tx.conn.session.SetAutoCommit(true)
+	return tx.conn.session.Rollback(tx.ctx)
 }
 
 var _ driver.Tx = (*Tx)(nil)

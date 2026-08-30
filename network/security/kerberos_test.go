@@ -91,19 +91,15 @@ func TestAcquireKerberosToken_DirectRawToken(t *testing.T) {
 	}
 }
 
-func TestAcquireKerberosToken_Synthetic(t *testing.T) {
+func TestAcquireKerberosToken_MissingCredentialsFails(t *testing.T) {
 	cfg := KerberosConfig{
 		Username: "db2user@EXAMPLE.COM",
 		Host:     "db2host",
 	}
 
-	token, err := AcquireKerberosToken(cfg)
-	if err != nil {
-		t.Fatalf("AcquireKerberosToken() error: %v", err)
-	}
-
-	if token[0] != 0x60 {
-		t.Fatalf("Expected GSSAPI header 0x60, got 0x%02X", token[0])
+	_, err := AcquireKerberosToken(cfg)
+	if err == nil {
+		t.Fatal("Expected error when no authentic Kerberos credentials (keytab/ccache) are found, got nil")
 	}
 }
 
