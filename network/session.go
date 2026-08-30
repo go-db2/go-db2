@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -173,52 +172,43 @@ func (s *Session) connectRaw(ctx context.Context) error {
 		Timeout: s.cfg.Timeout,
 	}
 
-	var rawConn net.Conn
-	var err error
-
-	if s.cfg.UseSSL {
-		tlsConfig := s.cfg.TLSConfig
-		if tlsConfig == nil {
-			tlsConfig = &tls.Config{
-				ServerName: s.cfg.Host,
-				MinVersion: tls.VersionTLS12,
-			}
-			// 1. Root CA handling (to verify server certificate)
-			caPath := s.cfg.SSLRootCAPath
-			if caPath == "" && s.cfg.SSLClientCertPath != "" && s.cfg.SSLClientKeyPath == "" {
-				// Backward compatibility: If only SSLClientCertPath is provided without key, treat as CA cert
-				caPath = s.cfg.SSLClientCertPath
-			}
-			if caPath != "" {
-				certData, certErr := os.ReadFile(caPath)
-				if certErr != nil {
-					return fmt.Errorf("failed to read SSL root CA certificate file: %w", certErr)
-				}
-				rootCAs := x509.NewCertPool()
-				if !rootCAs.AppendCertsFromPEM(certData) {
-					return errors.New("failed to parse SSL root certificate from PEM")
-				}
-				tlsConfig.RootCAs = rootCAs
-			}
-
-			// 2. Client Certificate & Private Key (mTLS authentication)
-			if s.cfg.SSLClientCertPath != "" && s.cfg.SSLClientKeyPath != "" {
-				clientCert, certErr := tls.LoadX509KeyPair(s.cfg.SSLClientCertPath, s.cfg.SSLClientKeyPath)
-				if certErr != nil {
-					return fmt.Errorf("failed to load client SSL keypair (cert=%s, key=%s): %w", s.cfg.SSLClientCertPath, s.cfg.SSLClientKeyPath, certErr)
-				}
-				tlsConfig.Certificates = []tls.Certificate{clientCert}
-			}
-		} else if tlsConfig.MinVersion < tls.VersionTLS12 {
-			tlsConfig.MinVersion = tls.VersionTLS12
-		}
-		rawConn, err = tls.DialWithDialer(dialer, "tcp", address, tlsConfig)
-	} else {
-		rawConn, err = dialer.DialContext(ctx, "tcp", address)
-	}
-
+	rawConn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return fmt.Errorf("failed to connect to Db2 at %s: %w", address, err)
+	}
+
+	if s.cfg.UseSSL {
+		if s.cfg.TLSConfig != nil {
+			tlsConfig := s.cfg.TLSConfig
+			if tlsConfig.MinVersion < tls.VersionTLS12 {
+				tlsConfig.MinVersion = tls.VersionTLS12
+			}
+			tlsConn := tls.Client(rawConn, tlsConfig)
+			if err := tlsConn.Handshake(); err != nil {
+				_ = rawConn.Close()
+				return fmt.Errorf("TLS handshake failed: %w", err)
+			}
+			rawConn = tlsConn
+		} else {
+			caPath := s.cfg.SSLRootCAPath
+			if caPath == "" && s.cfg.SSLClientCertPath != "" && s.cfg.SSLClientKeyPath == "" {
+				caPath = s.cfg.SSLClientCertPath
+			}
+			secTLSConfig := security.TLSConfig{
+				EnableTLS:          true,
+				InsecureSkipVerify: false,
+				ServerName:         s.cfg.Host,
+				CACertPath:         caPath,
+				ClientCertPath:     s.cfg.SSLClientCertPath,
+				ClientKeyPath:      s.cfg.SSLClientKeyPath,
+			}
+			tlsConn, tlsErr := security.WrapTLS(rawConn, secTLSConfig)
+			if tlsErr != nil {
+				_ = rawConn.Close()
+				return fmt.Errorf("failed to establish TLS connection: %w", tlsErr)
+			}
+			rawConn = tlsConn
+		}
 	}
 
 	if tcpConn, ok := rawConn.(*net.TCPConn); ok {
@@ -1270,15 +1260,22 @@ func (s *Session) ExecSQLSet(ctx context.Context, sql string) error {
 	}
 
 	sqlStt := PackSQLSTT(sql)
-	s.correlationID, err = WriteRequestDSS(s.conn, sqlStt, s.correlationID, false, false)
-	if err != nil {
-		return fmt.Errorf("failed to write SQLSTT: %w", err)
-	}
+	if s.autoCommit {
+		s.correlationID, err = WriteRequestDSS(s.conn, sqlStt, s.correlationID, false, false)
+		if err != nil {
+			return fmt.Errorf("failed to write SQLSTT: %w", err)
+		}
 
-	rdbcmm := PackRDBCMM()
-	s.correlationID, err = WriteRequestDSS(s.conn, rdbcmm, s.correlationID, false, true)
-	if err != nil {
-		return fmt.Errorf("failed to write RDBCMM: %w", err)
+		rdbcmm := PackRDBCMM()
+		s.correlationID, err = WriteRequestDSS(s.conn, rdbcmm, s.correlationID, false, true)
+		if err != nil {
+			return fmt.Errorf("failed to write RDBCMM: %w", err)
+		}
+	} else {
+		s.correlationID, err = WriteRequestDSS(s.conn, sqlStt, s.correlationID, false, true)
+		if err != nil {
+			return fmt.Errorf("failed to write SQLSTT: %w", err)
+		}
 	}
 
 	replies, err := s.readReplyChain()

@@ -426,5 +426,60 @@ func TestIntegration_Transaction_RollbackAndCommit(t *testing.T) {
 	}
 }
 
+// 14. SEC-01 Residual: Validate that tx.ExecContext with WithClientInfo does NOT trigger auto-commit on Rollback.
+func TestIntegration_Transaction_WithClientInfo_Rollback(t *testing.T) {
+	dsn := "db2://db2inst1:MinhaSenhaForte123@localhost:50000/TESTDB"
+	db, err := sql.Open("db2", dsn)
+	if err != nil {
+		t.Skip("skipping integration test, cannot open db2:", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		t.Skip("skipping integration test, db2 not reachable:", err)
+	}
+
+	_, _ = db.ExecContext(ctx, "DROP TABLE test_sec_client_tx")
+	_, err = db.ExecContext(ctx, "CREATE TABLE test_sec_client_tx (id INT PRIMARY KEY, title VARCHAR(50))")
+	if err != nil {
+		t.Fatalf("failed to create test table: %v", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "DROP TABLE test_sec_client_tx")
+	}()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+
+	clientCtx := WithClientInfo(ctx, ClientInfo{
+		ApplicationName: "audit_tx_app",
+		WorkstationName: "node_sec_01",
+		UserID:          "auditor",
+	})
+
+	_, err = tx.ExecContext(clientCtx, "INSERT INTO test_sec_client_tx (id, title) VALUES (?, ?)", 999, "TxClientInfoEntry")
+	if err != nil {
+		t.Fatalf("tx.ExecContext with WithClientInfo failed: %v", err)
+	}
+
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("tx.Rollback failed: %v", err)
+	}
+
+	var count int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM test_sec_client_tx WHERE id = 999").Scan(&count)
+	if err != nil {
+		t.Fatalf("QueryRowContext failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("ACID FAILURE: Expected 0 rows after Rollback with WithClientInfo, got %d", count)
+	}
+}
+
 var _ driver.Stmt = (*Stmt)(nil)
 

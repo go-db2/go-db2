@@ -1,6 +1,6 @@
 # IBM Db2 Driver Benchmark & Conformance Report
 
-> Generated at: 2026-08-30 01:34:17 UTC
+> Generated at: 2026-08-30 02:33:16 UTC
 
 Comparison between **`go-db2`** (Pure Go DRDA implementation) and **`go_ibm_db`** (IBM Official CGO / clidriver wrapper).
 
@@ -21,11 +21,11 @@ Comparison between **`go-db2`** (Pure Go DRDA implementation) and **`go_ibm_db`*
 
 | Scenario | `go-db2` Avg Latency | `go_ibm_db` Avg Latency | Latency Ratio | `go-db2` Mem/Op | `go_ibm_db` Mem/Op | `go-db2` Allocs/Op | `go_ibm_db` Allocs/Op |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Ping (Round-trip Latency)** | 7.197µs | 593ns | 12.14x slower | 532 B | 0 B | 18 | 0 |
-| **Simple Single-Row SELECT** | 8.82µs | 406.769µs | **46.12x faster** 🚀 | 1323 B | 1897 B | 35 | 56 |
-| **Fetch 1,000 Rows Scan** | 16.634µs | 6.085023ms | **365.82x faster** 🚀 | 1340 B | 97863 B | 34 | 8735 |
-| **Prepared Statement INSERT** | 30.282µs | 15.419541ms | **509.20x faster** 🚀 | 2423 B | 11464 B | 64 | 321 |
-| **Read 500KB BLOB Payload** | 23.744µs | 2.371168ms | **99.86x faster** 🚀 | 1364 B | 1051534 B | 35 | 62 |
+| **Ping (Round-trip Latency)** | 6.715µs | 402ns | 16.70x slower | 521 B | 0 B | 18 | 0 |
+| **Simple Single-Row SELECT** | 8.369µs | 259.841µs | **31.05x faster** 🚀 | 1323 B | 1907 B | 35 | 56 |
+| **Fetch 1,000 Rows Scan** | 16.37µs | 5.34967ms | **326.80x faster** 🚀 | 1340 B | 97908 B | 34 | 8735 |
+| **Prepared Statement INSERT** | 14.9µs | 18.741131ms | **1257.79x faster** 🚀 | 2424 B | 11470 B | 64 | 321 |
+| **Read 500KB BLOB Payload** | 29.123µs | 1.943707ms | **66.74x faster** 🚀 | 1375 B | 1051515 B | 35 | 62 |
 
 ## 3. Key Observations
 
