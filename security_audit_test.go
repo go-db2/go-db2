@@ -368,7 +368,7 @@ func TestIntegration_Transaction_RollbackAndCommit(t *testing.T) {
 	}
 
 	_, _ = db.ExecContext(ctx, "DROP TABLE test_sec_tx_iso")
-	_, err = db.ExecContext(ctx, "CREATE TABLE test_sec_tx_iso (id INT PRIMARY KEY, name VARCHAR(50))")
+	_, err = db.ExecContext(ctx, "CREATE TABLE test_sec_tx_iso (id INT NOT NULL PRIMARY KEY, name VARCHAR(50))")
 	if err != nil {
 		t.Fatalf("failed to create test table: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestIntegration_Transaction_WithClientInfo_Rollback(t *testing.T) {
 	}
 
 	_, _ = db.ExecContext(ctx, "DROP TABLE test_sec_client_tx")
-	_, err = db.ExecContext(ctx, "CREATE TABLE test_sec_client_tx (id INT PRIMARY KEY, title VARCHAR(50))")
+	_, err = db.ExecContext(ctx, "CREATE TABLE test_sec_client_tx (id INT NOT NULL PRIMARY KEY, title VARCHAR(50))")
 	if err != nil {
 		t.Fatalf("failed to create test table: %v", err)
 	}
