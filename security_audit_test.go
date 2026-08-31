@@ -482,4 +482,3 @@ func TestIntegration_Transaction_WithClientInfo_Rollback(t *testing.T) {
 }
 
 var _ driver.Stmt = (*Stmt)(nil)
-
