@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="go-db2 Logo" width="480" />
+</p>
+
 # go-db2
 
 > Pure Go database driver for **IBM Db2**, fully compatible with Go's standard [`database/sql`](https://pkg.go.dev/database/sql).
