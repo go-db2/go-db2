@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/go-db2/go-db2/network"
@@ -126,6 +127,14 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	}
 
 	if len(args) == 0 {
+		if !isQueryStatement(query) {
+			_, err := c.session.ExecDirect(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			return NewRows(nil, nil), nil
+		}
+
 		cols, rawRows, err := c.session.QueryDirect(ctx, query)
 		if err != nil {
 			return nil, err
@@ -151,6 +160,42 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	stmt := NewStmt(c, query, outCols, paramCols)
 	return stmt.queryContextLocked(ctx, args)
+}
+
+func stripLeadingCommentsAndSpaces(sql string) string {
+	s := strings.TrimSpace(sql)
+	for {
+		if strings.HasPrefix(s, "--") {
+			idx := strings.IndexByte(s, '\n')
+			if idx == -1 {
+				return ""
+			}
+			s = strings.TrimSpace(s[idx+1:])
+			continue
+		}
+		if strings.HasPrefix(s, "/*") {
+			idx := strings.Index(s, "*/")
+			if idx == -1 {
+				return ""
+			}
+			s = strings.TrimSpace(s[idx+2:])
+			continue
+		}
+		if strings.HasPrefix(s, "(") {
+			s = strings.TrimSpace(s[1:])
+			continue
+		}
+		break
+	}
+	return s
+}
+
+func isQueryStatement(sql string) bool {
+	cleaned := strings.ToUpper(stripLeadingCommentsAndSpaces(sql))
+	return strings.HasPrefix(cleaned, "SELECT") ||
+		strings.HasPrefix(cleaned, "WITH") ||
+		strings.HasPrefix(cleaned, "VALUES") ||
+		strings.HasPrefix(cleaned, "TABLE")
 }
 
 // CurrentUser returns the currently active user on this connection.

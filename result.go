@@ -80,7 +80,7 @@ func (r *Result) RowsAffected() (int64, error) {
 }
 
 func isInsertQuery(sql string) bool {
-	trimmed := strings.TrimSpace(strings.ToUpper(sql))
+	trimmed := strings.ToUpper(stripLeadingCommentsAndSpaces(sql))
 	return strings.HasPrefix(trimmed, "INSERT")
 }
 
