@@ -109,8 +109,9 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 	}
 
 	if IsNullableDRDAType(drdaType) {
-		nullIndicator := make([]byte, 1)
-		if _, err := io.ReadFull(r, nullIndicator); err != nil {
+		// Optimization: Use a stack-allocated byte array instead of make([]byte, 1) to eliminate heap allocation
+		var nullIndicator [1]byte
+		if _, err := io.ReadFull(r, nullIndicator[:]); err != nil {
 			return nil, err
 		}
 		if nullIndicator[0] == 0xFF || nullIndicator[0] == 0x80 || nullIndicator[0] == 0x7F {

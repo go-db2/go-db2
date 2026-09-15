@@ -38,6 +38,22 @@ func BenchmarkDecodeField_Integer(b *testing.B) {
 	}
 }
 
+func BenchmarkDecodeField_NInteger(b *testing.B) {
+	data := []byte{0x00, 0x00, 0x00, 0x04, 0xD2} // 0x00 (not null) + 1234
+	ps := []byte{0x00, 0x04}
+	endian := binary.BigEndian
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := bytes.NewReader(data)
+		_, err := converters.DecodeField(converters.DRDATypeNInteger, ps, r, endian)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDecodeField_VarChar(b *testing.B) {
 	text := "IBM Db2 Pure Go Driver High Performance"
 	strBytes := []byte(text)
