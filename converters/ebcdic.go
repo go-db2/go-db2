@@ -27,11 +27,11 @@ var unicodeToCP500 map[rune]byte
 
 // Direct lookup array for Unicode runes <= 255 (Latin-1) to avoid map hash overhead on fast path.
 var unicodeToCP500Direct [256]byte
-var unicodeToCP500Valid  [256]bool
+var unicodeToCP500Valid [256]bool
 
 // Pre-calculated UTF-8 bytes and byte lengths for CP500 decode to avoid rune slice allocations.
 var cp500ToUTF8Table [256][2]byte
-var cp500ToUTF8Len   [256]byte
+var cp500ToUTF8Len [256]byte
 
 func init() {
 	unicodeToCP500 = make(map[rune]byte, 256)
