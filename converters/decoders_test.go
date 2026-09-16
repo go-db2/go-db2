@@ -66,3 +66,19 @@ func TestDecodeFieldDateAndTimestamp(t *testing.T) {
 		t.Errorf("Date = %v, want %v", v, expectedDate)
 	}
 }
+
+func TestDecodeFieldBooleanZeroLength(t *testing.T) {
+	// Zero-length boolean parameter metadata should not panic
+	var buf bytes.Buffer
+	v, err := DecodeField(DRDATypeBoolean, []byte{0x00, 0x00}, &buf, binary.LittleEndian)
+	if err != nil || v != false {
+		t.Errorf("Boolean decode zero-length = %v, err: %v; want false", v, err)
+	}
+
+	buf.Reset()
+	buf.WriteByte(0x00) // Null indicator = not null
+	v, err = DecodeField(DRDATypeNBoolean, []byte{0x00, 0x00}, &buf, binary.LittleEndian)
+	if err != nil || v != false {
+		t.Errorf("Nullable Boolean decode zero-length = %v, err: %v; want false", v, err)
+	}
+}

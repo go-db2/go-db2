@@ -211,6 +211,9 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 
 	case DRDATypeBoolean, DRDATypeNBoolean:
 		ln := int(binary.BigEndian.Uint16(ps))
+		if ln <= 0 {
+			return false, nil
+		}
 		buf := make([]byte, ln)
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
