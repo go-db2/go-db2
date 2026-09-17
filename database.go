@@ -25,6 +25,37 @@ func validateSQLIdentifier(val, fieldName string) error {
 	return nil
 }
 
+// quoteIdentifier safely quotes an SQL identifier with double quotes, escaping any embedded double quotes.
+func quoteIdentifier(name string) string {
+	escaped := strings.ReplaceAll(name, `"`, `""`)
+	return `"` + escaped + `"`
+}
+
+// buildCreateDbSQL constructs the CREATE DATABASE SQL DDL statement using quoted identifiers.
+func buildCreateDbSQL(dbname, codeset, territory, mode string) string {
+	var sb strings.Builder
+	sb.WriteString("CREATE DATABASE ")
+	sb.WriteString(quoteIdentifier(dbname))
+	if codeset != "" {
+		sb.WriteString(" CODESET ")
+		sb.WriteString(quoteIdentifier(codeset))
+	}
+	if territory != "" {
+		sb.WriteString(" TERRITORY ")
+		sb.WriteString(quoteIdentifier(territory))
+	}
+	if mode != "" {
+		sb.WriteString(" ")
+		sb.WriteString(quoteIdentifier(mode))
+	}
+	return sb.String()
+}
+
+// buildDropDbSQL constructs the DROP DATABASE SQL DDL statement using quoted identifiers.
+func buildDropDbSQL(dbname string) string {
+	return "DROP DATABASE " + quoteIdentifier(dbname)
+}
+
 // CreateDb creates a new database on the IBM Db2 server specified in connStr.
 // Optional options can be provided in "key=value" format (e.g. "codeset=UTF-8", "territory=US", "mode=...").
 func CreateDb(dbname string, connStr string, options ...string) (bool, error) {
@@ -73,19 +104,7 @@ func CreateDb(dbname string, connStr string, options ...string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultAdminTimeout)
 	defer cancel()
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("CREATE DATABASE %s", dbname))
-	if codeset != "" {
-		sb.WriteString(fmt.Sprintf(" CODESET %s", codeset))
-	}
-	if territory != "" {
-		sb.WriteString(fmt.Sprintf(" TERRITORY %s", territory))
-	}
-	if mode != "" {
-		sb.WriteString(fmt.Sprintf(" %s", mode))
-	}
-
-	createSQL := sb.String()
+	createSQL := buildCreateDbSQL(dbname, codeset, territory, mode)
 	_, err = db.ExecContext(ctx, createSQL)
 	if err != nil {
 		// Also try via SYSPROC.ADMIN_CMD if direct DDL requires administrative routing
@@ -116,7 +135,7 @@ func DropDb(dbname string, connStr string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultAdminTimeout)
 	defer cancel()
 
-	dropSQL := fmt.Sprintf("DROP DATABASE %s", dbname)
+	dropSQL := buildDropDbSQL(dbname)
 	_, err = db.ExecContext(ctx, dropSQL)
 	if err != nil {
 		if _, adminErr := ExecAdminCmd(ctx, db, dropSQL); adminErr == nil {

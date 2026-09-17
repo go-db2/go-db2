@@ -100,3 +100,70 @@ func TestExecAdminCmd_Validation(t *testing.T) {
 		t.Fatal("ExecAdminCmd() with empty command should return error")
 	}
 }
+
+func TestQuoteIdentifier(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{input: "MYDB", expected: `"MYDB"`},
+		{input: "test_db", expected: `"test_db"`},
+		{input: `db"name`, expected: `"db""name"`},
+		{input: "", expected: `""`},
+	}
+
+	for _, tt := range tests {
+		got := quoteIdentifier(tt.input)
+		if got != tt.expected {
+			t.Errorf("quoteIdentifier(%q) = %q; want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
+func TestBuildCreateDbSQL(t *testing.T) {
+	tests := []struct {
+		name      string
+		dbname    string
+		codeset   string
+		territory string
+		mode      string
+		expected  string
+	}{
+		{
+			name:     "dbname only",
+			dbname:   "TESTDB",
+			expected: `CREATE DATABASE "TESTDB"`,
+		},
+		{
+			name:     "with codeset",
+			dbname:   "TESTDB",
+			codeset:  "UTF-8",
+			expected: `CREATE DATABASE "TESTDB" CODESET "UTF-8"`,
+		},
+		{
+			name:      "with codeset, territory, mode",
+			dbname:    "TESTDB",
+			codeset:   "UTF-8",
+			territory: "US",
+			mode:      "RESTRICTIVE",
+			expected:  `CREATE DATABASE "TESTDB" CODESET "UTF-8" TERRITORY "US" "RESTRICTIVE"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildCreateDbSQL(tt.dbname, tt.codeset, tt.territory, tt.mode)
+			if got != tt.expected {
+				t.Errorf("buildCreateDbSQL() = %q; want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildDropDbSQL(t *testing.T) {
+	got := buildDropDbSQL("TESTDB")
+	expected := `DROP DATABASE "TESTDB"`
+	if got != expected {
+		t.Errorf("buildDropDbSQL() = %q; want %q", got, expected)
+	}
+}
