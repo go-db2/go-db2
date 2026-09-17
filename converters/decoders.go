@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"strings"
 	"time"
 )
 
@@ -126,7 +125,7 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
 		}
-		return strings.TrimRight(string(buf), " "), nil
+		return string(bytes.TrimRight(buf, " ")), nil
 
 	case DRDATypeGraphic, DRDATypeNGraphic:
 		charLen := int(binary.BigEndian.Uint16(ps))
@@ -247,7 +246,7 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
 		}
-		s := strings.TrimRight(string(buf), " ")
+		s := string(bytes.TrimRight(buf, " "))
 		layouts := []string{
 			"2006-01-02-15.04.05.000000-07:00",
 			"2006-01-02-15.04.05.000000+07:00",

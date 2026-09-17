@@ -14,56 +14,73 @@ import (
 	"github.com/go-db2/go-db2/types"
 )
 
+// Optimization: Pre-allocated static byte slices for FDODSC parameter descriptors to avoid heap allocations on every call.
+var (
+	fdodscVarChar    = []byte{0x39, 0x3F, 0xFF}
+	fdodscSmall      = []byte{0x05, 0x00, 0x02}
+	fdodscInteger    = []byte{0x03, 0x00, 0x04}
+	fdodscBigInt     = []byte{0x17, 0x00, 0x08}
+	fdodscFloat4     = []byte{0x0D, 0x00, 0x04}
+	fdodscFloat8     = []byte{0x0B, 0x00, 0x08}
+	fdodscDate       = []byte{0x21, 0x00, 0x0A}
+	fdodscTime       = []byte{0x23, 0x00, 0x08}
+	fdodscTimestamp  = []byte{0x25, 0x00, 0x20}
+	fdodscBoolBit    = []byte{0xBF, 0x00, 0x01}
+	fdodscBlob       = []byte{0xC9, 0x80, 0x02}
+	fdodscDecFloat8  = []byte{0xBB, 0x00, 0x08}
+	fdodscDecFloat16 = []byte{0xBB, 0x00, 0x10}
+)
+
 // FDODSC generates the FDODSC descriptor bytes for a column parameter.
 func FDODSC(sqlType types.SQLType, sqllen int64, prec, scale int) []byte {
 	switch sqlType {
 	case types.SQLTypeVarChar, types.SQLTypeNVarChar, types.SQLTypeChar, types.SQLTypeNChar:
-		return []byte{0x39, 0x3F, 0xFF}
+		return fdodscVarChar
 	case types.SQLTypeSmall, types.SQLTypeNSmall:
-		return []byte{0x05, 0x00, 0x02}
+		return fdodscSmall
 	case types.SQLTypeInteger, types.SQLTypeNInteger:
-		return []byte{0x03, 0x00, 0x04}
+		return fdodscInteger
 	case types.SQLTypeBigInt, types.SQLTypeNBigInt:
-		return []byte{0x17, 0x00, 0x08}
+		return fdodscBigInt
 	case types.SQLTypeFloat, types.SQLTypeNFloat:
 		if sqllen == 4 {
-			return []byte{0x0D, 0x00, 0x04}
+			return fdodscFloat4
 		}
-		return []byte{0x0B, 0x00, 0x08}
+		return fdodscFloat8
 	case types.SQLTypeDate, types.SQLTypeNDate:
-		return []byte{0x21, 0x00, 0x0A}
+		return fdodscDate
 	case types.SQLTypeTime, types.SQLTypeNTime:
-		return []byte{0x23, 0x00, 0x08}
+		return fdodscTime
 	case types.SQLTypeTimestamp, types.SQLTypeNTimestamp:
-		return []byte{0x25, 0x00, 0x20}
+		return fdodscTimestamp
 	case types.SQLTypeBoolean, types.SQLTypeNBoolean:
 		if sqllen == 2 {
-			return []byte{0x05, 0x00, 0x02}
+			return fdodscSmall
 		}
-		return []byte{0xBF, 0x00, 0x01}
+		return fdodscBoolBit
 	case types.SQLTypeBlob, types.SQLTypeNBlob:
-		return []byte{0xC9, 0x80, 0x02}
+		return fdodscBlob
 	case types.SQLTypeClob, types.SQLTypeNClob, types.SQLTypeDbClob, types.SQLTypeNDbClob,
 		types.SQLTypeClobLocator, types.SQLTypeNClobLocator, types.SQLTypeDbClobLocator, types.SQLTypeNDbClobLocator:
-		return []byte{0x39, 0x3F, 0xFF}
+		return fdodscVarChar
 	case types.SQLTypeGraphic, types.SQLTypeNGraphic:
 		return []byte{0x37, byte(sqllen >> 8), byte(sqllen & 0xFF)}
 	case types.SQLTypeVarGraph, types.SQLTypeNVarGraph,
 		types.SQLTypeLonGraph, types.SQLTypeNLonGraph:
-		return []byte{0x39, 0x3F, 0xFF}
+		return fdodscVarChar
 	case types.SQLTypeBinary, types.SQLTypeNBinary:
 		return []byte{0x27, byte(sqllen >> 8), byte(sqllen & 0xFF)}
 	case types.SQLTypeDecimal, types.SQLTypeNDecimal:
 		return []byte{0x0F, byte(prec), byte(scale)}
 	case types.SQLTypeDecFloat, types.SQLTypeNDecFloat:
 		if sqllen == 16 {
-			return []byte{0xBB, 0x00, 0x10}
+			return fdodscDecFloat16
 		}
-		return []byte{0xBB, 0x00, 0x08}
+		return fdodscDecFloat8
 	case types.SQLTypeXML, types.SQLTypeNXML:
-		return []byte{0x39, 0x3F, 0xFF}
+		return fdodscVarChar
 	default:
-		return []byte{0x39, 0x3F, 0xFF}
+		return fdodscVarChar
 	}
 }
 
