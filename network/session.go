@@ -1170,6 +1170,12 @@ func (s *Session) CurrentUser() string {
 	return strings.TrimSpace(s.cfg.User)
 }
 
+// quoteIdentifier safely quotes an SQL identifier with double quotes, escaping any embedded double quotes.
+func quoteIdentifier(name string) string {
+	escaped := strings.ReplaceAll(name, `"`, `""`)
+	return `"` + escaped + `"`
+}
+
 // SwitchUser transitions the active user identity on the existing session.
 // In Db2 Trusted Context and privileged sessions, identity is switched via
 // 'SET SESSION AUTHORIZATION = ?' / 'SET SESSION_USER = ?' or by issuing SECCHK with USRID.
@@ -1182,8 +1188,10 @@ func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...st
 		return fmt.Errorf("db2: invalid switch user identifier %q", newUser)
 	}
 
+	quotedUser := quoteIdentifier(trimmedUser)
+
 	// First try SQL-level session authorization switch
-	setAuthSQL := fmt.Sprintf("SET SESSION AUTHORIZATION = %s", trimmedUser)
+	setAuthSQL := fmt.Sprintf("SET SESSION AUTHORIZATION = %s", quotedUser)
 	if _, err := s.ExecDirect(ctx, setAuthSQL); err == nil {
 		s.mu.Lock()
 		s.cfg.User = trimmedUser
@@ -1192,7 +1200,7 @@ func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...st
 	}
 
 	// Fallback to SET SESSION_USER
-	setSessionUserSQL := fmt.Sprintf("SET SESSION_USER = %s", trimmedUser)
+	setSessionUserSQL := fmt.Sprintf("SET SESSION_USER = %s", quotedUser)
 	if _, err := s.ExecDirect(ctx, setSessionUserSQL); err == nil {
 		s.mu.Lock()
 		s.cfg.User = trimmedUser

@@ -169,3 +169,22 @@ func TestPackSQLINTR(t *testing.T) {
 		t.Fatalf("expected codepoint 0x%04X, got 0x%04X", CodePointSQLINTR, codePoint)
 	}
 }
+
+func TestQuoteIdentifier(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"ALICE", `"ALICE"`},
+		{"tenant_alice", `"tenant_alice"`},
+		{"user#1", `"user#1"`},
+		{`user"name`, `"user""name"`},
+	}
+
+	for _, tt := range tests {
+		got := quoteIdentifier(tt.input)
+		if got != tt.expected {
+			t.Errorf("quoteIdentifier(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
