@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -186,5 +187,131 @@ func TestQuoteIdentifier(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("quoteIdentifier(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
+	}
+}
+
+func TestSwitchUser_QuotedIdentifierSQL(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock listener: %v", err)
+	}
+	defer listener.Close()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	executedSQLs := make(chan string, 10)
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		// 1. Complete initial handshake & setup
+		for {
+			_, cp, _, _, err := ReadDSS(conn)
+			if err != nil {
+				return
+			}
+			if cp == CodePointACCSEC {
+				accsecRdBody := PackUint16(CodePointSECMEC, SecMecUSRIDPWD)
+				accsecRdObj := PackDDMObject(CodePointACCSECRD, accsecRdBody)
+				dssHdr := BuildDSSHeader(len(accsecRdObj), DSSTypeReply, false, false, false, 1)
+				_, _ = conn.Write(append(dssHdr, accsecRdObj...))
+			} else if cp == CodePointACCRDB {
+				secchkRmBody := PackBytes(CodePointSECCHKCD, []byte{0x00})
+				secchkRmObj := PackDDMObject(CodePointSECCHKRM, secchkRmBody)
+				accrdbRmObj := PackDDMObject(CodePointACCRDBRM, nil)
+
+				hdr1 := BuildDSSHeader(len(secchkRmObj), DSSTypeReply, true, false, false, 1)
+				hdr2 := BuildDSSHeader(len(accrdbRmObj), DSSTypeReply, false, false, false, 1)
+
+				var respBuf bytes.Buffer
+				respBuf.Write(hdr1)
+				respBuf.Write(secchkRmObj)
+				respBuf.Write(hdr2)
+				respBuf.Write(accrdbRmObj)
+				_, _ = conn.Write(respBuf.Bytes())
+			} else if cp == CodePointRDBCMM {
+				sqlcardPayload := make([]byte, 20)
+				sqlcardPayload[0] = 0x00
+				binary.LittleEndian.PutUint32(sqlcardPayload[1:5], 0)
+				copy(sqlcardPayload[5:10], "00000")
+				sqlcardObj := PackDDMObject(CodePointSQLCARD, sqlcardPayload)
+				sqlcardHdr := BuildDSSHeader(len(sqlcardObj), DSSTypeReply, false, false, false, 1)
+				_, _ = conn.Write(append(sqlcardHdr, sqlcardObj...))
+				break
+			}
+		}
+
+		// 2. Listen for SwitchUser SQL commands
+		for {
+			hdr, cp, data, _, err := ReadDSS(conn)
+			if err != nil {
+				return
+			}
+			if cp == CodePointSQLSTT {
+				if len(data) >= 5 && data[0] == 0x00 {
+					sqlLen := binary.BigEndian.Uint32(data[1:5])
+					if uint32(len(data)) >= 5+sqlLen {
+						sqlText := string(data[5 : 5+sqlLen])
+						executedSQLs <- sqlText
+
+						sqlcode := int32(0)
+						if strings.HasPrefix(sqlText, "SET SESSION AUTHORIZATION") {
+							sqlcode = -1
+						}
+
+						sqlcardPayload := make([]byte, 20)
+						sqlcardPayload[0] = 0x00
+						binary.LittleEndian.PutUint32(sqlcardPayload[1:5], uint32(sqlcode))
+						copy(sqlcardPayload[5:10], "00000")
+						sqlcardObj := PackDDMObject(CodePointSQLCARD, sqlcardPayload)
+						sqlcardHdr := BuildDSSHeader(len(sqlcardObj), DSSTypeReply, false, false, false, hdr.CorrelationID)
+						_, _ = conn.Write(append(sqlcardHdr, sqlcardObj...))
+					}
+				}
+			}
+		}
+	}()
+
+	session := NewSession(SessionConfig{
+		Host:     "127.0.0.1",
+		Port:     port,
+		Database: "SAMPLE",
+		User:     "db2inst1",
+		Password: "password",
+		Timeout:  2 * time.Second,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := session.Connect(ctx); err != nil {
+		t.Fatalf("session.Connect() failed: %v", err)
+	}
+	defer session.Close()
+
+	_ = session.SwitchUser(ctx, "tenant_alice")
+
+	select {
+	case sql1 := <-executedSQLs:
+		expected1 := `SET SESSION AUTHORIZATION = "tenant_alice"`
+		if sql1 != expected1 {
+			t.Errorf("expected SET SESSION AUTHORIZATION SQL %q, got %q", expected1, sql1)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for SET SESSION AUTHORIZATION statement")
+	}
+
+	select {
+	case sql2 := <-executedSQLs:
+		expected2 := `SET SESSION_USER = "tenant_alice"`
+		if sql2 != expected2 {
+			t.Errorf("expected SET SESSION_USER SQL %q, got %q", expected2, sql2)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for SET SESSION_USER statement")
 	}
 }
