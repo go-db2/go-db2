@@ -2,6 +2,7 @@ package network
 
 import (
 	"bytes"
+	"io"
 	"testing"
 )
 
@@ -94,4 +95,37 @@ func TestInvalidDSSMagic(t *testing.T) {
 	if err == nil {
 		t.Errorf("expected error for invalid magic byte, got nil")
 	}
+}
+
+func BenchmarkWriteRequestDSS(b *testing.B) {
+	// Small payload (single chunk)
+	smallPayload := make([]byte, 256)
+	// EXCSAT codepoint 0x1041
+	smallPayload[0] = 0x00
+	smallPayload[1] = 0x04
+	smallPayload[2] = 0x10
+	smallPayload[3] = 0x41
+
+	// Large payload (multi-chunk, ~200 KB = 3+ chunks)
+	largePayload := make([]byte, 200000)
+	largePayload[0] = 0x00
+	largePayload[1] = 0x04
+	largePayload[2] = 0x10
+	largePayload[3] = 0x41
+
+	b.Run("SmallPayload", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = WriteRequestDSS(io.Discard, smallPayload, 1, false, true)
+		}
+	})
+
+	b.Run("MultiChunkPayload", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = WriteRequestDSS(io.Discard, largePayload, 1, false, true)
+		}
+	})
 }

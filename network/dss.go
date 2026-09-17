@@ -80,6 +80,8 @@ func WriteRequestDSS(w io.Writer, payload []byte, curID uint16, nextHasSameID, l
 	offset := 0
 	totalLen := len(payload)
 
+	var hdr [6]byte
+
 	for offset < totalLen {
 		chunkEnd := offset + maxChunkSize
 		isFinalChunk := false
@@ -91,7 +93,6 @@ func WriteRequestDSS(w io.Writer, payload []byte, curID uint16, nextHasSameID, l
 		chunk := payload[offset:chunkEnd]
 		chained := !lastPacket || !isFinalChunk
 
-		var hdr [6]byte
 		binary.BigEndian.PutUint16(hdr[0:2], uint16(len(chunk)+6))
 		hdr[2] = DSSMagic
 
