@@ -67,15 +67,19 @@ func TestDecodeFieldDateAndTimestamp(t *testing.T) {
 	}
 }
 
-func TestDecodeField_BooleanZeroLengthPanicProtection(t *testing.T) {
+func TestDecodeFieldBooleanZeroLength(t *testing.T) {
+	// Zero-length boolean parameter metadata should not panic
 	var buf bytes.Buffer
-	// Zero length ps metadata: [0x00, 0x00]
 	v, err := DecodeField(DRDATypeBoolean, []byte{0x00, 0x00}, &buf, binary.LittleEndian)
-	if err != nil {
-		t.Fatalf("expected no error for zero-length boolean metadata, got %v", err)
+	if err != nil || v != false {
+		t.Errorf("Boolean decode zero-length = %v, err: %v; want false", v, err)
 	}
-	if v != false {
-		t.Errorf("expected false for zero-length boolean, got %v", v)
+
+	buf.Reset()
+	buf.WriteByte(0x00) // Null indicator = not null
+	v, err = DecodeField(DRDATypeNBoolean, []byte{0x00, 0x00}, &buf, binary.LittleEndian)
+	if err != nil || v != false {
+		t.Errorf("Nullable Boolean decode zero-length = %v, err: %v; want false", v, err)
 	}
 }
 
