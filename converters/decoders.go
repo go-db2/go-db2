@@ -215,6 +215,9 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
 		}
+		if len(buf) == 0 {
+			return false, nil
+		}
 		return buf[len(buf)-1] != 0, nil
 
 	case DRDATypeDate, DRDATypeNDate:
@@ -350,7 +353,8 @@ func DecodePackedDecimal(b []byte, scale int) string {
 		return "0"
 	}
 
-	var digits [64]byte
+	// Dynamically allocate digits slice to prevent index out of bounds panic on large decimal payloads
+	digits := make([]byte, len(b)*2)
 	pos := 0
 
 	for i := 0; i < len(b)-1; i++ {

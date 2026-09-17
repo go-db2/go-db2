@@ -66,3 +66,30 @@ func TestDecodeFieldDateAndTimestamp(t *testing.T) {
 		t.Errorf("Date = %v, want %v", v, expectedDate)
 	}
 }
+
+func TestDecodeField_BooleanZeroLengthPanicProtection(t *testing.T) {
+	var buf bytes.Buffer
+	// Zero length ps metadata: [0x00, 0x00]
+	v, err := DecodeField(DRDATypeBoolean, []byte{0x00, 0x00}, &buf, binary.LittleEndian)
+	if err != nil {
+		t.Fatalf("expected no error for zero-length boolean metadata, got %v", err)
+	}
+	if v != false {
+		t.Errorf("expected false for zero-length boolean, got %v", v)
+	}
+}
+
+func TestDecodePackedDecimal_LargePayload(t *testing.T) {
+	// 40-byte packed decimal payload (> 32 bytes)
+	// Example: 79 digits of '1' plus positive sign 'C'
+	b := make([]byte, 40)
+	for i := 0; i < 39; i++ {
+		b[i] = 0x11
+	}
+	b[39] = 0x1C // Last digit 1, sign C (positive)
+
+	res := DecodePackedDecimal(b, 0)
+	if len(res) != 79 {
+		t.Errorf("expected 79 digit string, got length %d: %s", len(res), res)
+	}
+}
