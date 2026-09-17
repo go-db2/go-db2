@@ -75,6 +75,9 @@ func CalculateSessionKey(serverSecTkn []byte, clientPriv *big.Int) ([]byte, erro
 }
 
 // EncryptPasswordSECMEC9 encrypts a password using DES-CBC with PKCS#5 padding and the derived session key.
+// Note: DES is required by the IBM DRDA Level 5 wire specification for SECMEC 9 compatibility.
+// Because DES is cryptographically weak, production deployments should use TLS 1.2+ (ssl=true)
+// or Kerberos/GSSAPI (SECMEC 7/11) to secure network traffic.
 func EncryptPasswordSECMEC9(password string, serverSecTkn []byte, clientPriv *big.Int) ([]byte, error) {
 	if len(serverSecTkn) < 20 {
 		return nil, fmt.Errorf("server security token too short: expected at least 20 bytes, got %d", len(serverSecTkn))
@@ -91,6 +94,7 @@ func EncryptPasswordSECMEC9(password string, serverSecTkn []byte, clientPriv *bi
 	iv := serverSecTkn[12:20]
 	key := sessionKey[12:20]
 
+	// #nosec G401,G502 -- DES is mandated by the IBM DRDA wire specification for SECMEC 9 compatibility
 	block, err := des.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create DES cipher: %w", err)
