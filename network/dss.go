@@ -152,6 +152,11 @@ func ReadDSS(r io.Reader) (*DSSHeader, CodePoint, []byte, bool, error) {
 		CorrelationID: correlationID,
 	}
 
+	// Reject frames claiming length shorter than the 6-byte DSS header itself
+	if dssLen < 6 && dssLen != 0xFFFF {
+		return header, 0, nil, false, fmt.Errorf("db2: invalid DSS frame length %d: less than header size 6", dssLen)
+	}
+
 	// Read DDM Object Header (2 bytes length + 2 bytes Codepoint)
 	ddmHdr := make([]byte, 4)
 	if _, err := io.ReadFull(r, ddmHdr); err != nil {
@@ -192,7 +197,7 @@ func ReadDSS(r io.Reader) (*DSSHeader, CodePoint, []byte, bool, error) {
 		return header, codePoint, nil, false, fmt.Errorf("invalid DDM object length: %d", objLen)
 	}
 
-	if dssLen >= 6 && int(objLen) > int(dssLen)-6 {
+	if int(objLen) > int(dssLen)-6 {
 		return header, codePoint, nil, false, fmt.Errorf("db2: DDM object length %d exceeds DSS frame payload capacity %d", objLen, dssLen-6)
 	}
 

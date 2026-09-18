@@ -97,6 +97,15 @@ func TestInvalidDSSMagic(t *testing.T) {
 	}
 }
 
+func TestReadDSS_InvalidShortFrameLength(t *testing.T) {
+	// Frame claiming dssLen = 4 (less than header size 6)
+	invalidBuf := bytes.NewBuffer([]byte{0x00, 0x04, 0xD0, 0x01, 0x00, 0x01, 0x00, 0x32, 0x20, 0x01})
+	_, _, _, _, err := ReadDSS(invalidBuf)
+	if err == nil {
+		t.Errorf("expected error for dssLen < 6, got nil")
+	}
+}
+
 func BenchmarkWriteRequestDSS(b *testing.B) {
 	// Small payload (single chunk)
 	smallPayload := make([]byte, 256)
