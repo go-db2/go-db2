@@ -617,14 +617,14 @@ func ParseQRYDSC(obj []byte) ([]FieldDescriptor, error) {
 		data = data[2:]
 	}
 
-	var fields []FieldDescriptor
-	for i := 0; i+3 <= len(data); i += 3 {
-		fType := data[i]
-		ps := data[i+1 : i+3]
-		fields = append(fields, FieldDescriptor{
-			Type: fType,
-			PS:   ps,
-		})
+	count := len(data) / 3
+	fields := make([]FieldDescriptor, count)
+	for i := 0; i < count; i++ {
+		offset := i * 3
+		fields[i] = FieldDescriptor{
+			Type: data[offset],
+			PS:   data[offset+1 : offset+3],
+		}
 	}
 
 	return fields, nil
