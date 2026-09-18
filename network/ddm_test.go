@@ -142,6 +142,50 @@ func TestParseQRYDSC(t *testing.T) {
 	}
 }
 
+func TestPackPKGNAMCSN(t *testing.T) {
+	pkgBytes := PackPKGNAMCSN("SAMPLE", "SYSH200", "TOKEN12", 1)
+	if len(pkgBytes) < 4 {
+		t.Fatalf("PackPKGNAMCSN output too short: %d", len(pkgBytes))
+	}
+
+	totalLen := binary.BigEndian.Uint16(pkgBytes[0:2])
+	if int(totalLen) != len(pkgBytes) {
+		t.Errorf("PKGNAMCSN length mismatch: header says %d, actual is %d", totalLen, len(pkgBytes))
+	}
+
+	cp := CodePoint(binary.BigEndian.Uint16(pkgBytes[2:4]))
+	if cp != CodePointPKGNAMCSN {
+		t.Errorf("expected Codepoint PKGNAMCSN (0x2113), got %v", cp)
+	}
+
+	payload := pkgBytes[4:]
+	expectedPayload := []byte("SAMPLE            " + "NULLID            " + "SYSH200           " + " TOKEN12")
+	expectedPayload = append(expectedPayload, 0x00, 0x01) // uint16(1)
+
+	if !bytes.Equal(payload, expectedPayload) {
+		t.Errorf("payload mismatch:\ngot:  %q\nwant: %q", payload, expectedPayload)
+	}
+
+	// Test with empty consistency token
+	pkgBytesEmptyToken := PackPKGNAMCSN("SAMPLE", "SYSH200", "", 1)
+	payloadEmptyToken := pkgBytesEmptyToken[4:]
+	expectedEmptyTokenPayload := []byte("SAMPLE            " + "NULLID            " + "SYSH200           ")
+	expectedEmptyTokenPayload = append(expectedEmptyTokenPayload, []byte{0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01}...)
+	expectedEmptyTokenPayload = append(expectedEmptyTokenPayload, 0x00, 0x01)
+
+	if !bytes.Equal(payloadEmptyToken, expectedEmptyTokenPayload) {
+		t.Errorf("payload mismatch for empty token:\ngot:  %v\nwant: %v", payloadEmptyToken, expectedEmptyTokenPayload)
+	}
+}
+
+func BenchmarkPackPKGNAMCSN(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackPKGNAMCSN("SAMPLE", "SYSH200", "TOKEN12", 1)
+	}
+}
+
 func BenchmarkParseQRYDSC(b *testing.B) {
 	benchmarks := []struct {
 		name      string

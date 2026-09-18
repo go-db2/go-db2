@@ -296,25 +296,58 @@ func PackRDBRLLBCK() []byte {
 
 // PackPKGNAMCSN formats the package name, consistency token, and section number.
 func PackPKGNAMCSN(database, pkgid, pkgcnstkn string, pkgsn uint16) []byte {
-	dbPadded := fmt.Sprintf("%-18s", database)
-	nullidPadded := fmt.Sprintf("%-18s", "NULLID")
-	pkgidPadded := fmt.Sprintf("%-18s", pkgid)
-
-	var payload []byte
-	payload = append(payload, []byte(dbPadded)...)
-	payload = append(payload, []byte(nullidPadded)...)
-	payload = append(payload, []byte(pkgidPadded)...)
-
-	if pkgcnstkn == "" {
-		payload = append(payload, []byte{0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01}...)
-	} else {
-		tokenPadded := fmt.Sprintf("%8s", pkgcnstkn)
-		payload = append(payload, []byte(tokenPadded)...)
+	dbLen := len(database)
+	if dbLen < 18 {
+		dbLen = 18
+	}
+	pkgidLen := len(pkgid)
+	if pkgidLen < 18 {
+		pkgidLen = 18
+	}
+	tokenLen := len(pkgcnstkn)
+	if tokenLen < 8 {
+		tokenLen = 8
 	}
 
-	snBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(snBytes, pkgsn)
-	payload = append(payload, snBytes...)
+	payload := make([]byte, dbLen+18+pkgidLen+tokenLen+2)
+
+	// 1. Database name (right-padded to 18 bytes)
+	offset := copy(payload, database)
+	for i := offset; i < dbLen; i++ {
+		payload[i] = ' '
+	}
+	offset = dbLen
+
+	// 2. NULLID (fixed 18 bytes: "NULLID" + 12 spaces)
+	copy(payload[offset:], "NULLID            ")
+	offset += 18
+
+	// 3. Package ID (right-padded to 18 bytes)
+	copy(payload[offset:], pkgid)
+	pkgidEnd := offset + pkgidLen
+	for i := offset + len(pkgid); i < pkgidEnd; i++ {
+		payload[i] = ' '
+	}
+	offset = pkgidEnd
+
+	// 4. Consistency Token (8 bytes: 0x01 x8 if empty, or left-padded to 8 bytes)
+	if pkgcnstkn == "" {
+		copy(payload[offset:], []byte{0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01})
+		offset += 8
+	} else if len(pkgcnstkn) < 8 {
+		padLen := 8 - len(pkgcnstkn)
+		for i := 0; i < padLen; i++ {
+			payload[offset+i] = ' '
+		}
+		copy(payload[offset+padLen:], pkgcnstkn)
+		offset += 8
+	} else {
+		copy(payload[offset:], pkgcnstkn)
+		offset += len(pkgcnstkn)
+	}
+
+	// 5. Section Number (2 bytes uint16)
+	binary.BigEndian.PutUint16(payload[offset:offset+2], pkgsn)
 
 	return PackBytes(CodePointPKGNAMCSN, payload)
 }
