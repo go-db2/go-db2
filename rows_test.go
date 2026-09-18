@@ -164,3 +164,182 @@ func TestRowsColumnTypes(t *testing.T) {
 		t.Fatalf("expected prec=10, scale=2, got prec=%d, scale=%d", prec, scale)
 	}
 }
+
+func TestNewRows(t *testing.T) {
+	t.Run("NormalInitializationAndIteration", func(t *testing.T) {
+		cols := []network.ColumnDescription{
+			{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
+			{Name: "NAME", SQLType: uint16(types.SQLTypeVarChar)},
+		}
+		data := [][]driver.Value{
+			{int64(10), "Alice"},
+			{int64(20), "Bob"},
+		}
+
+		rows := NewRows(cols, data)
+		if rows == nil {
+			t.Fatalf("expected non-nil Rows")
+		}
+
+		colsResult := rows.Columns()
+		if len(colsResult) != 2 || colsResult[0] != "ID" || colsResult[1] != "NAME" {
+			t.Errorf("unexpected columns: %v", colsResult)
+		}
+
+		dest := make([]driver.Value, 2)
+		if err := rows.Next(dest); err != nil {
+			t.Errorf("unexpected error on 1st Next: %v", err)
+		}
+		if dest[0] != int64(10) || dest[1] != "Alice" {
+			t.Errorf("unexpected 1st row data: %v", dest)
+		}
+
+		if err := rows.Next(dest); err != nil {
+			t.Errorf("unexpected error on 2nd Next: %v", err)
+		}
+		if dest[0] != int64(20) || dest[1] != "Bob" {
+			t.Errorf("unexpected 2nd row data: %v", dest)
+		}
+
+		if err := rows.Next(dest); err != io.EOF {
+			t.Errorf("expected io.EOF on 3rd Next, got %v", err)
+		}
+
+		if rows.HasNextResultSet() {
+			t.Errorf("expected HasNextResultSet to be false")
+		}
+
+		if err := rows.Close(); err != nil {
+			t.Errorf("unexpected error on Close: %v", err)
+		}
+	})
+
+	t.Run("MismatchedDestinationSliceLength", func(t *testing.T) {
+		cols := []network.ColumnDescription{
+			{Name: "VAL", SQLType: uint16(types.SQLTypeInteger)},
+		}
+		data := [][]driver.Value{
+			{int64(100)},
+		}
+
+		rows := NewRows(cols, data)
+
+		// Destination larger than row length
+		destLarge := make([]driver.Value, 3)
+		destLarge[1] = "sentinel"
+		destLarge[2] = "sentinel"
+
+		if err := rows.Next(destLarge); err != nil {
+			t.Fatalf("unexpected error on Next: %v", err)
+		}
+		if destLarge[0] != int64(100) || destLarge[1] != nil || destLarge[2] != nil {
+			t.Errorf("expected [100 nil nil], got %v", destLarge)
+		}
+	})
+}
+
+func TestNewRows_EdgeCases(t *testing.T) {
+	t.Run("NilColumnsAndData", func(t *testing.T) {
+		rows := NewRows(nil, nil)
+		if rows == nil {
+			t.Fatalf("expected non-nil Rows when instantiated with nil arguments")
+		}
+
+		cols := rows.Columns()
+		if len(cols) != 0 {
+			t.Errorf("expected empty column slice, got %v", cols)
+		}
+
+		dest := make([]driver.Value, 1)
+		if err := rows.Next(dest); err != io.EOF {
+			t.Errorf("expected io.EOF on Next for empty data, got %v", err)
+		}
+
+		if rows.HasNextResultSet() {
+			t.Errorf("expected HasNextResultSet to be false for empty NewRows")
+		}
+
+		if err := rows.NextResultSet(); err != io.EOF {
+			t.Errorf("expected io.EOF on NextResultSet for single set, got %v", err)
+		}
+
+		// Verify ColumnType methods handle invalid index (0) gracefully on nil columns
+		if scanType := rows.ColumnTypeScanType(0); scanType != reflect.TypeOf(new(any)).Elem() {
+			t.Errorf("expected interface{} scan type for out of bounds index, got %v", scanType)
+		}
+
+		if dbType := rows.ColumnTypeDatabaseTypeName(0); dbType != "" {
+			t.Errorf("expected empty string for out of bounds database type name, got %q", dbType)
+		}
+
+		if _, ok := rows.ColumnTypeNullable(0); ok {
+			t.Errorf("expected ColumnTypeNullable ok=false for out of bounds index")
+		}
+
+		if _, ok := rows.ColumnTypeLength(0); ok {
+			t.Errorf("expected ColumnTypeLength ok=false for out of bounds index")
+		}
+
+		if _, _, ok := rows.ColumnTypePrecisionScale(0); ok {
+			t.Errorf("expected ColumnTypePrecisionScale ok=false for out of bounds index")
+		}
+
+		if err := rows.Close(); err != nil {
+			t.Errorf("unexpected error on Close: %v", err)
+		}
+	})
+
+	t.Run("OperationsAfterClose", func(t *testing.T) {
+		cols := []network.ColumnDescription{
+			{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
+		}
+		data := [][]driver.Value{
+			{int64(1)},
+		}
+
+		rows := NewRows(cols, data)
+		if err := rows.Close(); err != nil {
+			t.Fatalf("unexpected error on Close: %v", err)
+		}
+
+		dest := make([]driver.Value, 1)
+		if err := rows.Next(dest); err != io.EOF {
+			t.Errorf("expected io.EOF on Next when rows is closed, got %v", err)
+		}
+
+		if rows.HasNextResultSet() {
+			t.Errorf("expected HasNextResultSet to be false when closed")
+		}
+
+		if err := rows.NextResultSet(); err != io.EOF {
+			t.Errorf("expected io.EOF on NextResultSet when closed, got %v", err)
+		}
+	})
+
+	t.Run("NegativeColumnTypeIndexes", func(t *testing.T) {
+		cols := []network.ColumnDescription{
+			{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
+		}
+		rows := NewRows(cols, nil)
+
+		if scanType := rows.ColumnTypeScanType(-1); scanType != reflect.TypeOf(new(any)).Elem() {
+			t.Errorf("expected interface{} scan type for negative index, got %v", scanType)
+		}
+
+		if dbType := rows.ColumnTypeDatabaseTypeName(-1); dbType != "" {
+			t.Errorf("expected empty string for negative index, got %q", dbType)
+		}
+
+		if _, ok := rows.ColumnTypeNullable(-1); ok {
+			t.Errorf("expected ok=false for negative index on ColumnTypeNullable")
+		}
+
+		if _, ok := rows.ColumnTypeLength(-1); ok {
+			t.Errorf("expected ok=false for negative index on ColumnTypeLength")
+		}
+
+		if _, _, ok := rows.ColumnTypePrecisionScale(-1); ok {
+			t.Errorf("expected ok=false for negative index on ColumnTypePrecisionScale")
+		}
+	})
+}
