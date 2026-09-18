@@ -138,6 +138,103 @@ func TestRowsMultipleResultSets(t *testing.T) {
 	}
 }
 
+func TestRowsColumns(t *testing.T) {
+	t.Run("SingleResultSet", func(t *testing.T) {
+		cols := []network.ColumnDescription{
+			{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
+			{Name: "NAME", SQLType: uint16(types.SQLTypeVarChar)},
+			{Name: "CREATED_AT", SQLType: uint16(types.SQLTypeTimestamp)},
+		}
+		rows := NewRows(cols, nil)
+		got := rows.Columns()
+		expected := []string{"ID", "NAME", "CREATED_AT"}
+
+		if len(got) != len(expected) {
+			t.Fatalf("expected len %d, got %d", len(expected), len(got))
+		}
+		for i, name := range expected {
+			if got[i] != name {
+				t.Errorf("expected column[%d] = %q, got %q", i, name, got[i])
+			}
+		}
+	})
+
+	t.Run("EmptyColumns", func(t *testing.T) {
+		rows := NewRows([]network.ColumnDescription{}, nil)
+		got := rows.Columns()
+		if len(got) != 0 {
+			t.Fatalf("expected empty slice, got len %d (%v)", len(got), got)
+		}
+	})
+
+	t.Run("MultipleResultSets", func(t *testing.T) {
+		set1Cols := []network.ColumnDescription{
+			{Name: "COL1_A"},
+			{Name: "COL1_B"},
+		}
+		set2Cols := []network.ColumnDescription{
+			{Name: "COL2_X"},
+			{Name: "COL2_Y"},
+			{Name: "COL2_Z"},
+		}
+
+		multiRows := NewMultiRows([]ResultSet{
+			{Columns: set1Cols},
+			{Columns: set2Cols},
+		})
+
+		// First result set columns
+		cols1 := multiRows.Columns()
+		if len(cols1) != 2 || cols1[0] != "COL1_A" || cols1[1] != "COL1_B" {
+			t.Fatalf("unexpected set 1 columns: %v", cols1)
+		}
+
+		// Advance to next result set
+		if err := multiRows.NextResultSet(); err != nil {
+			t.Fatalf("unexpected error advancing result set: %v", err)
+		}
+
+		// Second result set columns
+		cols2 := multiRows.Columns()
+		if len(cols2) != 3 || cols2[0] != "COL2_X" || cols2[1] != "COL2_Y" || cols2[2] != "COL2_Z" {
+			t.Fatalf("unexpected set 2 columns: %v", cols2)
+		}
+	})
+
+	t.Run("EmptyOrOutOfBoundsResultSets", func(t *testing.T) {
+		t.Run("ZeroValueRows", func(t *testing.T) {
+			var rows Rows
+			got := rows.Columns()
+			if len(got) != 0 {
+				t.Fatalf("expected empty slice for zero-value Rows, got %v", got)
+			}
+		})
+
+		t.Run("EmptySetsSlice", func(t *testing.T) {
+			rows := NewMultiRows([]ResultSet{})
+			got := rows.Columns()
+			if len(got) != 0 {
+				t.Fatalf("expected empty slice for empty ResultSet slice, got %v", got)
+			}
+		})
+
+		t.Run("OutOfBoundsIndex", func(t *testing.T) {
+			rows := NewRows([]network.ColumnDescription{{Name: "ID"}}, nil)
+			rows.currSetIndex = 99
+			got := rows.Columns()
+			if len(got) != 0 {
+				t.Fatalf("expected empty slice for out-of-bounds currSetIndex, got %v", got)
+			}
+
+			rows.currSetIndex = -1
+			gotNeg := rows.Columns()
+			if len(gotNeg) != 0 {
+				t.Fatalf("expected empty slice for negative currSetIndex, got %v", gotNeg)
+			}
+		})
+	})
+}
+
 func TestRowsColumnTypes(t *testing.T) {
 	cols := []network.ColumnDescription{
 		{Name: "C_INT", SQLType: uint16(types.SQLTypeInteger), Length: 4, Nullable: false},
