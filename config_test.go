@@ -1,6 +1,8 @@
 package db2
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -168,5 +170,47 @@ func TestParseDSN_ClientInfo(t *testing.T) {
 	}
 	if sessCfg.ClientWrkstnName != "k8s-pod-99" {
 		t.Errorf("ToSessionConfig().ClientWrkstnName = %q, want k8s-pod-99", sessCfg.ClientWrkstnName)
+	}
+}
+
+func TestConfig_StringAndGoString(t *testing.T) {
+	cfg := Config{
+		Host:     "db2.example.com",
+		Port:     50000,
+		Database: "TESTDB",
+		User:     "db2admin",
+		Password: "super_secret_password",
+		UseSSL:   true,
+		Timeout:  10 * time.Second,
+	}
+
+	expected := `Config{Host:db2.example.com, Port:50000, Database:TESTDB, User:db2admin, Password:"******", UseSSL:true, Timeout:10s}`
+
+	// Test String() method
+	if str := cfg.String(); str != expected {
+		t.Errorf("Config.String() = %q, want %q", str, expected)
+	}
+
+	// Test fmt.Sprintf("%v", cfg)
+	if str := fmt.Sprintf("%v", cfg); str != expected {
+		t.Errorf("fmt.Sprintf(%%v, cfg) = %q, want %q", str, expected)
+	}
+
+	// Test GoString() method
+	if goStr := cfg.GoString(); goStr != expected {
+		t.Errorf("Config.GoString() = %q, want %q", goStr, expected)
+	}
+
+	// Test fmt.Sprintf("%#v", cfg)
+	if goStr := fmt.Sprintf("%#v", cfg); goStr != expected {
+		t.Errorf("fmt.Sprintf(%%#v, cfg) = %q, want %q", goStr, expected)
+	}
+
+	// Ensure sensitive password is not leaked in output
+	if strings.Contains(cfg.String(), "super_secret_password") {
+		t.Errorf("Config.String() leaked sensitive password!")
+	}
+	if strings.Contains(cfg.GoString(), "super_secret_password") {
+		t.Errorf("Config.GoString() leaked sensitive password!")
 	}
 }
