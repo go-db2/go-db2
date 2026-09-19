@@ -50,6 +50,64 @@ func TestClientInfoContext(t *testing.T) {
 	}
 }
 
+func TestClientInfo_IsEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		info ClientInfo
+		want bool
+	}{
+		{
+			name: "zero value struct is empty",
+			info: ClientInfo{},
+			want: true,
+		},
+		{
+			name: "only ApplicationName set is not empty",
+			info: ClientInfo{ApplicationName: "app"},
+			want: false,
+		},
+		{
+			name: "only WorkstationName set is not empty",
+			info: ClientInfo{WorkstationName: "ws"},
+			want: false,
+		},
+		{
+			name: "only UserID set is not empty",
+			info: ClientInfo{UserID: "usr"},
+			want: false,
+		},
+		{
+			name: "only Accounting set is not empty",
+			info: ClientInfo{Accounting: "acct"},
+			want: false,
+		},
+		{
+			name: "only CorrelationToken set is not empty",
+			info: ClientInfo{CorrelationToken: "token"},
+			want: false,
+		},
+		{
+			name: "all fields set is not empty",
+			info: ClientInfo{
+				ApplicationName:  "app",
+				WorkstationName:  "ws",
+				UserID:           "usr",
+				Accounting:       "acct",
+				CorrelationToken: "token",
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.info.IsEmpty(); got != tt.want {
+				t.Errorf("ClientInfo.IsEmpty() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSetClientInfo_Validation(t *testing.T) {
 	ctx := context.Background()
 

@@ -38,6 +38,39 @@ func TestNewConnectorAndDriver(t *testing.T) {
 	}
 }
 
+func TestConnector_Driver(t *testing.T) {
+	t.Run("DefaultDriver", func(t *testing.T) {
+		cfg := NewConfig()
+		connector := NewConnector(cfg)
+		if connector == nil {
+			t.Fatal("NewConnector returned nil")
+		}
+
+		drv := connector.Driver()
+		if drv == nil {
+			t.Fatal("expected Connector.Driver() to be non-nil")
+		}
+
+		if drv != connector.driver {
+			t.Errorf("expected Connector.Driver() to return internal driver %v, got %v", connector.driver, drv)
+		}
+	})
+
+	t.Run("CustomDriver", func(t *testing.T) {
+		cfg := NewConfig()
+		mockDriver := &Driver{}
+		connector := &Connector{
+			cfg:    cfg,
+			driver: mockDriver,
+		}
+
+		drv := connector.Driver()
+		if drv != mockDriver {
+			t.Errorf("expected Connector.Driver() to return custom driver %v, got %v", mockDriver, drv)
+		}
+	})
+}
+
 func TestConnectorConnect_Error(t *testing.T) {
 	// Connector with invalid / unreachable address or canceled context
 	cfg := NewConfig()

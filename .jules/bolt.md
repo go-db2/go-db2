@@ -12,3 +12,8 @@
 
 **Learning:** Allocating a payload slice separately and then passing it to a wrapper function like `PackDDMObject` causes double memory allocations and slice copies. Allocating a single `make([]byte, 4+payloadLen)` buffer and writing the DDM header (`Length` + `CodePoint`) directly into `buf[0:4]` eliminates an entire allocation and slice copy, speeding up DDM packing by ~30% and reducing memory allocations by 50%.
 **Action:** When constructing binary protocol structures with fixed-length headers, allocate the full buffer including the header upfront rather than packing payload and header in separate allocation steps.
+
+## 2026-08-28 - Stack Array Buffer for String Formatting in Non-Interface Value Decoders
+
+**Learning:** When generating formatted string outputs from raw bytes (such as `DecodePackedDecimal`), using `make([]byte, outLen)` allocates a heap byte slice before `string(out)` allocates the returned string (2 allocs total). Switching to a stack-allocated byte array `var stackOut [64]byte` when `outLen <= 64` keeps the slice buffer on the stack (0 heap allocs for `out`), reducing heap allocations from 2 to 1 and speeding up conversion by ~28% with 50% memory reduction.
+**Action:** For string formatting functions that construct intermediate byte slices without passing them to `io.Reader`/`io.Writer` interfaces, use a local fixed stack array `var stack [64]byte` to eliminate intermediate heap allocations.

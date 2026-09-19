@@ -398,7 +398,14 @@ func DecodePackedDecimal(b []byte, scale int) string {
 		outLen = negLen + numSig + 1
 	}
 
-	out := make([]byte, outLen)
+	// Optimization: Use a stack buffer for output bytes when outLen <= 64 to avoid extra heap allocation.
+	var stackOut [64]byte
+	var out []byte
+	if outLen <= 64 {
+		out = stackOut[:outLen]
+	} else {
+		out = make([]byte, outLen)
+	}
 	idx := 0
 	if isNegative {
 		out[0] = '-'
