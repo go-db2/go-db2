@@ -48,6 +48,18 @@ func main() {
 	}
 	fmt.Println("   ✅ Tabela criada com sucesso!")
 
+	defer func() {
+		fmt.Println("\n5. Limpando tabela de teste...")
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+
+		if _, err := db.ExecContext(cleanupCtx, "DROP TABLE test_lobs"); err != nil {
+			log.Printf("Aviso: erro ao remover tabela de teste: %v", err)
+		} else {
+			fmt.Println("   ✅ Tabela removida com sucesso!")
+		}
+	}()
+
 	// 3. Gerar dados de teste (BLOB binário e CLOB texto longo)
 	blobSample1 := make([]byte, 1024*4) // 4 KB de bytes binários
 	_, _ = rand.Read(blobSample1)
@@ -144,11 +156,6 @@ func main() {
 		log.Fatalf("Esperado 3 registros, obtido %d", count)
 	}
 	fmt.Println("   ✅ Integridade dos dados binários (BLOB) e textuais (CLOB) validada bit a bit!")
-
-	// 6. Limpeza
-	fmt.Println("\n5. Limpando tabela de teste...")
-	_, _ = db.ExecContext(ctx, "DROP TABLE test_lobs")
-	fmt.Println("   ✅ Tabela removida com sucesso!")
 
 	fmt.Println("\n🎉 TODOS OS TESTES DA FASE 4 (LOBS, BLOB, CLOB & SEGURANÇA) FORAM CONCLUÍDOS COM SUCESSO!")
 }
