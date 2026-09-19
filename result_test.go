@@ -4,6 +4,72 @@ import (
 	"testing"
 )
 
+func TestNewResult(t *testing.T) {
+	tests := []struct {
+		name         string
+		affectedRows int64
+		lastInsertId int64
+		expectError  bool
+	}{
+		{
+			name:         "positive values",
+			affectedRows: 10,
+			lastInsertId: 100,
+			expectError:  false,
+		},
+		{
+			name:         "zero values",
+			affectedRows: 0,
+			lastInsertId: 0,
+			expectError:  true,
+		},
+		{
+			name:         "negative values",
+			affectedRows: -1,
+			lastInsertId: -1,
+			expectError:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := NewResult(tt.affectedRows, tt.lastInsertId)
+			if res == nil {
+				t.Fatalf("NewResult(%d, %d) returned nil", tt.affectedRows, tt.lastInsertId)
+			}
+
+			if res.affectedRows != tt.affectedRows {
+				t.Errorf("res.affectedRows = %d, want %d", res.affectedRows, tt.affectedRows)
+			}
+			if res.lastInsertId != tt.lastInsertId {
+				t.Errorf("res.lastInsertId = %d, want %d", res.lastInsertId, tt.lastInsertId)
+			}
+
+			affected, err := res.RowsAffected()
+			if err != nil {
+				t.Errorf("RowsAffected() unexpected error: %v", err)
+			}
+			if affected != tt.affectedRows {
+				t.Errorf("RowsAffected() = %d, want %d", affected, tt.affectedRows)
+			}
+
+			id, err := res.LastInsertId()
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("LastInsertId() expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("LastInsertId() unexpected error: %v", err)
+				}
+				if id != tt.lastInsertId {
+					t.Errorf("LastInsertId() = %d, want %d", id, tt.lastInsertId)
+				}
+			}
+		})
+	}
+}
+
 func TestResultRowsAffected(t *testing.T) {
 	res := NewResult(42, 0)
 	affected, err := res.RowsAffected()
