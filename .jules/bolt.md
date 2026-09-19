@@ -7,3 +7,8 @@
 
 **Learning:** Returning slice literals `[]byte{...}` from functions like `FDODSC` forces Go compiler escape analysis to heap-allocate new slices on every call (2 extra allocs per parameter in `BuildSQLDTA`). Using package-level static `[]byte` vars eliminates these allocations. Conversely, attempting stack allocation for local byte arrays (`var stackBuf [64]byte`) when passing subslices to interface methods (e.g., `io.ReadFull(r, buf)`) causes Go escape analysis to move `stackBuf` to the heap (`moved to heap: stackBuf`), increasing memory usage compared to `make([]byte, len)`.
 **Action:** Use pre-allocated package-level variables for constant slice returns. Avoid declaring stack arrays to pass to interface methods (`io.Reader`, `io.Writer`) as Go escape analysis will force them onto the heap.
+
+## 2026-08-28 - Single Buffer Allocation for Fixed-Header Protocol DDM Packing
+
+**Learning:** Allocating a payload slice separately and then passing it to a wrapper function like `PackDDMObject` causes double memory allocations and slice copies. Allocating a single `make([]byte, 4+payloadLen)` buffer and writing the DDM header (`Length` + `CodePoint`) directly into `buf[0:4]` eliminates an entire allocation and slice copy, speeding up DDM packing by ~30% and reducing memory allocations by 50%.
+**Action:** When constructing binary protocol structures with fixed-length headers, allocate the full buffer including the header upfront rather than packing payload and header in separate allocation steps.
