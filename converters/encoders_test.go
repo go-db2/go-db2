@@ -36,3 +36,31 @@ func TestBuildSQLDTA(t *testing.T) {
 		t.Errorf("BuildSQLDTA output mismatch!\nGot:      %s\nExpected: %s", gotHex, expectedHex)
 	}
 }
+
+func TestEncodePackedDecimalParam_InvalidPrecScaleBounds(t *testing.T) {
+	testCases := []struct {
+		name  string
+		prec  int
+		scale int
+	}{
+		{"NegativeScale", 10, -1},
+		{"NegativePrec", -5, 0},
+		{"PrecExceedsMax", 32, 2},
+		{"ScaleExceedsPrec", 5, 6},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("FDODTA panicked on invalid prec/scale: %v", r)
+				}
+			}()
+
+			_, err := FDODTA(types.SQLTypeDecimal, 0, tc.prec, tc.scale, "123.45", binary.BigEndian)
+			if err == nil {
+				t.Fatalf("expected error for invalid prec=%d, scale=%d; got nil", tc.prec, tc.scale)
+			}
+		})
+	}
+}

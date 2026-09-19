@@ -276,6 +276,10 @@ func FDODTA(sqlType types.SQLType, sqllen int64, prec, scale int, val any, endia
 }
 
 func encodePackedDecimalParam(val any, prec, scale int) ([]byte, error) {
+	if prec < 0 || scale < 0 || prec > 31 || scale > prec {
+		return nil, fmt.Errorf("db2: invalid decimal precision (%d) or scale (%d)", prec, scale)
+	}
+
 	str := fmt.Sprint(val)
 	// Normalize decimal string
 	negative := strings.HasPrefix(str, "-")
