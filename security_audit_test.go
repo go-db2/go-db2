@@ -481,4 +481,13 @@ func TestIntegration_Transaction_WithClientInfo_Rollback(t *testing.T) {
 	}
 }
 
+// 15. SEC-15: Null Byte Sanitization in Administrative Commands
+func TestSecurity_NullByteSanitization_AdminCmd(t *testing.T) {
+	cmd := "RUNSTATS ON TABLE USERS\x00; DROP TABLE USERS;"
+	_, err := ExecAdminCmd(context.Background(), nil, cmd)
+	if err == nil {
+		t.Fatal("expected error executing ExecAdminCmd on nil *sql.DB, got nil")
+	}
+}
+
 var _ driver.Stmt = (*Stmt)(nil)

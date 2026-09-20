@@ -1339,6 +1339,7 @@ func (s *Session) SetClientInfo(ctx context.Context, applName, wrkstnName, useri
 }
 
 func escapeSingleQuotes(val string) string {
+	val = strings.ReplaceAll(val, "\x00", "")
 	return strings.ReplaceAll(val, "'", "''")
 }
 

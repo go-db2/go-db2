@@ -190,6 +190,25 @@ func TestQuoteIdentifier(t *testing.T) {
 	}
 }
 
+func TestEscapeSingleQuotes(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"myapp", "myapp"},
+		{"my'app", "my''app"},
+		{"my\x00app", "myapp"},
+		{"my\x00'app", "my''app"},
+	}
+
+	for _, tt := range tests {
+		got := escapeSingleQuotes(tt.input)
+		if got != tt.expected {
+			t.Errorf("escapeSingleQuotes(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
 func TestSwitchUser_QuotedIdentifierSQL(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
