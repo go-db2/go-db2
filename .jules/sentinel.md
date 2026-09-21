@@ -14,3 +14,7 @@
 **Learning:** `database/sql` directs prepared statement invocations directly to `driver.Stmt` methods rather than `driver.Conn`, so context metadata handlers must be applied across both `driver.Conn` and `driver.Stmt` execution paths to prevent multi-tenant boundary escapes.
 **Prevention:** Centralize context metadata resolution into an `applyContextMetadata(ctx)` helper and invoke it at all statement entry points (`PrepareContext`, `execContextLocked`, `queryContextLocked`, `ExecContext`, `QueryContext`).
 
+## 2026-09-20 - Unpropagated Client Correlation Token Register in Session Audit Context
+**Vulnerability:** `SetClientInfo` stored `ClientInfo.CorrelationToken` in local session config but failed to execute `SET CLIENT CORR_TOKEN` on the Db2 server, leaving database security audit logs without distributed tracing correlation tokens.
+**Learning:** Db2 special registers require explicit `SET CLIENT CORR_TOKEN` (or `SET CLIENT PROGRAMID` fallback) execution via `EXCSQLSET` to persist correlation tokens into Db2 server-side session registers (`CURRENT CLIENT_CORR_TOKEN`).
+**Prevention:** Ensure all `ClientInfo` struct attributes (`ApplicationName`, `WorkstationName`, `UserID`, `Accounting`, and `CorrelationToken`) map directly to corresponding server-side special register SQL statements in `SetClientInfo`.

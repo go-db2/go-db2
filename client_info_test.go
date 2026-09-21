@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+
+	"github.com/go-db2/go-db2/network"
 )
 
 func TestClientInfoContext(t *testing.T) {
@@ -128,5 +130,26 @@ func TestSetClientInfo_Validation(t *testing.T) {
 	err = SetClientInfo(ctx, "invalid_target", ClientInfo{ApplicationName: "test"})
 	if err == nil {
 		t.Error("expected error for unsupported target type, got nil")
+	}
+}
+
+func TestSetClientInfo_CorrelationToken(t *testing.T) {
+	ctx := context.Background()
+	sess := network.NewSession(network.SessionConfig{Database: "TESTDB"})
+	conn := NewConn(sess, &Config{Database: "TESTDB"})
+
+	info := ClientInfo{
+		ApplicationName:  "audit-service",
+		WorkstationName:  "node-01",
+		UserID:           "auditor",
+		Accounting:       "acct-dept",
+		CorrelationToken: "trace-corr-999",
+	}
+
+	// SetClientInfo on closed connection returns ErrConnectionClosed
+	_ = conn.Close()
+	err := conn.SetClientInfo(ctx, info)
+	if err == nil {
+		t.Error("expected error calling SetClientInfo on closed connection, got nil")
 	}
 }
