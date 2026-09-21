@@ -39,3 +39,11 @@ func BenchmarkDecodeUTF16BE(b *testing.B) {
 		_ = DecodeUTF16BE(data)
 	}
 }
+
+func BenchmarkEncodePackedDecimalParam(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = encodePackedDecimalParam(199.99, 10, 2)
+	}
+}

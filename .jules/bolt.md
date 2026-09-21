@@ -27,3 +27,8 @@
 
 **Learning:** Passing a local stack array slice (`var nullIndicator [1]byte; io.ReadFull(r, nullIndicator[:])`) forces Go's escape analysis to allocate `nullIndicator` on the heap whenever `r` is passed as an `io.Reader` interface parameter. Type asserting `r` to `io.ByteReader` and calling `br.ReadByte()` when reading 1-byte headers or indicators bypasses passing slice references through `io.Reader`, eliminating 1 heap allocation per nullable field decode and speeding up field decoding by ~17%.
 **Action:** When reading single bytes from an `io.Reader` interface in hot execution loops, check if the reader implements `io.ByteReader` and call `ReadByte()` directly instead of `io.ReadFull(r, slice[:])`.
+
+## 2026-09-20 - Direct Nibble Bitwise Operations for Packed Decimal Parameter Encoding
+
+**Learning:** Encoding packed decimal parameters by formatting strings (`fmt.Sprint`), splitting (`strings.Split`), padding (`strings.Repeat`), and hex decoding (`hex.DecodeString`) introduces 5+ heap allocations per parameter. Calculating BCD nibble positions and bitwise shifting (`<< 4` / `|=`) directly into a single pre-allocated byte slice (`make([]byte, 1+byteLen)`) cuts execution time by 55% (278 ns vs 618 ns) and reduces heap allocations from 5 to 2 (or 1 for strings).
+**Action:** When encoding BCD/packed decimal binary wire formats, avoid intermediate string/hex manipulation routines and directly populate nibbles into a pre-allocated byte buffer using bitwise operations.

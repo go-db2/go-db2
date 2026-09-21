@@ -1307,7 +1307,7 @@ func (s *Session) ExecSQLSet(ctx context.Context, sql string) error {
 }
 
 // SetClientInfo updates the Db2 client information special registers
-// (CURRENT CLIENT_APPLNAME, CURRENT CLIENT_WRKSTNNAME, CURRENT CLIENT_USERID, CURRENT CLIENT_ACCTNG)
+// (CURRENT CLIENT_APPLNAME, CURRENT CLIENT_WRKSTNNAME, CURRENT CLIENT_USERID, CURRENT CLIENT_ACCTNG, CURRENT CLIENT_CORR_TOKEN)
 // on the active connection via DRDA EXCSQLSET.
 func (s *Session) SetClientInfo(ctx context.Context, applName, wrkstnName, userid, acctng, corrToken string) error {
 	if applName != "" {
@@ -1323,6 +1323,13 @@ func (s *Session) SetClientInfo(ctx context.Context, applName, wrkstnName, useri
 		if err := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT ACCTNG '%s'", escapeSingleQuotes(acctng))); err != nil {
 			if err2 := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT_ACCTNG = '%s'", escapeSingleQuotes(acctng))); err2 != nil {
 				_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT ACCTSTR '%s'", escapeSingleQuotes(acctng)))
+			}
+		}
+	}
+	if corrToken != "" {
+		if err := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT CORR_TOKEN '%s'", escapeSingleQuotes(corrToken))); err != nil {
+			if err2 := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT_CORR_TOKEN = '%s'", escapeSingleQuotes(corrToken))); err2 != nil {
+				_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT PROGRAMID '%s'", escapeSingleQuotes(corrToken)))
 			}
 		}
 	}
