@@ -108,12 +108,24 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 	}
 
 	if IsNullableDRDAType(drdaType) {
-		// Optimization: Use a stack array instead of make([]byte, 1) to eliminate heap allocations for NULL checks.
-		var nullIndicator [1]byte
-		if _, err := io.ReadFull(r, nullIndicator[:]); err != nil {
-			return nil, err
+		var indicator byte
+		if br, ok := r.(io.ByteReader); ok {
+			// Optimization: When r implements io.ByteReader (e.g., *bytes.Reader used during QRYDTA response parsing),
+			// call ReadByte() directly to avoid passing a subslice nullIndicator[:] to io.ReadFull, which causes escape analysis
+			// to heap-allocate nullIndicator (reducing 1 heap allocation per nullable field decode).
+			var err error
+			indicator, err = br.ReadByte()
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			var nullIndicator [1]byte
+			if _, err := io.ReadFull(r, nullIndicator[:]); err != nil {
+				return nil, err
+			}
+			indicator = nullIndicator[0]
 		}
-		if nullIndicator[0] == 0xFF || nullIndicator[0] == 0x80 || nullIndicator[0] == 0x7F {
+		if indicator == 0xFF || indicator == 0x80 || indicator == 0x7F {
 			return nil, nil // Null or omitted output value
 		}
 	}
