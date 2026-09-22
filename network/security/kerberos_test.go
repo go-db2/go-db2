@@ -203,3 +203,19 @@ func TestAcquireKerberosToken_Keytab(t *testing.T) {
 		t.Fatal("Token does not contain expected Keytab metadata")
 	}
 }
+
+func TestParseKeytab_MalformedNegativeLength(t *testing.T) {
+	// Construct keytab header (v2) followed by a 4-byte int32 MinInt32 (-2147483648 / 0x80000000)
+	minInt32Data := []byte{0x05, 0x02, 0x80, 0x00, 0x00, 0x00}
+	_, err := ParseKeytab(minInt32Data)
+	if err == nil {
+		t.Fatal("expected error when parsing keytab entry with MinInt32 length, got nil")
+	}
+
+	// Construct keytab header (v2) followed by a negative entry length that exceeds data bounds (-10)
+	outOfBoundsData := []byte{0x05, 0x02, 0xFF, 0xFF, 0xFF, 0xF6} // 0xFFFFFFF6 = -10
+	_, err = ParseKeytab(outOfBoundsData)
+	if err == nil {
+		t.Fatal("expected error when parsing keytab entry with out-of-bounds negative length, got nil")
+	}
+}

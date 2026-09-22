@@ -116,7 +116,15 @@ func ParseKeytab(data []byte) ([]KeytabEntry, error) {
 		if entryLen <= 0 {
 			// Negative length indicates deleted entry in Keytab v2; skip
 			if entryLen < 0 {
-				offset += -entryLen
+				// Protect against integer overflow (e.g. MinInt32) and out-of-bounds skip
+				if entryLen == -2147483648 {
+					return nil, fmt.Errorf("db2/kerberos: invalid negative keytab entry length: %d", entryLen)
+				}
+				skipLen := -entryLen
+				if skipLen < 0 || offset > len(data)-skipLen {
+					return nil, fmt.Errorf("db2/kerberos: invalid negative keytab entry length %d exceeds remaining data (%d bytes)", entryLen, len(data)-offset)
+				}
+				offset += skipLen
 			}
 			continue
 		}
