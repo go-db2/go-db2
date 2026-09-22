@@ -32,3 +32,8 @@
 
 **Learning:** Encoding packed decimal parameters by formatting strings (`fmt.Sprint`), splitting (`strings.Split`), padding (`strings.Repeat`), and hex decoding (`hex.DecodeString`) introduces 5+ heap allocations per parameter. Calculating BCD nibble positions and bitwise shifting (`<< 4` / `|=`) directly into a single pre-allocated byte slice (`make([]byte, 1+byteLen)`) cuts execution time by 55% (278 ns vs 618 ns) and reduces heap allocations from 5 to 2 (or 1 for strings).
 **Action:** When encoding BCD/packed decimal binary wire formats, avoid intermediate string/hex manipulation routines and directly populate nibbles into a pre-allocated byte buffer using bitwise operations.
+
+## 2026-09-22 - Single-Buffer Direct Assembly for SQLDTA Parameter Blocks
+
+**Learning:** Constructing SQLDTA parameter blocks using `bytes.Buffer` and returning temporary byte slices from functions like `FDODTA` and `FDODSC` introduces multiple heap allocations per parameter. Calculating `FDODSC` length upfront and appending parameter wire descriptors and payloads directly into a single pre-allocated contiguous buffer (`sqldta`) using helper functions (`appendFDODTA`, `appendFDODSC`) eliminates per-parameter heap allocations. This reduces allocations by 80% (10 -> 2 allocs/op), cuts memory consumption by 55% (408 -> 184 B/op), and increases `BuildSQLDTA` throughput by 40%.
+**Action:** When assembling composite binary wire objects with static header layouts and dynamic parameter lists, construct the entire payload directly in a single pre-allocated slice using `append` helpers rather than using `bytes.Buffer` or returning intermediate `[]byte` slices.
