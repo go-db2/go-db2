@@ -18,3 +18,8 @@
 **Vulnerability:** `SetClientInfo` stored `ClientInfo.CorrelationToken` in local session config but failed to execute `SET CLIENT CORR_TOKEN` on the Db2 server, leaving database security audit logs without distributed tracing correlation tokens.
 **Learning:** Db2 special registers require explicit `SET CLIENT CORR_TOKEN` (or `SET CLIENT PROGRAMID` fallback) execution via `EXCSQLSET` to persist correlation tokens into Db2 server-side session registers (`CURRENT CLIENT_CORR_TOKEN`).
 **Prevention:** Ensure all `ClientInfo` struct attributes (`ApplicationName`, `WorkstationName`, `UserID`, `Accounting`, and `CorrelationToken`) map directly to corresponding server-side special register SQL statements in `SetClientInfo`.
+
+## 2026-09-21 - Multi-Group FDODSC Descriptor Parsing in Wire Decoders
+**Vulnerability:** `ParseSQLDTARD` evaluated only the first FDODSC descriptor group, truncating output parameter definitions when procedures returned > 84 parameters across multiple descriptor chunks, and was vulnerable to out-of-bounds slicing on malformed payload lengths.
+**Learning:** DRDA wire protocol chunks parameter descriptors into multiple triplet groups of up to 84 parameters each. Parser loops must iterate over all descriptor groups in sequence while enforcing strict `groupLen` bounds checks.
+**Prevention:** Always loop over descriptor blocks sequentially with `groupLen` boundary checks (`pos + groupLen <= len(buf)` and `groupLen >= 3`) before parsing field descriptors.

@@ -486,15 +486,24 @@ func ParseSQLDTARD(data []byte, endian binary.ByteOrder) ([]any, error) {
 		ps  []byte
 	}
 	var fields []triplet
-	if len(dscBytes) >= 3 && dscBytes[1] == 0x76 {
-		numFields := int(dscBytes[0])/3 - 1
-		pos := 3
-		for i := 0; i < numFields && pos+3 <= len(dscBytes); i++ {
-			typ := dscBytes[pos]
-			ps := dscBytes[pos+1 : pos+3]
-			fields = append(fields, triplet{typ: typ, ps: ps})
-			pos += 3
+	pos := 0
+	for pos+3 <= len(dscBytes) {
+		groupLen := int(dscBytes[pos])
+		if groupLen < 3 || pos+groupLen > len(dscBytes) {
+			break
 		}
+		if dscBytes[pos+1] == 0x76 {
+			numFields := groupLen/3 - 1
+			fPos := pos + 3
+			for i := 0; i < numFields && fPos+3 <= pos+groupLen; i++ {
+				fields = append(fields, triplet{
+					typ: dscBytes[fPos],
+					ps:  dscBytes[fPos+1 : fPos+3],
+				})
+				fPos += 3
+			}
+		}
+		pos += groupLen
 	}
 
 	r := bytes.NewReader(dtaBytes)
