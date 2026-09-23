@@ -1,6 +1,7 @@
 package db2
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -33,6 +34,12 @@ type Config struct {
 	SSLRootCAPath     string
 	SSLClientCertPath string
 	SSLClientKeyPath  string
+	// TLSConfig, when set together with UseSSL, is used for the TLS handshake
+	// instead of the SSLRootCAPath, SSLClientCertPath and SSLClientKeyPath
+	// files. It lets a caller that holds certificates in memory, not on disk,
+	// build the root CA pool or client certificate itself. It cannot be set
+	// from a DSN.
+	TLSConfig         *tls.Config
 	Timeout           time.Duration
 	BlockSize         int
 	SecurityMechanism uint16
@@ -262,6 +269,7 @@ func (c *Config) ToSessionConfig() network.SessionConfig {
 		SSLRootCAPath:     c.SSLRootCAPath,
 		SSLClientCertPath: c.SSLClientCertPath,
 		SSLClientKeyPath:  c.SSLClientKeyPath,
+		TLSConfig:         c.TLSConfig,
 		Timeout:           c.Timeout,
 		BlockSize:         c.BlockSize,
 		SecurityMechanism: c.SecurityMechanism,

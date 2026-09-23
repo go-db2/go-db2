@@ -242,7 +242,11 @@ func (s *Session) connectRaw(ctx context.Context) error {
 
 	if s.cfg.UseSSL {
 		if s.cfg.TLSConfig != nil {
-			tlsConfig := s.cfg.TLSConfig
+			// Clone so raising MinVersion never changes the caller's config.
+			tlsConfig := s.cfg.TLSConfig.Clone()
+			if tlsConfig.ServerName == "" {
+				tlsConfig.ServerName = s.cfg.Host
+			}
 			if tlsConfig.MinVersion < tls.VersionTLS12 {
 				tlsConfig.MinVersion = tls.VersionTLS12
 			}
