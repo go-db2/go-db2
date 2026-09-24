@@ -49,6 +49,62 @@ func TestDecFloat16EncodeDecode(t *testing.T) {
 	}
 }
 
+func TestEncodeDFP_EdgeCasesAndValidation(t *testing.T) {
+	validCases := []struct {
+		name     string
+		input    any
+		nBytes   int
+		expected string
+	}{
+		{"NilInput", nil, 8, "0"},
+		{"NilStringInput", "<nil>", 8, "0"},
+		{"EmptyString", "", 8, "0"},
+		{"ZeroString", "0", 8, "0"},
+		{"NilInput_34", nil, 16, "0"},
+		{"NilStringInput_34", "<nil>", 16, "0"},
+	}
+
+	for _, tc := range validCases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := EncodeDFP(tc.input, tc.nBytes)
+			if err != nil {
+				t.Fatalf("EncodeDFP(%v, %d) error: %v", tc.input, tc.nBytes, err)
+			}
+			if len(b) != tc.nBytes {
+				t.Fatalf("expected %d bytes, got %d", tc.nBytes, len(b))
+			}
+
+			decoded, err := DecodeDFP(b)
+			if err != nil {
+				t.Fatalf("DecodeDFP error: %v", err)
+			}
+
+			if decoded != tc.expected {
+				t.Errorf("EncodeDFP(%v, %d) decoded = %q, want %q", tc.input, tc.nBytes, decoded, tc.expected)
+			}
+		})
+	}
+
+	invalidCases := []struct {
+		name   string
+		input  any
+		nBytes int
+	}{
+		{"NonDigitCharacters", "12a3.4b5", 8},
+		{"InvalidString", "invalid", 8},
+		{"NonDigitCharacters_34", "98x76.5y4", 16},
+	}
+
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := EncodeDFP(tc.input, tc.nBytes)
+			if err == nil {
+				t.Fatalf("expected error for invalid DECFLOAT value %v, got nil", tc.input)
+			}
+		})
+	}
+}
+
 func TestDecFloat34EncodeDecode(t *testing.T) {
 	testCases := []string{
 		"0",

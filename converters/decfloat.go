@@ -230,8 +230,11 @@ func EncodeDFP(val any, nBytes int) ([]byte, error) {
 	coeffContBits := nDpdGroups * 10
 	totalBits := nBytes * 8
 
+	if val == nil {
+		val = "0"
+	}
 	str := strings.TrimSpace(fmt.Sprint(val))
-	if str == "" || str == "0" {
+	if str == "" || str == "0" || str == "<nil>" {
 		biasedExp := bias
 		g := (biasedExp >> expContBits) << 3
 		e := biasedExp & ((1 << expContBits) - 1)
@@ -302,11 +305,15 @@ func EncodeDFP(val any, nBytes int) ([]byte, error) {
 		mantissaStr = mantissaStr[:maxDigits]
 	}
 
-	// Pad with leading zeros to maxDigits
+	// Pad with leading zeros to maxDigits and validate digits
 	digits := make([]int, maxDigits)
 	padLen := maxDigits - len(mantissaStr)
 	for i := 0; i < len(mantissaStr); i++ {
-		digits[padLen+i] = int(mantissaStr[i] - '0')
+		c := mantissaStr[i]
+		if c < '0' || c > '9' {
+			return nil, fmt.Errorf("db2: invalid decimal floating-point value %q", val)
+		}
+		digits[padLen+i] = int(c - '0')
 	}
 
 	leadingDigit := digits[0]
