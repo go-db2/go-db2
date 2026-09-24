@@ -308,6 +308,31 @@ func BenchmarkPackOPNQRY(b *testing.B) {
 	}
 }
 
+func BenchmarkPackSQLSTT(b *testing.B) {
+	sql := "SELECT ID, NAME, SALARY FROM EMPLOYEE WHERE DEPT = ?"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackSQLSTT(sql)
+	}
+}
+
+func BenchmarkPackCNTQRY(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackCNTQRY("SYSH200", "TOKEN12", 1, "SAMPLE", 32767, 12345678)
+	}
+}
+
+func BenchmarkPackOPNQRYWithParams(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackOPNQRYWithParams("SYSH200", "TOKEN12", 1, "SAMPLE", 32767)
+	}
+}
+
 func BenchmarkParseQRYDSC(b *testing.B) {
 	benchmarks := []struct {
 		name      string
