@@ -31,3 +31,19 @@ func TestParseSQLDARD_UTF8ColumnNames(t *testing.T) {
 		t.Fatalf("column names = %q, want [abc zamówienia]", names)
 	}
 }
+
+func BenchmarkParseSQLDARD(b *testing.B) {
+	obj, err := hex.DecodeString(sqldardUTF8Names)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := ParseSQLDARD(obj, binary.LittleEndian)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
