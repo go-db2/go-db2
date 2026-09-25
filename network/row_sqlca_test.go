@@ -60,3 +60,28 @@ func TestDecodeRowsWithErrorSQLCA(t *testing.T) {
 		t.Fatalf("expected the row's SQLCODE -802, got: %v", err)
 	}
 }
+
+func BenchmarkDecodeRows(b *testing.B) {
+	fields := []FieldDescriptor{
+		{Type: converters.DRDATypeInteger, PS: []byte{0x00, 0x04}},
+		{Type: converters.DRDATypeVarChar, PS: []byte{0x00, 0x20}},
+	}
+	// Create payload with 100 rows
+	var data []byte
+	for i := 0; i < 100; i++ {
+		data = append(data, 0xFF, 0x00) // null SQLCA, row data present
+		data = binary.LittleEndian.AppendUint32(data, uint32(i))
+		str := "Row Value 12"
+		data = binary.BigEndian.AppendUint16(data, uint16(len(str)))
+		data = append(data, str...)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := decodeRows(fields, data, binary.LittleEndian)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

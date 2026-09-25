@@ -1061,25 +1061,49 @@ func (s *Session) fetchQuery(replies []ReplyPacket, columns []ColumnDescription)
 // value per field.
 func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) ([][]any, error) {
 	reader := bytes.NewReader(data)
-	var rows [][]any
+	numFields := len(fields)
+
+	// Pre-allocate rows capacity based on data length and field count to minimize slice reallocations.
+	initCap := 0
+	if minRowLen := 2 + numFields; minRowLen > 0 && len(data) >= minRowLen {
+		initCap = len(data) / minRowLen
+		if initCap > 1024 {
+			initCap = 1024
+		}
+	}
+	rows := make([][]any, 0, initCap)
 	for reader.Len() >= 2 {
-		if first, _ := reader.ReadByte(); first != 0x00 && first != 0xFF {
-			break
-		}
-		_ = reader.UnreadByte()
-		code, state, err := readRowSQLCA(reader, endian)
+		first, err := reader.ReadByte()
 		if err != nil {
-			return nil, fmt.Errorf("failed to read the SQLCA of row %d: %w", len(rows)+1, err)
-		}
-		if code < 0 {
-			return nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s in row %d", code, state, len(rows)+1)
-		}
-		dataInd, err := reader.ReadByte()
-		if err != nil || dataInd != 0x00 {
 			break
 		}
-		row := make([]any, len(fields))
-		for i, f := range fields {
+		if first == 0xFF {
+			// Fast-path: Null SQLCA indicator (normal row without server warnings or errors)
+			dataInd, err := reader.ReadByte()
+			if err != nil || dataInd != 0x00 {
+				break
+			}
+		} else if first == 0x00 {
+			// Non-null SQLCA indicator present (row has attached warning or error)
+			_ = reader.UnreadByte()
+			code, state, err := readRowSQLCA(reader, endian)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read the SQLCA of row %d: %w", len(rows)+1, err)
+			}
+			if code < 0 {
+				return nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s in row %d", code, state, len(rows)+1)
+			}
+			dataInd, err := reader.ReadByte()
+			if err != nil || dataInd != 0x00 {
+				break
+			}
+		} else {
+			break
+		}
+
+		row := make([]any, numFields)
+		for i := 0; i < numFields; i++ {
+			f := fields[i]
 			val, err := converters.DecodeField(f.Type, f.PS, reader, endian)
 			if err != nil {
 				return nil, fmt.Errorf("failed to decode row %d column %d (Type=0x%02X, PS=%x, RemainingBytes=%d): %w",

@@ -47,3 +47,8 @@
 
 **Learning:** Composing DRDA query command payloads (`PackSQLSTT`, `PackCNTQRY`, `PackOPNQRYWithParams`) by wrapping nested `PackNullString`/`PackBytes`/`PackUint32` calls in `append` and passing to `PackDDMObject` introduces 4-6 heap allocations per command. Calculating payload size upfront and writing the outer DDM length/codepoint and parameter structures directly into a single pre-allocated slice reduces allocations from 4-6 down to 1 alloc/op, cuts memory consumption by ~75-78% (e.g., 257B -> 64B), and increases packing throughput by 3.4x-4.0x.
 **Action:** When constructing DDM parameter payloads with fixed or predictable total size (e.g., query text, continuation tokens, block options), assemble the outer DDM header and parameter blocks directly into a single allocated slice rather than nesting helper encoders with `append`.
+
+## 2026-09-25 - Fast-Path Null Indicator Handling and Capacity Estimation for QRYDTA Row Decoding
+
+**Learning:** In DRDA row data (`QRYDTA`), >99.9% of query rows start with a null SQLCA indicator byte (`0xFF`). Checking the leading byte directly before calling `readRowSQLCA` eliminates unreading bytes and full SQLCA parser call overhead when no server warnings or errors are present. In addition, estimating row count capacity from buffer length and field count (`len(data) / minRowLen`) prevents slice re-allocation overhead as row slices grow.
+**Action:** When decoding row-based protocol frames where every row carries an optional status header, handle the null/empty header case as a fast-path before delegating to full status parser routines, and pre-allocate result slice capacity based on payload buffer size.

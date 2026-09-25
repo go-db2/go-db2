@@ -639,10 +639,12 @@ func isPrintableUTF8(b []byte) bool {
 	if !utf8.Valid(b) {
 		return false
 	}
-	for _, r := range string(b) {
+	for i := 0; i < len(b); {
+		r, size := utf8.DecodeRune(b[i:])
 		if unicode.IsControl(r) {
 			return false
 		}
+		i += size
 	}
 	return true
 }
@@ -705,7 +707,7 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 	numCols := int(endian.Uint16(rest[:2]))
 	rest = rest[2:]
 
-	var cols []ColumnDescription
+	cols := make([]ColumnDescription, 0, numCols)
 	for i := 0; i < numCols && len(rest) >= 16; i++ {
 		prec := int(endian.Uint16(rest[0:2]))
 		scale := int(endian.Uint16(rest[2:4]))
