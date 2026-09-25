@@ -3,12 +3,24 @@ package db2
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-db2/go-db2/network"
 )
+
+var (
+	dsnPasswordURLRegex = regexp.MustCompile(`(://[^:]+:)([^@]+)(@)`)
+	dsnPasswordKVRegex  = regexp.MustCompile(`(?i)\b(password|pwd)\s*=\s*([^;]+)`)
+)
+
+func redactDSNPassword(s string) string {
+	s = dsnPasswordURLRegex.ReplaceAllString(s, "${1}******${3}")
+	s = dsnPasswordKVRegex.ReplaceAllString(s, "${1}=******")
+	return s
+}
 
 // Config holds the configuration options parsed from a connection string (DSN or URL).
 type Config struct {
@@ -81,7 +93,7 @@ func ParseDSN(dsn string) (*Config, error) {
 func parseURL(dsn string) (*Config, error) {
 	u, err := url.Parse(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidConnectionStr, err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidConnectionStr, redactDSNPassword(err.Error()))
 	}
 
 	if u.Scheme != "db2" && u.Scheme != "db2s" {

@@ -531,4 +531,23 @@ func TestSecurity_PreparedStatement_ContextMetadata(t *testing.T) {
 	}
 }
 
+// 17. SEC-17: Password Redaction in DSN Parsing Errors
+func TestSecurity_PasswordRedaction_DSNError(t *testing.T) {
+	secretPwd := "SuperSecretP@ssw0rd!123"
+	malformedURLDSN := fmt.Sprintf("db2://admin:%s@localhost:50000/db%%xx", secretPwd)
+
+	_, err := ParseDSN(malformedURLDSN)
+	if err == nil {
+		t.Fatal("expected error parsing malformed DSN URL, got nil")
+	}
+
+	errMsg := err.Error()
+	if strings.Contains(errMsg, secretPwd) {
+		t.Fatalf("ParseDSN leaked plaintext password in error message: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "******") {
+		t.Fatalf("ParseDSN error message did not contain redacted '******': %s", errMsg)
+	}
+}
+
 var _ driver.Stmt = (*Stmt)(nil)
