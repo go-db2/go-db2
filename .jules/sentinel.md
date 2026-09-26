@@ -23,3 +23,8 @@
 **Vulnerability:** `ParseSQLDTARD` evaluated only the first FDODSC descriptor group, truncating output parameter definitions when procedures returned > 84 parameters across multiple descriptor chunks, and was vulnerable to out-of-bounds slicing on malformed payload lengths.
 **Learning:** DRDA wire protocol chunks parameter descriptors into multiple triplet groups of up to 84 parameters each. Parser loops must iterate over all descriptor groups in sequence while enforcing strict `groupLen` bounds checks.
 **Prevention:** Always loop over descriptor blocks sequentially with `groupLen` boundary checks (`pos + groupLen <= len(buf)` and `groupLen >= 3`) before parsing field descriptors.
+
+## 2026-09-22 - Session State & Switched Identity Pollution in Connection Pooling
+**Vulnerability:** `ResetSession` in `Conn` did not restore initial connection user identity, client audit info, or auto-commit mode when pooled connections were returned to `database/sql` connection pool, allowing subsequent tenant requests assigned the same pooled connection to execute under stale user privileges and audit registers.
+**Learning:** In connection pooling, any session-level mutation (switched user identity, audit registers, auto-commit mode) persists across requests unless `ResetSession` explicitly resets session user, client info registers, and auto-commit back to the initial connection configuration (`Config`).
+**Prevention:** Always implement `ResetSession` in `driver.SessionResetter` to restore base connection configuration (`c.cfg.User`, client audit registers, and auto-commit mode) before returning connections to the pool, or return `driver.ErrBadConn` to discard contaminated connections if restoration fails.

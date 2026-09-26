@@ -1385,30 +1385,57 @@ func (s *Session) ExecSQLSet(ctx context.Context, sql string) error {
 	return nil
 }
 
-// SetClientInfo updates the Db2 client information special registers
-// (CURRENT CLIENT_APPLNAME, CURRENT CLIENT_WRKSTNNAME, CURRENT CLIENT_USERID, CURRENT CLIENT_ACCTNG, CURRENT CLIENT_CORR_TOKEN)
-// on the active connection via DRDA EXCSQLSET.
-func (s *Session) SetClientInfo(ctx context.Context, applName, wrkstnName, userid, acctng, corrToken string) error {
-	if applName != "" {
-		_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT APPLNAME '%s'", escapeSingleQuotes(applName)))
+// ClientInfoMatches returns true if the current session registers match the given values.
+func (s *Session) ClientInfoMatches(applName, wrkstnName, userid, acctng, corrToken string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.ClientApplName == applName &&
+		s.cfg.ClientWrkstnName == wrkstnName &&
+		s.cfg.ClientUserid == userid &&
+		s.cfg.ClientAcctng == acctng &&
+		s.cfg.ClientCorrToken == corrToken
+}
+
+// ResetClientInfo restores all client information special registers back to the given base configuration.
+func (s *Session) ResetClientInfo(ctx context.Context, applName, wrkstnName, userid, acctng, corrToken string) error {
+	s.mu.Lock()
+	prevAppl := s.cfg.ClientApplName
+	prevWrkstn := s.cfg.ClientWrkstnName
+	prevUserid := s.cfg.ClientUserid
+	prevAcctng := s.cfg.ClientAcctng
+	prevCorr := s.cfg.ClientCorrToken
+	s.mu.Unlock()
+
+	if applName != prevAppl {
+		if err := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT APPLNAME '%s'", escapeSingleQuotes(applName))); err != nil {
+			return err
+		}
 	}
-	if wrkstnName != "" {
-		_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT WRKSTNNAME '%s'", escapeSingleQuotes(wrkstnName)))
+	if wrkstnName != prevWrkstn {
+		if err := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT WRKSTNNAME '%s'", escapeSingleQuotes(wrkstnName))); err != nil {
+			return err
+		}
 	}
-	if userid != "" {
-		_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT USERID '%s'", escapeSingleQuotes(userid)))
+	if userid != prevUserid {
+		if err := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT USERID '%s'", escapeSingleQuotes(userid))); err != nil {
+			return err
+		}
 	}
-	if acctng != "" {
+	if acctng != prevAcctng {
 		if err := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT ACCTNG '%s'", escapeSingleQuotes(acctng))); err != nil {
 			if err2 := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT_ACCTNG = '%s'", escapeSingleQuotes(acctng))); err2 != nil {
-				_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT ACCTSTR '%s'", escapeSingleQuotes(acctng)))
+				if err3 := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT ACCTSTR '%s'", escapeSingleQuotes(acctng))); err3 != nil {
+					return err3
+				}
 			}
 		}
 	}
-	if corrToken != "" {
+	if corrToken != prevCorr {
 		if err := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT CORR_TOKEN '%s'", escapeSingleQuotes(corrToken))); err != nil {
 			if err2 := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT_CORR_TOKEN = '%s'", escapeSingleQuotes(corrToken))); err2 != nil {
-				_ = s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT PROGRAMID '%s'", escapeSingleQuotes(corrToken)))
+				if err3 := s.ExecSQLSet(ctx, fmt.Sprintf("SET CLIENT PROGRAMID '%s'", escapeSingleQuotes(corrToken))); err3 != nil {
+					return err3
+				}
 			}
 		}
 	}
@@ -1422,6 +1449,35 @@ func (s *Session) SetClientInfo(ctx context.Context, applName, wrkstnName, useri
 	s.mu.Unlock()
 
 	return nil
+}
+
+// SetClientInfo updates specified client information registers on the session. Empty fields in args leave existing registers unchanged.
+func (s *Session) SetClientInfo(ctx context.Context, applName, wrkstnName, userid, acctng, corrToken string) error {
+	s.mu.Lock()
+	targetAppl := s.cfg.ClientApplName
+	targetWrkstn := s.cfg.ClientWrkstnName
+	targetUserid := s.cfg.ClientUserid
+	targetAcctng := s.cfg.ClientAcctng
+	targetCorr := s.cfg.ClientCorrToken
+	s.mu.Unlock()
+
+	if applName != "" {
+		targetAppl = applName
+	}
+	if wrkstnName != "" {
+		targetWrkstn = wrkstnName
+	}
+	if userid != "" {
+		targetUserid = userid
+	}
+	if acctng != "" {
+		targetAcctng = acctng
+	}
+	if corrToken != "" {
+		targetCorr = corrToken
+	}
+
+	return s.ResetClientInfo(ctx, targetAppl, targetWrkstn, targetUserid, targetAcctng, targetCorr)
 }
 
 func escapeSingleQuotes(val string) string {
