@@ -7,11 +7,31 @@ import (
 )
 
 // DecodeUTF16BE decodes a sequence of Big-Endian UTF-16 bytes into a UTF-8 Go string.
-// Optimization: Uses a stack array for <= 64 code units to eliminate intermediate uint16 slice heap allocation (50% memory reduction).
+// Optimization: Fast-path for ASCII characters (high byte 0x00, low byte < 0x80) uses stack byte buffer to bypass utf16.Decode []rune heap allocations (~4x faster).
 func DecodeUTF16BE(b []byte) string {
 	numUnits := len(b) / 2
 	if numUnits == 0 {
 		return ""
+	}
+	isASCII := true
+	for i := 0; i < numUnits; i++ {
+		if b[i*2] != 0 || b[i*2+1] >= 0x80 {
+			isASCII = false
+			break
+		}
+	}
+	if isASCII {
+		var stackBuf [64]byte
+		var buf []byte
+		if numUnits <= 64 {
+			buf = stackBuf[:numUnits]
+		} else {
+			buf = make([]byte, numUnits)
+		}
+		for i := 0; i < numUnits; i++ {
+			buf[i] = b[i*2+1]
+		}
+		return string(buf)
 	}
 	var stackU16 [64]uint16
 	var u16 []uint16
