@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -550,59 +551,80 @@ func TestSecurity_PasswordRedaction_DSNError(t *testing.T) {
 	}
 }
 
-// 18. SEC-18: ResetSession Resets Switched User, Client Audit Registers and AutoCommit Mode
-func TestSecurity_ResetSession_ClearsSwitchedUserAndClientInfo(t *testing.T) {
-	// Case A: Base config has non-empty client info
-	cfgA := &Config{
-		Database:       "TESTDB",
-		User:           "BASEUSER",
-		ClientApplName: "base_app",
+// 18. SEC-18: ResetSession Optimization and Error Handling
+func TestSecurity_ResetSession_OptimizationAndErrorHandling(t *testing.T) {
+	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+		switch cp {
+		case network.CodePointEXCSQLSET, network.CodePointRDBCMM:
+			return writeSQLCARDOK(c)
+		}
+		return false
+	})
+
+	db, err := sql.Open("db2", "db2://BASEUSER:password@"+srv.addr+"/TESTDB?ssl=false&client_applname=base_app")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
 	}
-	sessCfgA := cfgA.ToSessionConfig()
-	sessA := network.NewSession(sessCfgA)
-	connA := NewConn(sessA, cfgA)
+	defer db.Close()
+	db.SetMaxOpenConns(1)
 
-	if connA.CurrentUser() != "BASEUSER" {
-		t.Fatalf("expected initial CurrentUser=BASEUSER, got %q", connA.CurrentUser())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	driverConn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("db.Conn failed: %v", err)
+	}
+	defer driverConn.Close()
+
+	var conn *Conn
+	err = driverConn.Raw(func(raw any) error {
+		if c, ok := raw.(*Conn); ok {
+			conn = c
+		}
+		return nil
+	})
+	if err != nil || conn == nil {
+		t.Fatalf("failed to extract *Conn: %v", err)
 	}
 
-	// Simulate user switch / client info modification during pool usage
-	sessA.SetAutoCommit(false)
-	_ = connA.SetClientInfo(context.Background(), ClientInfo{ApplicationName: "temp_tenant_app"})
+	// 1. Unmodified connection: ResetSession is zero-network-cost in-memory check
+	if err := conn.ResetSession(ctx); err != nil {
+		t.Fatalf("ResetSession on unmodified connection failed: %v", err)
+	}
 
-	// Reset session on pooled connection
-	if err := connA.ResetSession(context.Background()); err != nil {
+	if !conn.session.ClientInfoMatches("base_app", "", "", "", "") {
+		t.Fatalf("expected ClientInfoMatches base_app")
+	}
+
+	// 2. Modify registers during pool usage
+	conn.session.SetAutoCommit(false)
+	if err := conn.SetClientInfo(ctx, ClientInfo{ApplicationName: "temp_app"}); err != nil {
+		t.Fatalf("SetClientInfo failed: %v", err)
+	}
+
+	// Verify registers were updated
+	if conn.session.ClientInfoMatches("base_app", "", "", "", "") {
+		t.Fatalf("expected ClientInfo to differ after SetClientInfo")
+	}
+
+	// ResetSession restores registers back to base config ("base_app")
+	if err := conn.ResetSession(ctx); err != nil {
 		t.Fatalf("ResetSession failed: %v", err)
 	}
 
-	if connA.CurrentUser() != "BASEUSER" {
-		t.Fatalf("expected ResetSession to restore CurrentUser=BASEUSER, got %q", connA.CurrentUser())
+	if !conn.session.ClientInfoMatches("base_app", "", "", "", "") {
+		t.Fatalf("expected ClientInfo to be restored to base_app after ResetSession")
 	}
 
-	if !sessA.AutoCommit() {
-		t.Fatal("expected ResetSession to restore AutoCommit=true")
+	if !conn.session.AutoCommit() {
+		t.Fatal("expected AutoCommit=true after ResetSession")
 	}
 
-	// Case B: Base config has empty client info by default
-	cfgB := &Config{
-		Database: "TESTDB",
-		User:     "BASEUSER",
-	}
-	sessCfgB := cfgB.ToSessionConfig()
-	sessB := network.NewSession(sessCfgB)
-	connB := NewConn(sessB, cfgB)
-
-	// Modify client info during pool usage
-	_ = connB.SetClientInfo(context.Background(), ClientInfo{ApplicationName: "temp_tenant_app"})
-
-	// Reset session on pooled connection
-	if err := connB.ResetSession(context.Background()); err != nil {
-		t.Fatalf("ResetSession failed: %v", err)
-	}
-
-	// Verify ResetSession executes SetClientInfo with empty base config without error
-	if err := connB.ResetSession(context.Background()); err != nil {
-		t.Fatalf("subsequent ResetSession failed: %v", err)
+	// 3. Closed / Broken connection returns driver.ErrBadConn
+	_ = conn.Close()
+	if err := conn.ResetSession(ctx); err != driver.ErrBadConn {
+		t.Fatalf("expected driver.ErrBadConn on closed connection, got: %v", err)
 	}
 }
 

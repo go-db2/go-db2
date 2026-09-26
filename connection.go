@@ -315,8 +315,8 @@ func (c *Conn) ResetSession(ctx context.Context) error {
 		}
 	}
 
-	if c.cfg != nil {
-		if err := c.session.SetClientInfo(ctx, c.cfg.ClientApplName, c.cfg.ClientWrkstnName, c.cfg.ClientUserid, c.cfg.ClientAcctng, c.cfg.ClientCorrToken); err != nil {
+	if c.cfg != nil && !c.session.ClientInfoMatches(c.cfg.ClientApplName, c.cfg.ClientWrkstnName, c.cfg.ClientUserid, c.cfg.ClientAcctng, c.cfg.ClientCorrToken) {
+		if err := c.session.ResetClientInfo(ctx, c.cfg.ClientApplName, c.cfg.ClientWrkstnName, c.cfg.ClientUserid, c.cfg.ClientAcctng, c.cfg.ClientCorrToken); err != nil {
 			return driver.ErrBadConn
 		}
 	}
