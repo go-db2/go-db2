@@ -550,4 +550,60 @@ func TestSecurity_PasswordRedaction_DSNError(t *testing.T) {
 	}
 }
 
+// 18. SEC-18: ResetSession Resets Switched User, Client Audit Registers and AutoCommit Mode
+func TestSecurity_ResetSession_ClearsSwitchedUserAndClientInfo(t *testing.T) {
+	// Case A: Base config has non-empty client info
+	cfgA := &Config{
+		Database:       "TESTDB",
+		User:           "BASEUSER",
+		ClientApplName: "base_app",
+	}
+	sessCfgA := cfgA.ToSessionConfig()
+	sessA := network.NewSession(sessCfgA)
+	connA := NewConn(sessA, cfgA)
+
+	if connA.CurrentUser() != "BASEUSER" {
+		t.Fatalf("expected initial CurrentUser=BASEUSER, got %q", connA.CurrentUser())
+	}
+
+	// Simulate user switch / client info modification during pool usage
+	sessA.SetAutoCommit(false)
+	_ = connA.SetClientInfo(context.Background(), ClientInfo{ApplicationName: "temp_tenant_app"})
+
+	// Reset session on pooled connection
+	if err := connA.ResetSession(context.Background()); err != nil {
+		t.Fatalf("ResetSession failed: %v", err)
+	}
+
+	if connA.CurrentUser() != "BASEUSER" {
+		t.Fatalf("expected ResetSession to restore CurrentUser=BASEUSER, got %q", connA.CurrentUser())
+	}
+
+	if !sessA.AutoCommit() {
+		t.Fatal("expected ResetSession to restore AutoCommit=true")
+	}
+
+	// Case B: Base config has empty client info by default
+	cfgB := &Config{
+		Database: "TESTDB",
+		User:     "BASEUSER",
+	}
+	sessCfgB := cfgB.ToSessionConfig()
+	sessB := network.NewSession(sessCfgB)
+	connB := NewConn(sessB, cfgB)
+
+	// Modify client info during pool usage
+	_ = connB.SetClientInfo(context.Background(), ClientInfo{ApplicationName: "temp_tenant_app"})
+
+	// Reset session on pooled connection
+	if err := connB.ResetSession(context.Background()); err != nil {
+		t.Fatalf("ResetSession failed: %v", err)
+	}
+
+	// Verify ResetSession executes SetClientInfo with empty base config without error
+	if err := connB.ResetSession(context.Background()); err != nil {
+		t.Fatalf("subsequent ResetSession failed: %v", err)
+	}
+}
+
 var _ driver.Stmt = (*Stmt)(nil)

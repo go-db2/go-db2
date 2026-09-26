@@ -302,9 +302,26 @@ func (c *Conn) IsValid() bool {
 // ResetSession implements driver.SessionResetter. It is called before a pooled
 // connection is reused; driver.ErrBadConn makes database/sql discard it.
 func (c *Conn) ResetSession(ctx context.Context) error {
-	if !c.IsValid() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed || c.session == nil || c.session.Broken() {
 		return driver.ErrBadConn
 	}
+
+	if c.cfg != nil && c.cfg.User != "" && c.session.CurrentUser() != c.cfg.User {
+		if err := c.session.SwitchUser(ctx, c.cfg.User); err != nil {
+			return driver.ErrBadConn
+		}
+	}
+
+	if c.cfg != nil {
+		if err := c.session.SetClientInfo(ctx, c.cfg.ClientApplName, c.cfg.ClientWrkstnName, c.cfg.ClientUserid, c.cfg.ClientAcctng, c.cfg.ClientCorrToken); err != nil {
+			return driver.ErrBadConn
+		}
+	}
+
+	c.session.SetAutoCommit(true)
 	return nil
 }
 
