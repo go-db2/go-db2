@@ -57,3 +57,8 @@
 
 **Learning:** When decoding UTF-16 BE bytes into Go strings, checking if all code units are ASCII (`high == 0x00 && low < 0x80`) allows populating a local stack byte slice (`[64]byte`) and converting directly to string with `string(buf)`. This bypasses `utf16.Decode` which allocates an intermediate `[]rune` slice on the heap, speeding up UTF-16 string decoding by ~2.5x (from 111.4 ns/op down to 43.1 ns/op) and reducing memory allocation from 16 B/op to 8 B/op.
 **Action:** When decoding big-endian UTF-16 byte sequences, check for ASCII code units first to construct strings directly from bytes without converting through `[]rune` slices via `utf16.Decode`.
+
+## 2026-09-27 - Pre-ordered Static Layout Slices and Inline Byte Trimming for Timestamp/Field Decoding
+
+**Learning:** Declaring slice literals (such as `[]string{...}`) inside hot decoding functions forces Go escape analysis to allocate the slice on the heap on every call. Moving layout slices to static package-level variables and placing the standard wire format (`"2006-01-02-15.04.05.000000"`) first in the layout list eliminates failed `time.Parse` attempts and slice allocation overhead. Additionally, replacing `bytes.TrimRight(buf, " ")` with an inline byte-trimming loop (`for len(buf) > 0 && buf[len(buf)-1] == ' '`) prevents stack slice buffers from escaping to the heap. This speeds up timestamp field decoding by 3.3x-4.0x (2341 ns -> 578 ns/op) and reduces memory consumption by 72% (616 B -> 168 B/op, 12 -> 4 allocs/op).
+**Action:** Always declare multi-element layout lists as package-level static variables ordered by expected frequency, and use inline byte slice slicing for space trimming instead of passing stack buffers to external helper functions like `bytes.TrimRight`.

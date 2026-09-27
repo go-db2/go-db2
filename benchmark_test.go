@@ -74,6 +74,40 @@ func BenchmarkDecodeField_VarChar(b *testing.B) {
 	}
 }
 
+func BenchmarkDecodeField_Char(b *testing.B) {
+	// 10-char fixed CHAR field padded with trailing spaces
+	data := []byte("IBM DB2   ")
+	ps := []byte{0x00, 0x0A}
+	endian := binary.BigEndian
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := bytes.NewReader(data)
+		_, err := converters.DecodeField(converters.DRDATypeChar, ps, r, endian)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDecodeField_Timestamp(b *testing.B) {
+	// Standard 26-char Db2 timestamp "2026-03-30-12.34.56.789012"
+	data := []byte("2026-03-30-12.34.56.789012")
+	ps := []byte{0x00, 0x1A}
+	endian := binary.BigEndian
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := bytes.NewReader(data)
+		_, err := converters.DecodeField(converters.DRDATypeTimestamp, ps, r, endian)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDecodeField_PackedDecimal(b *testing.B) {
 	// 123456.78 in packed decimal (precision 8, scale 2 -> 5 bytes: 0x01, 0x23, 0x45, 0x67, 0x8C)
 	data := []byte{0x01, 0x23, 0x45, 0x67, 0x8C}

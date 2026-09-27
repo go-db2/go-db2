@@ -84,6 +84,21 @@ const (
 	DRDATypeNDecFloat uint8 = 0xBB
 )
 
+// Optimization: Static pre-ordered layout list for Db2 timestamp parsing to eliminate per-field slice heap allocations and put standard Db2 format first.
+var timestampLayouts = []string{
+	"2006-01-02-15.04.05.000000",
+	"2006-01-02 15:04:05.000000",
+	"2006-01-02-15.04.05.000000-07:00",
+	"2006-01-02-15.04.05.000000+07:00",
+	"2006-01-02-15.04.05-07:00",
+	"2006-01-02-15.04.05+07:00",
+	"2006-01-02-15.04.05",
+	"2006-01-02 15:04:05.000000-07:00",
+	"2006-01-02 15:04:05",
+	time.RFC3339Nano,
+	time.RFC3339,
+}
+
 // IsNullableDRDAType returns true if the DRDA wire type supports NULL indicators.
 func IsNullableDRDAType(t uint8) bool {
 	switch t {
@@ -147,7 +162,10 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
 		}
-		return string(bytes.TrimRight(buf, " ")), nil
+		for len(buf) > 0 && buf[len(buf)-1] == ' ' {
+			buf = buf[:len(buf)-1]
+		}
+		return string(buf), nil
 
 	case DRDATypeGraphic, DRDATypeNGraphic:
 		charLen := int(binary.BigEndian.Uint16(ps))
@@ -282,9 +300,10 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
 		}
-		t, err := time.Parse("2006-01-02", string(buf))
+		s := string(buf)
+		t, err := time.Parse("2006-01-02", s)
 		if err != nil {
-			return string(buf), nil
+			return s, nil
 		}
 		return t, nil
 
@@ -314,21 +333,11 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
 		}
-		s := string(bytes.TrimRight(buf, " "))
-		layouts := []string{
-			"2006-01-02-15.04.05.000000-07:00",
-			"2006-01-02-15.04.05.000000+07:00",
-			"2006-01-02-15.04.05-07:00",
-			"2006-01-02-15.04.05+07:00",
-			"2006-01-02-15.04.05.000000",
-			"2006-01-02-15.04.05",
-			"2006-01-02 15:04:05.000000-07:00",
-			"2006-01-02 15:04:05.000000",
-			"2006-01-02 15:04:05",
-			time.RFC3339Nano,
-			time.RFC3339,
+		for len(buf) > 0 && buf[len(buf)-1] == ' ' {
+			buf = buf[:len(buf)-1]
 		}
-		for _, layout := range layouts {
+		s := string(buf)
+		for _, layout := range timestampLayouts {
 			if t, err := time.Parse(layout, s); err == nil {
 				return t, nil
 			}
@@ -349,12 +358,11 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		return DecodeDFP(buf)
 
 	case DRDATypeVarBinary, DRDATypeNVarBinary, DRDATypeVarByte, DRDATypeNVarByte:
-		var lenBuf [2]byte
-		if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
+		rawLen, err := read2Bytes(r, binary.BigEndian)
+		if err != nil {
 			return nil, err
 		}
-		ln := int(binary.BigEndian.Uint16(lenBuf[:]))
-		buf := make([]byte, ln)
+		buf := make([]byte, int(rawLen))
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
 		}
