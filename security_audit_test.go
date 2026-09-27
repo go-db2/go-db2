@@ -628,4 +628,39 @@ func TestSecurity_ResetSession_OptimizationAndErrorHandling(t *testing.T) {
 	}
 }
 
+// 19. SEC-19: Multi-Group ParseQRYDSC Descriptor Parsing for >84 Query Columns
+func TestSecurity_ParseQRYDSC_MultiGroupOver84Columns(t *testing.T) {
+	numCols := 100 // Exceeds single FDODSC group limit of 84
+	var payload []byte
+
+	for i := 0; i < numCols; {
+		chunkSize := numCols - i
+		if chunkSize > 84 {
+			chunkSize = 84
+		}
+		groupLen := (1 + chunkSize) * 3
+		payload = append(payload, byte(groupLen), 0x76, 0xD0)
+		for j := 0; j < chunkSize; j++ {
+			colIdx := i + j
+			payload = append(payload, byte(colIdx%256), 0x01, 0x02)
+		}
+		i += chunkSize
+	}
+
+	fields, err := network.ParseQRYDSC(payload)
+	if err != nil {
+		t.Fatalf("ParseQRYDSC failed for %d columns across multiple descriptor groups: %v", numCols, err)
+	}
+
+	if len(fields) != numCols {
+		t.Fatalf("expected %d field descriptors extracted, got %d (columns truncated!)", numCols, len(fields))
+	}
+
+	for i, f := range fields {
+		if f.Type != byte(i%256) {
+			t.Errorf("column %d: expected type %d, got %d", i+1, i%256, f.Type)
+		}
+	}
+}
+
 var _ driver.Stmt = (*Stmt)(nil)

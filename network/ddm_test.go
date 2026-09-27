@@ -102,44 +102,58 @@ func TestPackACCSEC(t *testing.T) {
 }
 
 func makeQRYDSCPayload(numFields int) []byte {
-	// 1 byte length header + 2 bytes prefix (0x76, 0xD0) + 3 bytes per field descriptor
-	totalLen := 1 + 2 + numFields*3
-	buf := make([]byte, totalLen)
-	if totalLen <= 255 {
-		buf[0] = byte(totalLen)
-	} else {
-		buf[0] = 0 // 0 signals ParseQRYDSC to use full slice length
-	}
-	buf[1] = 0x76
-	buf[2] = 0xD0
-
-	offset := 3
-	for i := 0; i < numFields; i++ {
-		buf[offset] = byte(i % 256)
-		buf[offset+1] = 0x01
-		buf[offset+2] = 0x02
-		offset += 3
+	var buf []byte
+	for i := 0; i < numFields; {
+		chunkSize := numFields - i
+		if chunkSize > 84 {
+			chunkSize = 84
+		}
+		groupLen := (1 + chunkSize) * 3
+		buf = append(buf, byte(groupLen), 0x76, 0xD0)
+		for j := 0; j < chunkSize; j++ {
+			fieldIdx := i + j
+			buf = append(buf, byte(fieldIdx%256), 0x01, 0x02)
+		}
+		i += chunkSize
 	}
 	return buf
 }
 
 func TestParseQRYDSC(t *testing.T) {
-	payload := makeQRYDSCPayload(5)
-	fields, err := ParseQRYDSC(payload)
-	if err != nil {
-		t.Fatalf("ParseQRYDSC failed: %v", err)
-	}
-	if len(fields) != 5 {
-		t.Fatalf("expected 5 fields, got %d", len(fields))
-	}
-	for i, f := range fields {
-		if f.Type != byte(i%256) {
-			t.Errorf("field %d: expected type %d, got %d", i, i%256, f.Type)
+	t.Run("SingleGroup_5Fields", func(t *testing.T) {
+		payload := makeQRYDSCPayload(5)
+		fields, err := ParseQRYDSC(payload)
+		if err != nil {
+			t.Fatalf("ParseQRYDSC failed: %v", err)
 		}
-		if len(f.PS) != 2 || f.PS[0] != 0x01 || f.PS[1] != 0x02 {
-			t.Errorf("field %d: unexpected PS %v", i, f.PS)
+		if len(fields) != 5 {
+			t.Fatalf("expected 5 fields, got %d", len(fields))
 		}
-	}
+		for i, f := range fields {
+			if f.Type != byte(i%256) {
+				t.Errorf("field %d: expected type %d, got %d", i, i%256, f.Type)
+			}
+			if len(f.PS) != 2 || f.PS[0] != 0x01 || f.PS[1] != 0x02 {
+				t.Errorf("field %d: unexpected PS %v", i, f.PS)
+			}
+		}
+	})
+
+	t.Run("MultiGroup_100Fields", func(t *testing.T) {
+		payload := makeQRYDSCPayload(100)
+		fields, err := ParseQRYDSC(payload)
+		if err != nil {
+			t.Fatalf("ParseQRYDSC failed for 100 fields: %v", err)
+		}
+		if len(fields) != 100 {
+			t.Fatalf("expected 100 fields, got %d", len(fields))
+		}
+		for i, f := range fields {
+			if f.Type != byte(i%256) {
+				t.Errorf("field %d: expected type %d, got %d", i, i%256, f.Type)
+			}
+		}
+	})
 }
 
 func TestPackPKGNAMCSN(t *testing.T) {

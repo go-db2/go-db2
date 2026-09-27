@@ -781,24 +781,25 @@ func ParseQRYDSC(obj []byte) ([]FieldDescriptor, error) {
 		return nil, errors.New("QRYDSC payload too short")
 	}
 
-	ln := int(obj[0])
-	if ln == 0 || len(obj) < ln {
-		ln = len(obj)
-	}
-
-	data := obj[1:ln]
-	if len(data) >= 2 && data[0] == 0x76 && data[1] == 0xD0 {
-		data = data[2:]
-	}
-
-	count := len(data) / 3
-	fields := make([]FieldDescriptor, count)
-	for i := 0; i < count; i++ {
-		offset := i * 3
-		fields[i] = FieldDescriptor{
-			Type: data[offset],
-			PS:   data[offset+1 : offset+3],
+	var fields []FieldDescriptor
+	pos := 0
+	for pos+3 <= len(obj) {
+		groupLen := int(obj[pos])
+		if groupLen < 3 || pos+groupLen > len(obj) {
+			break
 		}
+		if obj[pos+1] == 0x76 {
+			numFields := groupLen/3 - 1
+			fPos := pos + 3
+			for i := 0; i < numFields && fPos+3 <= pos+groupLen; i++ {
+				fields = append(fields, FieldDescriptor{
+					Type: obj[fPos],
+					PS:   obj[fPos+1 : fPos+3],
+				})
+				fPos += 3
+			}
+		}
+		pos += groupLen
 	}
 
 	return fields, nil
