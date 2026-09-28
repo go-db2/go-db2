@@ -372,14 +372,14 @@ func BenchmarkParseQRYDSC(b *testing.B) {
 func TestParseSQLDARD_TruncatedPayloadBounds(t *testing.T) {
 	// Truncated SQLDARD payload claiming 2 columns, but only enough bytes for 1 column + partial trailing metadata
 	var buf []byte
-	buf = append(buf, 0x01) // Indicator (no SQLCARD, no name)
+	buf = append(buf, 0x01)       // Indicator (no SQLCARD, no name)
 	buf = append(buf, 0x00, 0x02) // numCols = 2
 
 	// Column 1 (16 bytes)
-	buf = append(buf, 0x00, 0x0A) // prec = 10
-	buf = append(buf, 0x00, 0x02) // scale = 2
+	buf = append(buf, 0x00, 0x0A)                                     // prec = 10
+	buf = append(buf, 0x00, 0x02)                                     // scale = 2
 	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04) // length = 4
-	buf = append(buf, 0x01, 0xF4) // sqltype = 500
+	buf = append(buf, 0x01, 0xF4)                                     // sqltype = 500
 
 	// Trailing metadata for Column 1 truncated to 20 bytes (< 29 bytes required)
 	buf = append(buf, make([]byte, 20)...)
@@ -398,10 +398,10 @@ func TestParseSQLDARD_TruncatedPayloadBounds(t *testing.T) {
 func TestParseSQLCARD_TruncatedPayloadBounds(t *testing.T) {
 	// Construct SQLCARD payload with truncated RDB name length
 	var buf []byte
-	buf = append(buf, 0x00) // Non-null indicator
+	buf = append(buf, 0x00)                   // Non-null indicator
 	buf = append(buf, 0x00, 0x00, 0x00, 0x00) // SQLCODE = 0
-	buf = append(buf, []byte("00000")...) // SQLSTATE
-	buf = append(buf, make([]byte, 45)...) // Header padding to exceed 36+18 threshold
+	buf = append(buf, []byte("00000")...)     // SQLSTATE
+	buf = append(buf, make([]byte, 45)...)    // Header padding to exceed 36+18 threshold
 
 	// RDB name length says 100 bytes, but payload ends immediately
 	buf = append(buf, 0x00, 100)
