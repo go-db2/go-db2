@@ -613,25 +613,39 @@ type FieldDescriptor struct {
 	PS   []byte
 }
 
-func parseString(b []byte) (string, []byte) {
+func parseStringBytes(b []byte) ([]byte, []byte) {
 	if len(b) < 2 {
-		return "", nil
+		return nil, nil
 	}
 	ln := int(binary.BigEndian.Uint16(b[:2]))
 	if ln == 0 || len(b) < 2+ln {
-		return "", b[2:]
+		return nil, b[2:]
 	}
-	data := b[2 : 2+ln]
-	return string(data), b[2+ln:]
+	return b[2 : 2+ln], b[2+ln:]
 }
 
-func parseName(b []byte) (string, []byte) {
-	s1, rest1 := parseString(b)
-	s2, rest2 := parseString(rest1)
-	if s1 != "" {
-		return s1, rest2
+func skipString(b []byte) []byte {
+	if len(b) < 2 {
+		return nil
 	}
-	return s2, rest2
+	ln := int(binary.BigEndian.Uint16(b[:2]))
+	if ln == 0 || len(b) < 2+ln {
+		return b[2:]
+	}
+	return b[2+ln:]
+}
+
+func parseNameBytes(b []byte) ([]byte, []byte) {
+	b1, rest1 := parseStringBytes(b)
+	b2, rest2 := parseStringBytes(rest1)
+	if len(b1) > 0 {
+		return b1, rest2
+	}
+	return b2, rest2
+}
+
+func skipName(b []byte) []byte {
+	return skipString(skipString(b))
 }
 
 // isPrintableUTF8 reports whether b is valid UTF-8 holding no control characters.
@@ -693,8 +707,8 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 	if rest[0] == 0x00 {
 		if len(rest) > 13 {
 			rest = rest[13:]
-			_, rest = parseString(rest)
-			_, rest = parseName(rest)
+			rest = skipString(rest)
+			rest = skipName(rest)
 		}
 	} else {
 		rest = rest[1:]
@@ -736,19 +750,18 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 			if hasName {
 				if len(rest) >= 9 {
 					rest = rest[9:]
-					var name string
-					name, rest = parseName(rest)
-					label, r2 := parseName(rest)
+					var nameBytes []byte
+					nameBytes, rest = parseNameBytes(rest)
+					labelBytes, r2 := parseNameBytes(rest)
 					rest = r2
-					_, r3 := parseName(rest)
-					rest = r3
+					rest = skipName(rest)
 					if len(rest) >= 7 {
 						rest = rest[7:]
 					}
-					if label != "" {
-						colName = label
-					} else {
-						colName = name
+					if len(labelBytes) > 0 {
+						colName = string(labelBytes)
+					} else if len(nameBytes) > 0 {
+						colName = string(nameBytes)
 					}
 				}
 			} else {
@@ -818,7 +831,12 @@ func ParseSQLCARD(obj []byte, endian binary.ByteOrder) (int32, string, string, i
 	}
 
 	sqlcode := int32(endian.Uint32(obj[1:5]))
-	sqlstate := string(obj[5:10])
+	var sqlstate string
+	if bytes.Equal(obj[5:10], []byte{'0', '0', '0', '0', '0'}) {
+		sqlstate = "00000"
+	} else {
+		sqlstate = string(obj[5:10])
+	}
 
 	var rowsAffected int64
 	if len(obj) >= 26 {
