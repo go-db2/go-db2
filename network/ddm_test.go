@@ -368,3 +368,52 @@ func BenchmarkParseQRYDSC(b *testing.B) {
 		})
 	}
 }
+
+func TestParseSQLDARD_TruncatedPayloadBounds(t *testing.T) {
+	// Truncated SQLDARD payload claiming 2 columns, but only enough bytes for 1 column + partial trailing metadata
+	var buf []byte
+	buf = append(buf, 0x01) // Indicator (no SQLCARD, no name)
+	buf = append(buf, 0x00, 0x02) // numCols = 2
+
+	// Column 1 (16 bytes)
+	buf = append(buf, 0x00, 0x0A) // prec = 10
+	buf = append(buf, 0x00, 0x02) // scale = 2
+	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04) // length = 4
+	buf = append(buf, 0x01, 0xF4) // sqltype = 500
+
+	// Trailing metadata for Column 1 truncated to 20 bytes (< 29 bytes required)
+	buf = append(buf, make([]byte, 20)...)
+
+	cols, err := ParseSQLDARD(buf, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("unexpected error parsing truncated SQLDARD: %v", err)
+	}
+
+	// Should safely parse 1 column and not attempt to parse column 2 from truncated trailing bytes
+	if len(cols) != 1 {
+		t.Fatalf("expected 1 column parsed, got %d", len(cols))
+	}
+}
+
+func TestParseSQLCARD_TruncatedPayloadBounds(t *testing.T) {
+	// Construct SQLCARD payload with truncated RDB name length
+	var buf []byte
+	buf = append(buf, 0x00) // Non-null indicator
+	buf = append(buf, 0x00, 0x00, 0x00, 0x00) // SQLCODE = 0
+	buf = append(buf, []byte("00000")...) // SQLSTATE
+	buf = append(buf, make([]byte, 45)...) // Header padding to exceed 36+18 threshold
+
+	// RDB name length says 100 bytes, but payload ends immediately
+	buf = append(buf, 0x00, 100)
+
+	code, state, msg, _, err := ParseSQLCARD(buf, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if code != 0 || state != "00000" {
+		t.Fatalf("unexpected code/state: %d / %s", code, state)
+	}
+	if msg != "" {
+		t.Fatalf("expected empty message for truncated RDB name, got %q", msg)
+	}
+}

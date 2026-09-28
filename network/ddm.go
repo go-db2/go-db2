@@ -618,8 +618,11 @@ func parseString(b []byte) (string, []byte) {
 		return "", nil
 	}
 	ln := int(binary.BigEndian.Uint16(b[:2]))
-	if ln == 0 || len(b) < 2+ln {
+	if ln == 0 {
 		return "", b[2:]
+	}
+	if len(b) < 2+ln {
+		return "", nil
 	}
 	data := b[2 : 2+ln]
 	return string(data), b[2+ln:]
@@ -676,6 +679,9 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 				ln := int(binary.BigEndian.Uint16(rest[:2]))
 				if len(rest) >= 2+ln {
 					rest = rest[2+ln:]
+				} else {
+					rest = nil
+					break
 				}
 			}
 			if len(rest) > 0 && rest[0] == 0xFF {
@@ -744,16 +750,22 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 					rest = r3
 					if len(rest) >= 7 {
 						rest = rest[7:]
+					} else {
+						rest = nil
 					}
 					if label != "" {
 						colName = label
 					} else {
 						colName = name
 					}
+				} else {
+					rest = nil
 				}
 			} else {
 				if len(rest) >= 29 {
 					rest = rest[29:]
+				} else {
+					rest = nil
 				}
 			}
 		}
@@ -837,6 +849,8 @@ func ParseSQLCARD(obj []byte, endian binary.ByteOrder) (int32, string, string, i
 			rdbLen := int(binary.BigEndian.Uint16(rest[:2]))
 			if len(rest) >= 2+rdbLen {
 				rest = rest[2+rdbLen:]
+			} else {
+				rest = nil
 			}
 		}
 		// Extract error message
