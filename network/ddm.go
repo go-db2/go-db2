@@ -618,8 +618,11 @@ func parseStringBytes(b []byte) ([]byte, []byte) {
 		return nil, nil
 	}
 	ln := int(binary.BigEndian.Uint16(b[:2]))
-	if ln == 0 || len(b) < 2+ln {
+	if ln == 0 {
 		return nil, b[2:]
+	}
+	if len(b) < 2+ln {
+		return nil, nil
 	}
 	return b[2 : 2+ln], b[2+ln:]
 }
@@ -629,8 +632,11 @@ func skipString(b []byte) []byte {
 		return nil
 	}
 	ln := int(binary.BigEndian.Uint16(b[:2]))
-	if ln == 0 || len(b) < 2+ln {
+	if ln == 0 {
 		return b[2:]
+	}
+	if len(b) < 2+ln {
+		return nil
 	}
 	return b[2+ln:]
 }
