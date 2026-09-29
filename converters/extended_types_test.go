@@ -93,6 +93,10 @@ func TestEncodeDFP_EdgeCasesAndValidation(t *testing.T) {
 		{"NonDigitCharacters", "12a3.4b5", 8},
 		{"InvalidString", "invalid", 8},
 		{"NonDigitCharacters_34", "98x76.5y4", 16},
+		{"InvalidExponentSyntax", "1.23E+abc", 8},
+		{"ExponentOverflow", "1.23E+999999999999999999999", 8},
+		{"ExponentOutOfRangeHigh", "1.23E+500", 8},
+		{"ExponentOutOfRangeLow", "1.23E-500", 8},
 	}
 
 	for _, tc := range invalidCases {

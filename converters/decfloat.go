@@ -282,7 +282,10 @@ func EncodeDFP(val any, nBytes int) ([]byte, error) {
 	exp := 0
 
 	if idx := strings.IndexAny(str, "eE"); idx != -1 {
-		eVal, _ := strconv.Atoi(str[idx+1:])
+		eVal, err := strconv.Atoi(str[idx+1:])
+		if err != nil {
+			return nil, fmt.Errorf("db2: invalid decimal floating-point exponent in %q: %w", val, err)
+		}
 		exp += eVal
 		str = str[:idx]
 	}
@@ -326,6 +329,10 @@ func EncodeDFP(val any, nBytes int) ([]byte, error) {
 	}
 
 	biasedExp := exp + bias
+	maxBiasedExp := 3*(1<<expContBits) - 1
+	if biasedExp < 0 || biasedExp > maxBiasedExp {
+		return nil, fmt.Errorf("db2: decimal floating-point exponent out of range in %q", val)
+	}
 	var g int
 	if leadingDigit >= 8 {
 		g = 0x18 | (((biasedExp >> expContBits) & 0x03) << 1) | (leadingDigit - 8)

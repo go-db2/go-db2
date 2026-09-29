@@ -204,6 +204,43 @@ func TestAcquireKerberosToken_Keytab(t *testing.T) {
 	}
 }
 
+func TestParseKeytab_HighBitNumComponents(t *testing.T) {
+	// Construct keytab entry body with numComponents = 1 (0x0001)
+	var entryBody []byte
+	entryBody = append(entryBody, 0x00, 0x01) // numComponents = 1
+	entryBody = append(entryBody, 0x00, 0x04) // realmLen = 4
+	entryBody = append(entryBody, []byte("TEST")...)
+	// Add 1 component ("comp1")
+	entryBody = append(entryBody, 0x00, 0x05)
+	entryBody = append(entryBody, []byte("comp1")...)
+	// Trailing metadata padding (name_type 4, timestamp 4, kvno8 1, keytype 2, keylen 2, key 16, kvno32 4)
+	entryBody = append(entryBody, make([]byte, 33)...)
+
+	// Wrap in keytab v2 format
+	var data []byte
+	data = append(data, 0x05, 0x02) // Keytab v2 header
+	eLen := uint32(len(entryBody))
+	data = append(data, byte(eLen>>24), byte(eLen>>16), byte(eLen>>8), byte(eLen&0xFF))
+	data = append(data, entryBody...)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("ParseKeytab panicked: %v", r)
+		}
+	}()
+
+	entries, err := ParseKeytab(data)
+	if err != nil {
+		t.Fatalf("unexpected error parsing keytab: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Principal != "comp1@TEST" {
+		t.Fatalf("expected principal 'comp1@TEST', got %q", entries[0].Principal)
+	}
+}
+
 func TestParseKeytab_MalformedNegativeLength(t *testing.T) {
 	// Construct keytab header (v2) followed by a 4-byte int32 MinInt32 (-2147483648 / 0x80000000)
 	minInt32Data := []byte{0x05, 0x02, 0x80, 0x00, 0x00, 0x00}

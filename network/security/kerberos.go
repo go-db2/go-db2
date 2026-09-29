@@ -139,16 +139,16 @@ func ParseKeytab(data []byte) ([]KeytabEntry, error) {
 			continue
 		}
 		pos := 0
-		numComponents := int(int16(entryData[pos])<<8 | int16(entryData[pos+1]))
+		numComponents := int(uint16(entryData[pos])<<8 | uint16(entryData[pos+1]))
 		pos += 2
 
 		// Parse realm
 		if pos+2 > len(entryData) {
 			continue
 		}
-		realmLen := int(entryData[pos])<<8 | int(entryData[pos+1])
+		realmLen := int(uint16(entryData[pos])<<8 | uint16(entryData[pos+1]))
 		pos += 2
-		if pos+realmLen > len(entryData) {
+		if realmLen < 0 || realmLen > len(entryData)-pos {
 			continue
 		}
 		realm := string(entryData[pos : pos+realmLen])
@@ -160,9 +160,9 @@ func ParseKeytab(data []byte) ([]KeytabEntry, error) {
 			if pos+2 > len(entryData) {
 				break
 			}
-			cLen := int(entryData[pos])<<8 | int(entryData[pos+1])
+			cLen := int(uint16(entryData[pos])<<8 | uint16(entryData[pos+1]))
 			pos += 2
-			if pos+cLen > len(entryData) {
+			if cLen < 0 || cLen > len(entryData)-pos {
 				break
 			}
 			components = append(components, string(entryData[pos:pos+cLen]))
@@ -188,9 +188,9 @@ func ParseKeytab(data []byte) ([]KeytabEntry, error) {
 		}
 		keyType := uint16(entryData[pos])<<8 | uint16(entryData[pos+1])
 		pos += 2
-		keyLen := int(entryData[pos])<<8 | int(entryData[pos+1])
+		keyLen := int(uint16(entryData[pos])<<8 | uint16(entryData[pos+1]))
 		pos += 2
-		if pos+keyLen > len(entryData) {
+		if keyLen < 0 || keyLen > len(entryData)-pos {
 			continue
 		}
 		key := make([]byte, keyLen)
