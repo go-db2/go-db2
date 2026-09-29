@@ -1108,10 +1108,10 @@ func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) 
 		row := make([]any, numFields)
 		for i := 0; i < numFields; i++ {
 			f := fields[i]
-			val, err := converters.DecodeField(f.Type, f.PS, reader, endian)
+			val, err := converters.DecodeField(f.Type, f.PS[:], reader, endian)
 			if err != nil {
 				return nil, fmt.Errorf("failed to decode row %d column %d (Type=0x%02X, PS=%x, RemainingBytes=%d): %w",
-					len(rows)+1, i+1, f.Type, f.PS, reader.Len(), err)
+					len(rows)+1, i+1, f.Type, f.PS[:], reader.Len(), err)
 			}
 			row[i] = val
 		}

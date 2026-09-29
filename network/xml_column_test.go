@@ -14,8 +14,8 @@ import (
 // Db2 12.1 server sent for SELECT ID, C_XML FROM a one-row table.
 func TestXMLColumnIsStitchedFromEXTDTA(t *testing.T) {
 	fields := []FieldDescriptor{
-		{Type: converters.DRDATypeInteger, PS: []byte{0x00, 0x04}},
-		{Type: 0xC7, PS: []byte{0x80, 0x09}},
+		{Type: converters.DRDATypeInteger, PS: [2]byte{0x00, 0x04}},
+		{Type: 0xC7, PS: [2]byte{0x80, 0x09}},
 	}
 	row := []byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 	extdta := [][]byte{append([]byte{0x00}, `<root><item id="1">x</item></root>`...)}
@@ -23,7 +23,7 @@ func TestXMLColumnIsStitchedFromEXTDTA(t *testing.T) {
 	r := bytes.NewReader(row)
 	decoded := make([]any, len(fields))
 	for i, f := range fields {
-		v, err := converters.DecodeField(f.Type, f.PS, r, binary.LittleEndian)
+		v, err := converters.DecodeField(f.Type, f.PS[:], r, binary.LittleEndian)
 		if err != nil {
 			t.Fatalf("decoding column %d: %v", i, err)
 		}

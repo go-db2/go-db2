@@ -610,7 +610,7 @@ type ColumnDescription struct {
 // FieldDescriptor represents a single column descriptor from QRYDSC.
 type FieldDescriptor struct {
 	Type uint8
-	PS   []byte
+	PS   [2]byte
 }
 
 func parseStringBytes(b []byte) ([]byte, []byte) {
@@ -809,8 +809,22 @@ func ParseQRYDSC(obj []byte) ([]FieldDescriptor, error) {
 		return nil, errors.New("QRYDSC payload too short")
 	}
 
-	var fields []FieldDescriptor
+	// First pass: Calculate total field count to allocate slice with exact capacity once
+	totalFields := 0
 	pos := 0
+	for pos+3 <= len(obj) {
+		groupLen := int(obj[pos])
+		if groupLen < 3 || pos+groupLen > len(obj) {
+			break
+		}
+		if obj[pos+1] == 0x76 {
+			totalFields += groupLen/3 - 1
+		}
+		pos += groupLen
+	}
+
+	fields := make([]FieldDescriptor, 0, totalFields)
+	pos = 0
 	for pos+3 <= len(obj) {
 		groupLen := int(obj[pos])
 		if groupLen < 3 || pos+groupLen > len(obj) {
@@ -822,7 +836,7 @@ func ParseQRYDSC(obj []byte) ([]FieldDescriptor, error) {
 			for i := 0; i < numFields && fPos+3 <= pos+groupLen; i++ {
 				fields = append(fields, FieldDescriptor{
 					Type: obj[fPos],
-					PS:   obj[fPos+1 : fPos+3],
+					PS:   [2]byte{obj[fPos+1], obj[fPos+2]},
 				})
 				fPos += 3
 			}

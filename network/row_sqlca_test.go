@@ -29,7 +29,7 @@ func rowSQLCA(code int32, state string) []byte {
 // eliminated from an aggregate, which Db2 12.1 sent for an AVG/STDDEV row)
 // starts with a full SQLCA instead of 0xFF, and must still be decoded.
 func TestDecodeRowsWithWarningSQLCA(t *testing.T) {
-	fields := []FieldDescriptor{{Type: converters.DRDATypeInteger, PS: []byte{0x00, 0x04}}}
+	fields := []FieldDescriptor{{Type: converters.DRDATypeInteger, PS: [2]byte{0x00, 0x04}}}
 
 	var data []byte
 	data = append(data, rowSQLCA(0, "01003")...)
@@ -48,7 +48,7 @@ func TestDecodeRowsWithWarningSQLCA(t *testing.T) {
 
 // A row the server attaches an error to must fail the query, not end it.
 func TestDecodeRowsWithErrorSQLCA(t *testing.T) {
-	fields := []FieldDescriptor{{Type: converters.DRDATypeInteger, PS: []byte{0x00, 0x04}}}
+	fields := []FieldDescriptor{{Type: converters.DRDATypeInteger, PS: [2]byte{0x00, 0x04}}}
 
 	var data []byte
 	data = append(data, integerRows(1)...)
@@ -63,8 +63,8 @@ func TestDecodeRowsWithErrorSQLCA(t *testing.T) {
 
 func BenchmarkDecodeRows(b *testing.B) {
 	fields := []FieldDescriptor{
-		{Type: converters.DRDATypeInteger, PS: []byte{0x00, 0x04}},
-		{Type: converters.DRDATypeVarChar, PS: []byte{0x00, 0x20}},
+		{Type: converters.DRDATypeInteger, PS: [2]byte{0x00, 0x04}},
+		{Type: converters.DRDATypeVarChar, PS: [2]byte{0x00, 0x20}},
 	}
 	// Create payload with 100 rows
 	var data []byte
