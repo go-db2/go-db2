@@ -72,3 +72,8 @@
 
 **Learning:** Storing fixed-length metadata like 2-byte precision/scale attributes in a slice (`PS []byte`) in structs forces slice header overhead and subslice heap allocations per field during DRDA query descriptor (`QRYDSC`) parsing. Changing `PS` to a fixed array `[2]byte` and using a fast first pass over `ParseQRYDSC` to calculate total field count allows pre-allocating the result slice with exact capacity (`make([]FieldDescriptor, 0, totalFields)`). This reduces allocations by 75-85% (from 4-7 allocs down to 1 alloc/op), cuts memory consumption by 95-96% (e.g. 4448B -> 192B for 60 columns), and speeds up query descriptor parsing by 4.5x-5.7x.
 **Action:** For binary protocol metadata parsers with fixed-width attributes, store fixed fields in inline arrays rather than byte slices and calculate slice capacity with a lightweight initial pass to achieve single-allocation parsing.
+
+## 2026-09-30 - Byte-by-Byte io.ByteReader Interface Loop Overhead vs Slice Escape Analysis
+
+**Learning:** Attempting to prevent local stack buffers (`var stackBuf [64]byte`) from escaping to the heap by reading byte-by-byte via `br.ReadByte()` in a loop introduces ~3-5ns per-byte interface dispatch overhead. For multi-byte fields (e.g. 12-64 byte VarChar/Char/Date), making 12-64 interface calls slows down field decoding by ~37% (265.5 ns -> 364.7 ns/op), which completely outweighs the ~15-20ns cost of a single 64-byte heap allocation in `io.ReadFull`.
+**Action:** Do NOT use byte-by-byte interface loops (`ReadByte()`) for multi-byte slice buffers (>2-4 bytes). Keep `io.ReadFull(r, buf)` or block reads when reading multi-byte payloads from `io.Reader`.
