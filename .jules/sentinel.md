@@ -33,3 +33,9 @@
 **Vulnerability:** `SetClientInfo` and `ResetClientInfo` escaped single quotes but did not strip carriage returns (`\r`) or line feeds (`\n`), allowing multi-line register injection and log tampering (CWE-117) in Db2 session audit logs.
 **Learning:** Client information special registers (`SET CLIENT APPLNAME`, `SET CLIENT USERID`, etc.) constructed dynamically must strip control characters before string formatting and session config state updates to prevent multi-line log injection and session state corruption.
 **Prevention:** Always strip `\x00`, `\r`, and `\n` via `sanitizeClientRegister` before storing client info registers in `SessionConfig` and formatting SQL special register statements.
+
+## 2026-09-30 - DRDA Level 5 Parameter Stream Alignment & FDODSC/FDODTA Length Synchronization
+**Vulnerability:** Attempting to alter parameter byte alignment in `BuildSQLDTA` (either by appending trailing `0x00` padding or by stripping word-alignment padding) caused protocol mismatch errors (`SQLCODE=-30020 SQLSTATE=58009 0x220E DTAMCHRM`) or broke multi-DSS packet continuation in live Db2 environments.
+**Learning:** In the DRDA Level 5 / FD:OCA wire protocol, `FDODSC` descriptors and `FDODTA` data blocks have strict length coupling. Modifying `FDODTA` byte lengths without corresponding descriptor adjustments triggers `0x220E` (Data Descriptor Mismatch), while omitting word-alignment padding can violate DRDA DSS framing rules. Low-level wire framing adjustments cannot be performed via heuristic padding modifications without packet-level verification (`db2trc` / protocol traces).
+**Prevention:** Do not modify `BuildSQLDTA` parameter payload framing without end-to-end packet validation against live Db2 instances. Keep parameter descriptors and payload blocks strictly synchronized, ensuring all DSS frames conform to 2-byte word boundaries without corrupting individual parameter offsets.
+
