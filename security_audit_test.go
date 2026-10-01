@@ -663,4 +663,57 @@ func TestSecurity_ParseQRYDSC_MultiGroupOver84Columns(t *testing.T) {
 	}
 }
 
+// 20. SEC-20: CRLF & Control Character Sanitization in Client Audit Special Registers
+func TestSecurity_ClientInfo_CRLF_Sanitization(t *testing.T) {
+	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+		switch cp {
+		case network.CodePointEXCSQLSET, network.CodePointRDBCMM:
+			return writeSQLCARDOK(c)
+		}
+		return false
+	})
+
+	db, err := sql.Open("db2", "db2://BASEUSER:password@"+srv.addr+"/TESTDB?ssl=false")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	driverConn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("db.Conn failed: %v", err)
+	}
+	defer driverConn.Close()
+
+	var conn *Conn
+	err = driverConn.Raw(func(raw any) error {
+		if c, ok := raw.(*Conn); ok {
+			conn = c
+		}
+		return nil
+	})
+	if err != nil || conn == nil {
+		t.Fatalf("failed to extract *Conn: %v", err)
+	}
+
+	info := ClientInfo{
+		ApplicationName:  "audit\r\napp",
+		WorkstationName:  "node\nhost",
+		UserID:           "user\rname",
+		Accounting:       "acct\r\n'dept",
+		CorrelationToken: "corr\n'token",
+	}
+
+	if err := conn.SetClientInfo(ctx, info); err != nil {
+		t.Fatalf("SetClientInfo failed: %v", err)
+	}
+
+	if !conn.session.ClientInfoMatches("auditapp", "nodehost", "username", "acct'dept", "corr'token") {
+		t.Fatal("ClientInfo failed to strip CRLF control characters and preserve unescaped string in memory")
+	}
+}
+
 var _ driver.Stmt = (*Stmt)(nil)

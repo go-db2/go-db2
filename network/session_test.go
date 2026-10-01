@@ -199,6 +199,8 @@ func TestEscapeSingleQuotes(t *testing.T) {
 		{"my'app", "my''app"},
 		{"my\x00app", "myapp"},
 		{"my\x00'app", "my''app"},
+		{"my\r\napp", "myapp"},
+		{"my\n'app\r", "my''app"},
 	}
 
 	for _, tt := range tests {

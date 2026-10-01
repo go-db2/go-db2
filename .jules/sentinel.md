@@ -28,3 +28,8 @@
 **Vulnerability:** `ResetSession` in `Conn` did not restore initial connection user identity, client audit info, or auto-commit mode when pooled connections were returned to `database/sql` connection pool, allowing subsequent tenant requests assigned the same pooled connection to execute under stale user privileges and audit registers.
 **Learning:** In connection pooling, any session-level mutation (switched user identity, audit registers, auto-commit mode) persists across requests unless `ResetSession` explicitly resets session user, client info registers, and auto-commit back to the initial connection configuration (`Config`).
 **Prevention:** Always implement `ResetSession` in `driver.SessionResetter` to restore base connection configuration (`c.cfg.User`, client audit registers, and auto-commit mode) before returning connections to the pool, or return `driver.ErrBadConn` to discard contaminated connections if restoration fails.
+
+## 2026-09-23 - CRLF Control Character Sanitization in Session Audit Registers
+**Vulnerability:** `SetClientInfo` and `ResetClientInfo` escaped single quotes but did not strip carriage returns (`\r`) or line feeds (`\n`), allowing multi-line register injection and log tampering (CWE-117) in Db2 session audit logs.
+**Learning:** Client information special registers (`SET CLIENT APPLNAME`, `SET CLIENT USERID`, etc.) constructed dynamically must strip control characters before string formatting and session config state updates to prevent multi-line log injection and session state corruption.
+**Prevention:** Always strip `\x00`, `\r`, and `\n` via `sanitizeClientRegister` before storing client info registers in `SessionConfig` and formatting SQL special register statements.

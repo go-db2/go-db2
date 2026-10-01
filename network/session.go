@@ -1398,6 +1398,12 @@ func (s *Session) ClientInfoMatches(applName, wrkstnName, userid, acctng, corrTo
 
 // ResetClientInfo restores all client information special registers back to the given base configuration.
 func (s *Session) ResetClientInfo(ctx context.Context, applName, wrkstnName, userid, acctng, corrToken string) error {
+	applName = sanitizeClientRegister(applName)
+	wrkstnName = sanitizeClientRegister(wrkstnName)
+	userid = sanitizeClientRegister(userid)
+	acctng = sanitizeClientRegister(acctng)
+	corrToken = sanitizeClientRegister(corrToken)
+
 	s.mu.Lock()
 	prevAppl := s.cfg.ClientApplName
 	prevWrkstn := s.cfg.ClientWrkstnName
@@ -1480,9 +1486,14 @@ func (s *Session) SetClientInfo(ctx context.Context, applName, wrkstnName, useri
 	return s.ResetClientInfo(ctx, targetAppl, targetWrkstn, targetUserid, targetAcctng, targetCorr)
 }
 
-func escapeSingleQuotes(val string) string {
+func sanitizeClientRegister(val string) string {
 	val = strings.ReplaceAll(val, "\x00", "")
-	return strings.ReplaceAll(val, "'", "''")
+	val = strings.ReplaceAll(val, "\r", "")
+	return strings.ReplaceAll(val, "\n", "")
+}
+
+func escapeSingleQuotes(val string) string {
+	return strings.ReplaceAll(sanitizeClientRegister(val), "'", "''")
 }
 
 // Interrupt requests cancellation of any active statement on the session via SQLINTR.
