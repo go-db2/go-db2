@@ -1,6 +1,7 @@
 package converters
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
@@ -325,43 +326,61 @@ func encodePackedDecimalParam(val any, prec, scale int) ([]byte, error) {
 }
 
 // appendPackedDecimalParam encodes a Go value into IBM DRDA packed decimal parameter format and appends to dst.
-// Optimization: Directly constructs packed decimal nibble bytes onto dst without intermediate slice allocations.
+// Optimization: Uses local stack buffer formatting for numeric types to eliminate intermediate string allocations.
 func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, error) {
 	if prec < 0 || scale < 0 || prec > 31 || scale > prec {
 		return dst, fmt.Errorf("db2: invalid decimal precision (%d) or scale (%d)", prec, scale)
 	}
 
+	var stackBuf [64]byte
+	var buf []byte
 	var str string
+
 	switch v := val.(type) {
 	case string:
 		str = v
 	case float64:
-		str = strconv.FormatFloat(v, 'f', -1, 64)
+		buf = strconv.AppendFloat(stackBuf[:0], v, 'f', -1, 64)
 	case float32:
-		str = strconv.FormatFloat(float64(v), 'f', -1, 32)
+		buf = strconv.AppendFloat(stackBuf[:0], float64(v), 'f', -1, 32)
 	case int:
-		str = strconv.Itoa(v)
+		buf = strconv.AppendInt(stackBuf[:0], int64(v), 10)
 	case int64:
-		str = strconv.FormatInt(v, 10)
+		buf = strconv.AppendInt(stackBuf[:0], v, 10)
 	case int32:
-		str = strconv.FormatInt(int64(v), 10)
+		buf = strconv.AppendInt(stackBuf[:0], int64(v), 10)
 	default:
 		str = fmt.Sprint(val)
 	}
 
-	negative := len(str) > 0 && str[0] == '-'
-	if negative {
-		str = str[1:]
-	}
+	var negative bool
+	var intPartStr, fracPartStr string
+	var intPartBuf, fracPartBuf []byte
 
-	var intPart, fracPart string
-	dotIdx := strings.IndexByte(str, '.')
-	if dotIdx >= 0 {
-		intPart = str[:dotIdx]
-		fracPart = str[dotIdx+1:]
+	if buf != nil {
+		negative = len(buf) > 0 && buf[0] == '-'
+		if negative {
+			buf = buf[1:]
+		}
+		dotIdx := bytes.IndexByte(buf, '.')
+		if dotIdx >= 0 {
+			intPartBuf = buf[:dotIdx]
+			fracPartBuf = buf[dotIdx+1:]
+		} else {
+			intPartBuf = buf
+		}
 	} else {
-		intPart = str
-		fracPart = ""
+		negative = len(str) > 0 && str[0] == '-'
+		if negative {
+			str = str[1:]
+		}
+		dotIdx := strings.IndexByte(str, '.')
+		if dotIdx >= 0 {
+			intPartStr = str[:dotIdx]
+			fracPartStr = str[dotIdx+1:]
+		} else {
+			intPartStr = str
+		}
 	}
 
 	byteLen := (prec + 2) / 2
@@ -383,15 +402,26 @@ func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, err
 	startIdx := (totalNibbles - 1) - prec
 
 	intDigitsNeeded := prec - scale
-	lenInt := len(intPart)
-	lenFrac := len(fracPart)
+	lenInt := len(intPartBuf)
+	if buf == nil {
+		lenInt = len(intPartStr)
+	}
+	lenFrac := len(fracPartBuf)
+	if buf == nil {
+		lenFrac = len(fracPartStr)
+	}
 
 	for d := 0; d < prec; d++ {
 		var digit byte
 		if d < intDigitsNeeded {
 			idx := lenInt - intDigitsNeeded + d
 			if idx >= 0 && idx < lenInt {
-				c := intPart[idx]
+				var c byte
+				if buf != nil {
+					c = intPartBuf[idx]
+				} else {
+					c = intPartStr[idx]
+				}
 				if c >= '0' && c <= '9' {
 					digit = c - '0'
 				}
@@ -399,7 +429,12 @@ func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, err
 		} else {
 			idx := d - intDigitsNeeded
 			if idx >= 0 && idx < lenFrac {
-				c := fracPart[idx]
+				var c byte
+				if buf != nil {
+					c = fracPartBuf[idx]
+				} else {
+					c = fracPartStr[idx]
+				}
 				if c >= '0' && c <= '9' {
 					digit = c - '0'
 				}
@@ -489,24 +524,26 @@ func toBool(val any) bool {
 	}
 }
 
+// Optimization: Pre-ordered static layouts list for toTime parsing to eliminate per-call slice heap allocations.
+var encoderTimeLayouts = []string{
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05.999999999",
+	"2006-01-02T15:04:05",
+	"2006-01-02-15.04.05.000000",
+	"2006-01-02",
+	"15:04:05",
+	time.RFC3339Nano,
+	time.RFC3339,
+}
+
 func toTime(val any) (time.Time, error) {
 	switch v := val.(type) {
 	case time.Time:
 		return v, nil
 	case string:
 		v = strings.TrimSpace(v)
-		layouts := []string{
-			"2006-01-02 15:04:05.999999999",
-			"2006-01-02 15:04:05",
-			"2006-01-02T15:04:05.999999999",
-			"2006-01-02T15:04:05",
-			"2006-01-02-15.04.05.000000",
-			"2006-01-02",
-			"15:04:05",
-			time.RFC3339Nano,
-			time.RFC3339,
-		}
-		for _, l := range layouts {
+		for _, l := range encoderTimeLayouts {
 			if t, err := time.Parse(l, v); err == nil {
 				return t, nil
 			}
