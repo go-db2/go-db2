@@ -2,6 +2,7 @@ package network
 
 import (
 	"bytes"
+	"database/sql/driver"
 	"encoding/binary"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestXMLColumnIsStitchedFromEXTDTA(t *testing.T) {
 	extdta := [][]byte{append([]byte{0x00}, `<root><item id="1">x</item></root>`...)}
 
 	r := bytes.NewReader(row)
-	decoded := make([]any, len(fields))
+	decoded := make([]driver.Value, len(fields))
 	for i, f := range fields {
 		v, err := converters.DecodeField(f.Type, f.PS[:], r, binary.LittleEndian)
 		if err != nil {
@@ -33,7 +34,7 @@ func TestXMLColumnIsStitchedFromEXTDTA(t *testing.T) {
 		t.Fatalf("%d bytes of the row were left unread", r.Len())
 	}
 
-	rows := [][]any{decoded}
+	rows := [][]driver.Value{decoded}
 	stitchEXTDTA(fields, rows, extdta)
 
 	if got, want := rows[0][1], `<root><item id="1">x</item></root>`; got != want {

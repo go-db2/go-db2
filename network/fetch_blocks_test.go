@@ -3,6 +3,7 @@ package network
 import (
 	"bytes"
 	"context"
+	"database/sql/driver"
 	"encoding/binary"
 	"net"
 	"strings"
@@ -112,13 +113,13 @@ func pipeSession(t *testing.T) (*Session, net.Conn) {
 	return s, server
 }
 
-func queryPaths() map[string]func(s *Session) ([][]any, error) {
-	return map[string]func(s *Session) ([][]any, error){
-		"QueryDirect": func(s *Session) ([][]any, error) {
+func queryPaths() map[string]func(s *Session) ([][]driver.Value, error) {
+	return map[string]func(s *Session) ([][]driver.Value, error){
+		"QueryDirect": func(s *Session) ([][]driver.Value, error) {
 			_, rows, err := s.QueryDirect(context.Background(), "SELECT N FROM T")
 			return rows, err
 		},
-		"QueryWithParams": func(s *Session) ([][]any, error) {
+		"QueryWithParams": func(s *Session) ([][]driver.Value, error) {
 			_, rows, err := s.QueryWithParams(context.Background(), nil, nil, nil)
 			return rows, err
 		},

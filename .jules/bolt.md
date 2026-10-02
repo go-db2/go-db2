@@ -77,3 +77,8 @@
 
 **Learning:** Attempting to prevent local stack buffers (`var stackBuf [64]byte`) from escaping to the heap by reading byte-by-byte via `br.ReadByte()` in a loop introduces ~3-5ns per-byte interface dispatch overhead. For multi-byte fields (e.g. 12-64 byte VarChar/Char/Date), making 12-64 interface calls slows down field decoding by ~37% (265.5 ns -> 364.7 ns/op), which completely outweighs the ~15-20ns cost of a single 64-byte heap allocation in `io.ReadFull`.
 **Action:** Do NOT use byte-by-byte interface loops (`ReadByte()`) for multi-byte slice buffers (>2-4 bytes). Keep `io.ReadFull(r, buf)` or block reads when reading multi-byte payloads from `io.Reader`.
+
+## 2026-10-01 - Direct driver.Value Slice Decoding for Query Result Execution
+
+**Learning:** Returning `[][]any` from internal DRDA query decoding routines (`decodeRows`, `fetchQuery`, `QueryDirect`, `QueryWithParams`) forced top-level database driver wrappers (`Conn.QueryContext`, `Stmt.queryContextLocked`) to iterate over every row and allocate a second slice `make([]driver.Value, len(r))` and copy elements one-by-one. Since `driver.Value` is a type alias for `any` in Go (`type Value = any`), changing low-level row decoding to construct `[]driver.Value` directly allows `NewRows` to take the decoded row slice as-is, eliminating N+1 heap allocations and element copies per query execution.
+**Action:** When building Go database drivers or data pipeline abstractions that wrap interface types like `driver.Value`, ensure internal decoding stages construct target driver types directly instead of using intermediate generic slices.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"database/sql/driver"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -666,7 +667,8 @@ func (s *Session) ExecDirect(ctx context.Context, sql string) (int64, error) {
 }
 
 // QueryDirect prepares, describes and executes a query statement returning raw column headers and decoded row data.
-func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescription, [][]any, error) {
+// Optimization: Returns decoded rows directly as [][]driver.Value to avoid per-row slice re-allocation and copying in Conn/Stmt wrappers.
+func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescription, [][]driver.Value, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -893,7 +895,8 @@ func (s *Session) ExecBatchWithParams(ctx context.Context, paramCols []ColumnDes
 }
 
 // QueryWithParams opens a query on a prepared statement with parameter arguments.
-func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []ColumnDescription, args []any) ([]ColumnDescription, [][]any, error) {
+// Optimization: Returns decoded rows directly as [][]driver.Value to avoid per-row slice re-allocation and copying in Conn/Stmt wrappers.
+func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []ColumnDescription, args []any) ([]ColumnDescription, [][]driver.Value, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1025,7 +1028,7 @@ func (q *queryResult) consume(replies []ReplyPacket, endian binary.ByteOrder) (b
 
 // fetchQuery reads a query's result from the replies to OPNQRY, continuing
 // the query with CNTQRY, one query block at a time, until the server ends it.
-func (s *Session) fetchQuery(replies []ReplyPacket, columns []ColumnDescription) ([]ColumnDescription, [][]any, error) {
+func (s *Session) fetchQuery(replies []ReplyPacket, columns []ColumnDescription) ([]ColumnDescription, [][]driver.Value, error) {
 	q := &queryResult{columns: columns, cntqryID: 1}
 	if _, err := q.consume(replies, s.endian); err != nil {
 		return nil, nil, err
@@ -1063,7 +1066,8 @@ func (s *Session) fetchQuery(replies []ReplyPacket, columns []ColumnDescription)
 // the null indicator 0xFF unless the server attached a warning or an error to
 // the row, then the indicator of the row data (0x00 when present), then one
 // value per field.
-func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) ([][]any, error) {
+// Optimization: Decodes rows directly as driver.Value slices to eliminate redundant slice allocations during query execution.
+func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) ([][]driver.Value, error) {
 	reader := bytes.NewReader(data)
 	numFields := len(fields)
 
@@ -1075,7 +1079,7 @@ func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) 
 			initCap = 1024
 		}
 	}
-	rows := make([][]any, 0, initCap)
+	rows := make([][]driver.Value, 0, initCap)
 	for reader.Len() >= 2 {
 		first, err := reader.ReadByte()
 		if err != nil {
@@ -1105,7 +1109,7 @@ func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) 
 			break
 		}
 
-		row := make([]any, numFields)
+		row := make([]driver.Value, numFields)
 		for i := 0; i < numFields; i++ {
 			f := fields[i]
 			val, err := converters.DecodeField(f.Type, f.PS[:], reader, endian)
@@ -1206,7 +1210,7 @@ func isDBCLOBType(t uint8) bool {
 	}
 }
 
-func stitchEXTDTA(fields []FieldDescriptor, rows [][]any, extdtaList [][]byte) {
+func stitchEXTDTA(fields []FieldDescriptor, rows [][]driver.Value, extdtaList [][]byte) {
 	var lobIndices []int
 	for i, f := range fields {
 		if isLOBType(f.Type) {

@@ -139,18 +139,9 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			return NewRows(nil, nil), nil
 		}
 
-		cols, rawRows, err := c.session.QueryDirect(ctx, query)
+		cols, rowsData, err := c.session.QueryDirect(ctx, query)
 		if err != nil {
 			return nil, err
-		}
-
-		rowsData := make([][]driver.Value, len(rawRows))
-		for i, r := range rawRows {
-			row := make([]driver.Value, len(r))
-			for j, v := range r {
-				row[j] = driver.Value(v)
-			}
-			rowsData[i] = row
 		}
 
 		return NewRows(cols, rowsData), nil

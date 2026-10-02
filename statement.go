@@ -231,18 +231,9 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		rawArgs[i] = arg.Value
 	}
 
-	cols, rawRows, err := s.conn.session.QueryWithParams(ctx, s.outputCols, s.paramCols, rawArgs)
+	cols, rowsData, err := s.conn.session.QueryWithParams(ctx, s.outputCols, s.paramCols, rawArgs)
 	if err != nil {
 		return nil, err
-	}
-
-	rowsData := make([][]driver.Value, len(rawRows))
-	for i, r := range rawRows {
-		row := make([]driver.Value, len(r))
-		for j, v := range r {
-			row[j] = driver.Value(v)
-		}
-		rowsData[i] = row
 	}
 
 	return NewRows(cols, rowsData), nil
