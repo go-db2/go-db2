@@ -99,6 +99,11 @@ func TestExecAdminCmd_Validation(t *testing.T) {
 	if err == nil {
 		t.Fatal("ExecAdminCmd() with empty command should return error")
 	}
+
+	_, err = ExecAdminCmd(context.Background(), nil, "RUNSTATS ON TABLE USERS")
+	if err == nil {
+		t.Fatal("ExecAdminCmd() with nil *sql.DB should return error")
+	}
 }
 
 func TestQuoteIdentifier(t *testing.T) {
