@@ -555,10 +555,25 @@ func ParseSQLDTARD(data []byte, endian binary.ByteOrder) ([]any, error) {
 
 	type triplet struct {
 		typ uint8
-		ps  []byte
+		ps  [2]byte
 	}
-	var fields []triplet
+
+	// First pass: Calculate total field count to allocate slice with exact capacity once
+	totalFields := 0
 	pos := 0
+	for pos+3 <= len(dscBytes) {
+		groupLen := int(dscBytes[pos])
+		if groupLen < 3 || pos+groupLen > len(dscBytes) {
+			break
+		}
+		if dscBytes[pos+1] == 0x76 {
+			totalFields += groupLen/3 - 1
+		}
+		pos += groupLen
+	}
+
+	fields := make([]triplet, 0, totalFields)
+	pos = 0
 	for pos+3 <= len(dscBytes) {
 		groupLen := int(dscBytes[pos])
 		if groupLen < 3 || pos+groupLen > len(dscBytes) {
@@ -570,7 +585,7 @@ func ParseSQLDTARD(data []byte, endian binary.ByteOrder) ([]any, error) {
 			for i := 0; i < numFields && fPos+3 <= pos+groupLen; i++ {
 				fields = append(fields, triplet{
 					typ: dscBytes[fPos],
-					ps:  dscBytes[fPos+1 : fPos+3],
+					ps:  [2]byte{dscBytes[fPos+1], dscBytes[fPos+2]},
 				})
 				fPos += 3
 			}
@@ -587,12 +602,12 @@ func ParseSQLDTARD(data []byte, endian binary.ByteOrder) ([]any, error) {
 		}
 	}
 
-	var results []any
+	results := make([]any, 0, len(fields))
 	for _, f := range fields {
 		if r.Len() == 0 {
 			break
 		}
-		val, err := DecodeField(f.typ, f.ps, r, endian)
+		val, err := DecodeField(f.typ, f.ps[:], r, endian)
 		if err != nil {
 			return results, err
 		}
