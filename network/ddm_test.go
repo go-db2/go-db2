@@ -395,6 +395,30 @@ func TestParseSQLDARD_TruncatedPayloadBounds(t *testing.T) {
 	}
 }
 
+func TestParseSQLDARD_ExcessiveNumColsCap(t *testing.T) {
+	// Construct payload claiming 65535 columns, but providing payload for only 1 column
+	var buf []byte
+	buf = append(buf, 0xFF)       // Indicator 0xFF: no leading SQLCARD
+	buf = append(buf, 0x01)       // Indicator (hasName = false)
+	buf = append(buf, 0xFF, 0xFF) // numCols = 65535
+
+	// Column 1 (16 bytes)
+	buf = append(buf, 0x00, 0x0A)                                     // prec = 10
+	buf = append(buf, 0x00, 0x02)                                     // scale = 2
+	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04) // length = 4
+	buf = append(buf, 0x01, 0xF4)                                     // sqltype = 500
+	buf = append(buf, make([]byte, 29)...)                            // Trailing metadata
+
+	cols, err := ParseSQLDARD(buf, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("unexpected error parsing excessive numCols SQLDARD: %v", err)
+	}
+
+	if len(cols) != 1 {
+		t.Fatalf("expected 1 column parsed, got %d", len(cols))
+	}
+}
+
 func TestParseSQLCARD_TruncatedPayloadBounds(t *testing.T) {
 	// Construct SQLCARD payload with truncated RDB name length
 	var buf []byte

@@ -730,7 +730,13 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 	numCols := int(endian.Uint16(rest[:2]))
 	rest = rest[2:]
 
-	cols := make([]ColumnDescription, 0, numCols)
+	// Cap initial allocation capacity to avoid memory allocation DoS on untrusted header values.
+	initCap := numCols
+	if maxCap := len(rest) / 16; initCap > maxCap {
+		initCap = maxCap
+	}
+
+	cols := make([]ColumnDescription, 0, initCap)
 	for i := 0; i < numCols && len(rest) >= 16; i++ {
 		prec := int(endian.Uint16(rest[0:2]))
 		scale := int(endian.Uint16(rest[2:4]))
