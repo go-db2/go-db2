@@ -140,20 +140,20 @@ func TestHasBlobParams(t *testing.T) {
 
 func TestRewriteBinaryParams(t *testing.T) {
 	tests := []struct {
-		name             string
-		query            string
-		paramCols        []network.ColumnDescription
-		args             []any
-		wantQuery        string
+		name              string
+		query             string
+		paramCols         []network.ColumnDescription
+		args              []any
+		wantQuery         string
 		wantRewrittenCols []network.ColumnDescription
 		wantRewrittenArgs []any
 	}{
 		{
-			name:  "No parameters",
-			query: "SELECT * FROM users WHERE id = 1",
-			paramCols: []network.ColumnDescription{},
-			args:      []any{},
-			wantQuery: "SELECT * FROM users WHERE id = 1",
+			name:              "No parameters",
+			query:             "SELECT * FROM users WHERE id = 1",
+			paramCols:         []network.ColumnDescription{},
+			args:              []any{},
+			wantQuery:         "SELECT * FROM users WHERE id = 1",
 			wantRewrittenCols: nil,
 			wantRewrittenArgs: nil,
 		},
@@ -164,7 +164,7 @@ func TestRewriteBinaryParams(t *testing.T) {
 				{SQLType: uint16(types.SQLTypeInteger), Name: "ID"},
 				{SQLType: uint16(types.SQLTypeVarChar), Name: "NAME"},
 			},
-			args: []any{1, "Alice"},
+			args:      []any{1, "Alice"},
 			wantQuery: "INSERT INTO users (id, name) VALUES (?, ?)",
 			wantRewrittenCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeInteger), Name: "ID"},
@@ -179,7 +179,7 @@ func TestRewriteBinaryParams(t *testing.T) {
 				{SQLType: uint16(types.SQLTypeInteger), Name: "ID"},
 				{SQLType: uint16(types.SQLTypeBlob), Name: "DATA"},
 			},
-			args: []any{42, []byte{0xAB, 0xCD, 0xEF}},
+			args:      []any{42, []byte{0xAB, 0xCD, 0xEF}},
 			wantQuery: "INSERT INTO files (id, data) VALUES (?, BLOB(X'abcdef'))",
 			wantRewrittenCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeInteger), Name: "ID"},
@@ -193,7 +193,7 @@ func TestRewriteBinaryParams(t *testing.T) {
 				{SQLType: uint16(types.SQLTypeNBlob), Name: "DATA"},
 				{SQLType: uint16(types.SQLTypeInteger), Name: "ID"},
 			},
-			args: []any{[]byte{0x01, 0x02}, 10},
+			args:      []any{[]byte{0x01, 0x02}, 10},
 			wantQuery: "UPDATE files SET data = BLOB(X'0102') WHERE id = ?",
 			wantRewrittenCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeInteger), Name: "ID"},
@@ -206,7 +206,7 @@ func TestRewriteBinaryParams(t *testing.T) {
 			paramCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeBlob), Name: "DATA"},
 			},
-			args: []any{[]byte{}},
+			args:      []any{[]byte{}},
 			wantQuery: "INSERT INTO files (data) VALUES (?)",
 			wantRewrittenCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeBlob), Name: "DATA"},
@@ -219,8 +219,8 @@ func TestRewriteBinaryParams(t *testing.T) {
 			paramCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeBlob), Name: "DATA"},
 			},
-			args: []any{[]byte{0x12}},
-			wantQuery: "SELECT * FROM t WHERE note = 'Is this ? real?' AND data = BLOB(X'12')",
+			args:              []any{[]byte{0x12}},
+			wantQuery:         "SELECT * FROM t WHERE note = 'Is this ? real?' AND data = BLOB(X'12')",
 			wantRewrittenCols: nil,
 			wantRewrittenArgs: nil,
 		},
@@ -230,8 +230,8 @@ func TestRewriteBinaryParams(t *testing.T) {
 			paramCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeBlob), Name: "DATA"},
 			},
-			args: []any{[]byte{0x12}},
-			wantQuery: "SELECT * FROM t WHERE note = 'It''s a ? test' AND data = BLOB(X'12')",
+			args:              []any{[]byte{0x12}},
+			wantQuery:         "SELECT * FROM t WHERE note = 'It''s a ? test' AND data = BLOB(X'12')",
 			wantRewrittenCols: nil,
 			wantRewrittenArgs: nil,
 		},
@@ -241,8 +241,8 @@ func TestRewriteBinaryParams(t *testing.T) {
 			paramCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeBlob), Name: "DATA"},
 			},
-			args: []any{[]byte{0x34}},
-			wantQuery: "SELECT * FROM \"col?name\" WHERE data = BLOB(X'34')",
+			args:              []any{[]byte{0x34}},
+			wantQuery:         "SELECT * FROM \"col?name\" WHERE data = BLOB(X'34')",
 			wantRewrittenCols: nil,
 			wantRewrittenArgs: nil,
 		},
@@ -252,8 +252,8 @@ func TestRewriteBinaryParams(t *testing.T) {
 			paramCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeBlob), Name: "DATA"},
 			},
-			args: []any{[]byte{0x34}},
-			wantQuery: "SELECT * FROM \"col\"\"?name\" WHERE data = BLOB(X'34')",
+			args:              []any{[]byte{0x34}},
+			wantQuery:         "SELECT * FROM \"col\"\"?name\" WHERE data = BLOB(X'34')",
 			wantRewrittenCols: nil,
 			wantRewrittenArgs: nil,
 		},
@@ -263,8 +263,8 @@ func TestRewriteBinaryParams(t *testing.T) {
 			paramCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeBlob), Name: "DATA"},
 			},
-			args: []any{[]byte{0x56}},
-			wantQuery: "SELECT 1 -- Is this a question mark ? \n FROM t WHERE data = BLOB(X'56')",
+			args:              []any{[]byte{0x56}},
+			wantQuery:         "SELECT 1 -- Is this a question mark ? \n FROM t WHERE data = BLOB(X'56')",
 			wantRewrittenCols: nil,
 			wantRewrittenArgs: nil,
 		},
@@ -274,8 +274,8 @@ func TestRewriteBinaryParams(t *testing.T) {
 			paramCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeBlob), Name: "DATA"},
 			},
-			args: []any{[]byte{0x78}},
-			wantQuery: "SELECT /* ? comment ? */ * FROM t WHERE data = BLOB(X'78')",
+			args:              []any{[]byte{0x78}},
+			wantQuery:         "SELECT /* ? comment ? */ * FROM t WHERE data = BLOB(X'78')",
 			wantRewrittenCols: nil,
 			wantRewrittenArgs: nil,
 		},
@@ -285,7 +285,7 @@ func TestRewriteBinaryParams(t *testing.T) {
 			paramCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeInteger), Name: "ID"},
 			},
-			args: []any{1},
+			args:      []any{1},
 			wantQuery: "SELECT ?, ?",
 			wantRewrittenCols: []network.ColumnDescription{
 				{SQLType: uint16(types.SQLTypeInteger), Name: "ID"},
