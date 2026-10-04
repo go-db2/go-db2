@@ -2,6 +2,7 @@ package db2
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -89,6 +90,112 @@ func TestDropDb_Validation(t *testing.T) {
 			_, err := DropDb(tt.dbname, tt.connStr)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("DropDb() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateSQLIdentifier(t *testing.T) {
+	tests := []struct {
+		name      string
+		val       string
+		fieldName string
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name:      "valid simple identifier",
+			val:       "MY_DB1",
+			fieldName: "database name",
+			wantErr:   false,
+		},
+		{
+			name:      "valid identifier with special allowed chars",
+			val:       "DB_#$123",
+			fieldName: "database name",
+			wantErr:   false,
+		},
+		{
+			name:      "valid identifier max length 128",
+			val:       strings.Repeat("A", 128),
+			fieldName: "database name",
+			wantErr:   false,
+		},
+		{
+			name:      "empty string",
+			val:       "",
+			fieldName: "database name",
+			wantErr:   true,
+			errSubstr: "cannot be empty",
+		},
+		{
+			name:      "whitespace string",
+			val:       "   ",
+			fieldName: "database name",
+			wantErr:   true,
+			errSubstr: "cannot be empty",
+		},
+		{
+			name:      "exceeds max length 128",
+			val:       strings.Repeat("A", 129),
+			fieldName: "database name",
+			wantErr:   true,
+			errSubstr: "invalid",
+		},
+		{
+			name:      "invalid char space",
+			val:       "MY DB",
+			fieldName: "database name",
+			wantErr:   true,
+			errSubstr: "invalid",
+		},
+		{
+			name:      "invalid char hyphen",
+			val:       "MY-DB",
+			fieldName: "database name",
+			wantErr:   true,
+			errSubstr: "invalid",
+		},
+		{
+			name:      "invalid char quote",
+			val:       `MY"DB`,
+			fieldName: "database name",
+			wantErr:   true,
+			errSubstr: "invalid",
+		},
+		{
+			name:      "invalid char at sign",
+			val:       "MY@DB",
+			fieldName: "database name",
+			wantErr:   true,
+			errSubstr: "invalid",
+		},
+		{
+			name:      "invalid char semicolon",
+			val:       "MY;DB",
+			fieldName: "database name",
+			wantErr:   true,
+			errSubstr: "invalid",
+		},
+		{
+			name:      "invalid char percent",
+			val:       "MY%DB",
+			fieldName: "database name",
+			wantErr:   true,
+			errSubstr: "invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateSQLIdentifier(tt.val, tt.fieldName)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateSQLIdentifier() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if tt.wantErr && tt.errSubstr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("validateSQLIdentifier() error = %v, expected substring %q", err, tt.errSubstr)
+				}
 			}
 		})
 	}
