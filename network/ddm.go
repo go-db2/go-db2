@@ -452,6 +452,7 @@ func PackSQLSTT(sql string) []byte {
 }
 
 // ParseDDMReply parses a response buffer into a map of CodePoint to parameter data bytes.
+// Supports both standard 15-bit lengths and extended length fields (0x8000 bit set).
 func ParseDDMReply(data []byte) (map[CodePoint][]byte, error) {
 	results := make(map[CodePoint][]byte)
 	offset := 0
@@ -464,13 +465,32 @@ func ParseDDMReply(data []byte) (map[CodePoint][]byte, error) {
 		paramLen := int(binary.BigEndian.Uint16(data[offset : offset+2]))
 		codePoint := CodePoint(binary.BigEndian.Uint16(data[offset+2 : offset+4]))
 
-		if paramLen < 4 || offset+paramLen > len(data) {
-			return nil, fmt.Errorf("invalid DDM parameter length %d at offset %d", paramLen, offset)
+		if paramLen&0x8000 == 0 {
+			if paramLen < 4 || offset+paramLen > len(data) {
+				return nil, fmt.Errorf("invalid DDM parameter length %d at offset %d", paramLen, offset)
+			}
+			results[codePoint] = data[offset+4 : offset+paramLen]
+			offset += paramLen
+		} else {
+			extBytes := int(paramLen&0x7FFF) - 4
+			if extBytes == 0 {
+				results[codePoint] = data[offset+4:]
+				break
+			}
+			if extBytes < 0 || extBytes > 8 || offset+4+extBytes > len(data) {
+				return nil, fmt.Errorf("invalid DDM extended parameter length field 0x%04X at offset %d", paramLen, offset)
+			}
+			var dataLen uint64
+			for _, b := range data[offset+4 : offset+4+extBytes] {
+				dataLen = dataLen<<8 | uint64(b)
+			}
+			if dataLen > uint64(len(data)-offset-4-extBytes) {
+				return nil, fmt.Errorf("DDM extended parameter length %d exceeds remaining payload at offset %d", dataLen, offset)
+			}
+			start := offset + 4 + extBytes
+			results[codePoint] = data[start : start+int(dataLen)]
+			offset = start + int(dataLen)
 		}
-
-		paramData := data[offset+4 : offset+paramLen]
-		results[codePoint] = paramData
-		offset += paramLen
 	}
 
 	return results, nil

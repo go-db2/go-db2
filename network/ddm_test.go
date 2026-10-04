@@ -441,3 +441,63 @@ func TestParseSQLCARD_TruncatedPayloadBounds(t *testing.T) {
 		t.Fatalf("expected empty message for truncated RDB name, got %q", msg)
 	}
 }
+
+func TestParseDDMReply_ExtendedLengthObjects(t *testing.T) {
+	t.Run("FourByteExtendedLength_0x8008", func(t *testing.T) {
+		payloadSize := 40000
+		largePayload := make([]byte, payloadSize)
+		for i := range largePayload {
+			largePayload[i] = byte(i % 256)
+		}
+
+		// 0x8008 header: length = 0x8008, codepoint = CodePointSRVDGN (0x1153)
+		// 4-byte extended length = 40000
+		var buf []byte
+		buf = append(buf, 0x80, 0x08) // 0x8008
+		buf = append(buf, 0x11, 0x53) // CodePointSRVDGN
+		extLenBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(extLenBytes, uint32(payloadSize))
+		buf = append(buf, extLenBytes...)
+		buf = append(buf, largePayload...)
+
+		parsed, err := ParseDDMReply(buf)
+		if err != nil {
+			t.Fatalf("ParseDDMReply failed for 4-byte extended length object: %v", err)
+		}
+		res, ok := parsed[CodePointSRVDGN]
+		if !ok {
+			t.Fatalf("missing CodePointSRVDGN in parsed output")
+		}
+		if !bytes.Equal(res, largePayload) {
+			t.Fatalf("payload mismatch: got len %d, want len %d", len(res), len(largePayload))
+		}
+	})
+
+	t.Run("ToEndOfPayload_0x8004", func(t *testing.T) {
+		payload := []byte("End-of-payload extended data")
+		var buf []byte
+		buf = append(buf, 0x80, 0x04) // 0x8004: runs to end of payload
+		buf = append(buf, 0x11, 0x53) // CodePointSRVDGN
+		buf = append(buf, payload...)
+
+		parsed, err := ParseDDMReply(buf)
+		if err != nil {
+			t.Fatalf("ParseDDMReply failed for 0x8004 payload: %v", err)
+		}
+		res, ok := parsed[CodePointSRVDGN]
+		if !ok || !bytes.Equal(res, payload) {
+			t.Fatalf("payload mismatch for 0x8004: got %q, want %q", res, payload)
+		}
+	})
+
+	t.Run("TruncatedExtendedLengthBounds", func(t *testing.T) {
+		// Claims 4-byte extended length field (0x8008), but total buffer ends before 4-byte ext length is supplied
+		var buf []byte
+		buf = append(buf, 0x80, 0x08, 0x11, 0x53, 0x00, 0x00) // Truncated
+
+		_, err := ParseDDMReply(buf)
+		if err == nil {
+			t.Fatalf("expected error for truncated extended length DDM parameter header, got nil")
+		}
+	})
+}
