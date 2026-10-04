@@ -394,6 +394,119 @@ func TestSkipName(t *testing.T) {
 	}
 }
 
+func TestIsPrintableUTF8(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		expected bool
+	}{
+		{
+			name:     "Nil slice",
+			input:    nil,
+			expected: true,
+		},
+		{
+			name:     "Empty slice",
+			input:    []byte{},
+			expected: true,
+		},
+		{
+			name:     "Printable ASCII string",
+			input:    []byte("Hello World! 123 #$%"),
+			expected: true,
+		},
+		{
+			name:     "ASCII control character NUL",
+			input:    []byte("Hello\x00World"),
+			expected: false,
+		},
+		{
+			name:     "ASCII control character BEL",
+			input:    []byte("Hello\x07World"),
+			expected: false,
+		},
+		{
+			name:     "ASCII control character ESC",
+			input:    []byte("Hello\x1bWorld"),
+			expected: false,
+		},
+		{
+			name:     "ASCII control character DEL",
+			input:    []byte("Hello\x7fWorld"),
+			expected: false,
+		},
+		{
+			name:     "ASCII whitespace newline",
+			input:    []byte("Hello\nWorld"),
+			expected: false,
+		},
+		{
+			name:     "ASCII whitespace tab",
+			input:    []byte("Hello\tWorld"),
+			expected: false,
+		},
+		{
+			name:     "ASCII whitespace carriage return",
+			input:    []byte("Hello\rWorld"),
+			expected: false,
+		},
+		{
+			name:     "C1 Unicode control character NEL (U+0085)",
+			input:    []byte("Hello\u0085World"),
+			expected: false,
+		},
+		{
+			name:     "C1 Unicode control character (U+0090)",
+			input:    []byte("Hello\u0090World"),
+			expected: false,
+		},
+		{
+			name:     "Non-ASCII printable UTF-8 Latin/Umlauts",
+			input:    []byte("München / København / Côte d'Ivoire"),
+			expected: true,
+		},
+		{
+			name:     "Non-ASCII printable UTF-8 CJK",
+			input:    []byte("日本語 / 中文 / 한국어"),
+			expected: true,
+		},
+		{
+			name:     "Non-ASCII printable UTF-8 Emojis and Symbols",
+			input:    []byte("🚀 Db2 Go Driver ✨ 🗄️"),
+			expected: true,
+		},
+		{
+			name:     "Invalid UTF-8 truncated multibyte sequence",
+			input:    []byte{0xC3},
+			expected: false,
+		},
+		{
+			name:     "Invalid UTF-8 start byte 0xFF",
+			input:    []byte{0xFF, 0xFE},
+			expected: false,
+		},
+		{
+			name:     "Invalid UTF-8 unexpected continuation byte",
+			input:    []byte{0x80, 0x81},
+			expected: false,
+		},
+		{
+			name:     "Invalid UTF-8 overlong sequence",
+			input:    []byte{0xE0, 0x80, 0x80},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isPrintableUTF8(tt.input)
+			if got != tt.expected {
+				t.Errorf("isPrintableUTF8(%q) = %v, want %v", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestPackPKGNAMCSN(t *testing.T) {
 	pkgBytes := PackPKGNAMCSN("SAMPLE", "SYSH200", "TOKEN12", 1)
 	if len(pkgBytes) < 4 {
