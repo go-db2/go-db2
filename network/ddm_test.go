@@ -156,6 +156,244 @@ func TestParseQRYDSC(t *testing.T) {
 	})
 }
 
+func packDDMString(s string) []byte {
+	buf := make([]byte, 2+len(s))
+	binary.BigEndian.PutUint16(buf[0:2], uint16(len(s)))
+	copy(buf[2:], s)
+	return buf
+}
+
+func TestParseStringBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		wantRet  []byte
+		wantRest []byte
+	}{
+		{
+			name:     "NonEmptyString",
+			input:    append(packDDMString("FOO"), []byte("REMAINDER")...),
+			wantRet:  []byte("FOO"),
+			wantRest: []byte("REMAINDER"),
+		},
+		{
+			name:     "EmptyString",
+			input:    append(packDDMString(""), []byte("REMAINDER")...),
+			wantRet:  nil,
+			wantRest: []byte("REMAINDER"),
+		},
+		{
+			name:     "TruncatedHeader_LessThan2Bytes",
+			input:    []byte{0x00},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "TruncatedPayload_DeclaredLenExceedsSlice",
+			input:    []byte{0x00, 0x0A, 'A', 'B'},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "NilInput",
+			input:    nil,
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "EmptySliceInput",
+			input:    []byte{},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRet, gotRest := parseStringBytes(tt.input)
+			if !bytes.Equal(gotRet, tt.wantRet) {
+				t.Errorf("parseStringBytes() gotRet = %v (%q), want %v (%q)", gotRet, gotRet, tt.wantRet, tt.wantRet)
+			}
+			if !bytes.Equal(gotRest, tt.wantRest) {
+				t.Errorf("parseStringBytes() gotRest = %v (%q), want %v (%q)", gotRest, gotRest, tt.wantRest, tt.wantRest)
+			}
+		})
+	}
+}
+
+func TestSkipString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		wantRest []byte
+	}{
+		{
+			name:     "NonEmptyString",
+			input:    append(packDDMString("SKIP_ME"), []byte("REST")...),
+			wantRest: []byte("REST"),
+		},
+		{
+			name:     "EmptyString",
+			input:    append(packDDMString(""), []byte("REST")...),
+			wantRest: []byte("REST"),
+		},
+		{
+			name:     "TruncatedHeader",
+			input:    []byte{0x00},
+			wantRest: nil,
+		},
+		{
+			name:     "TruncatedPayload",
+			input:    []byte{0x00, 0x08, 'X'},
+			wantRest: nil,
+		},
+		{
+			name:     "NilInput",
+			input:    nil,
+			wantRest: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRest := skipString(tt.input)
+			if !bytes.Equal(gotRest, tt.wantRest) {
+				t.Errorf("skipString() = %v (%q), want %v (%q)", gotRest, gotRest, tt.wantRest, tt.wantRest)
+			}
+		})
+	}
+}
+
+func TestParseNameBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		wantRet  []byte
+		wantRest []byte
+	}{
+		{
+			name:     "FirstStringNonEmpty_SecondStringNonEmpty",
+			input:    append(append(packDDMString("PRIMARY"), packDDMString("SECONDARY")...), []byte("EXTRA")...),
+			wantRet:  []byte("PRIMARY"),
+			wantRest: []byte("EXTRA"),
+		},
+		{
+			name:     "FirstStringNonEmpty_SecondStringEmpty",
+			input:    append(append(packDDMString("PRIMARY"), packDDMString("")...), []byte("EXTRA")...),
+			wantRet:  []byte("PRIMARY"),
+			wantRest: []byte("EXTRA"),
+		},
+		{
+			name:     "FirstStringEmpty_SecondStringNonEmpty",
+			input:    append(append(packDDMString(""), packDDMString("FALLBACK")...), []byte("EXTRA")...),
+			wantRet:  []byte("FALLBACK"),
+			wantRest: []byte("EXTRA"),
+		},
+		{
+			name:     "BothStringsEmpty",
+			input:    append(append(packDDMString(""), packDDMString("")...), []byte("EXTRA")...),
+			wantRet:  nil,
+			wantRest: []byte("EXTRA"),
+		},
+		{
+			name:     "TruncatedFirstStringHeader",
+			input:    []byte{0x00},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "TruncatedFirstStringPayload",
+			input:    []byte{0x00, 0x05, 'A'},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "FirstStringEmpty_TruncatedSecondStringHeader",
+			input:    append(packDDMString(""), []byte{0x00}...),
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "FirstStringEmpty_TruncatedSecondStringPayload",
+			input:    append(packDDMString(""), []byte{0x00, 0x0A, 'B'}...),
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "NilInput",
+			input:    nil,
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "EmptySliceInput",
+			input:    []byte{},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRet, gotRest := parseNameBytes(tt.input)
+			if !bytes.Equal(gotRet, tt.wantRet) {
+				t.Errorf("parseNameBytes() gotRet = %v (%q), want %v (%q)", gotRet, gotRet, tt.wantRet, tt.wantRet)
+			}
+			if !bytes.Equal(gotRest, tt.wantRest) {
+				t.Errorf("parseNameBytes() gotRest = %v (%q), want %v (%q)", gotRest, gotRest, tt.wantRest, tt.wantRest)
+			}
+		})
+	}
+}
+
+func TestSkipName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		wantRest []byte
+	}{
+		{
+			name:     "TwoValidStrings",
+			input:    append(append(packDDMString("FIRST"), packDDMString("SECOND")...), []byte("REMAINDER")...),
+			wantRest: []byte("REMAINDER"),
+		},
+		{
+			name:     "FirstEmpty_SecondValid",
+			input:    append(append(packDDMString(""), packDDMString("SECOND")...), []byte("REMAINDER")...),
+			wantRest: []byte("REMAINDER"),
+		},
+		{
+			name:     "BothEmptyStrings",
+			input:    append(append(packDDMString(""), packDDMString("")...), []byte("REMAINDER")...),
+			wantRest: []byte("REMAINDER"),
+		},
+		{
+			name:     "TruncatedFirstHeader",
+			input:    []byte{0x00},
+			wantRest: nil,
+		},
+		{
+			name:     "TruncatedSecondHeader",
+			input:    append(packDDMString("FIRST"), []byte{0x00}...),
+			wantRest: nil,
+		},
+		{
+			name:     "NilInput",
+			input:    nil,
+			wantRest: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRest := skipName(tt.input)
+			if !bytes.Equal(gotRest, tt.wantRest) {
+				t.Errorf("skipName() = %v (%q), want %v (%q)", gotRest, gotRest, tt.wantRest, tt.wantRest)
+			}
+		})
+	}
+}
+
 func TestPackPKGNAMCSN(t *testing.T) {
 	pkgBytes := PackPKGNAMCSN("SAMPLE", "SYSH200", "TOKEN12", 1)
 	if len(pkgBytes) < 4 {
