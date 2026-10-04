@@ -515,8 +515,10 @@ func toBool(val any) bool {
 	switch v := val.(type) {
 	case bool:
 		return v
-	case int, int64:
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return toInt64(val) != 0
+	case float32, float64:
+		return toFloat64(val) != 0
 	case string:
 		return strings.EqualFold(v, "true") || v == "1"
 	default:
