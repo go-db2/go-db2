@@ -126,6 +126,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		return nil, fmt.Errorf("db2: invalid column parameter scale metadata length %d (expected >= 2)", len(ps))
 	}
 
+	var stackBuf [128]byte
+
 	if IsNullableDRDAType(drdaType) {
 		var indicator byte
 		if br, ok := r.(io.ByteReader); ok {
@@ -152,9 +154,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 	switch drdaType {
 	case DRDATypeChar, DRDATypeNChar, DRDATypeMix, DRDATypeNMix:
 		ln := int(binary.BigEndian.Uint16(ps))
-		var stackBuf [64]byte
 		var buf []byte
-		if ln <= 64 {
+		if ln <= len(stackBuf) {
 			buf = stackBuf[:ln]
 		} else {
 			buf = make([]byte, ln)
@@ -170,9 +171,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 	case DRDATypeGraphic, DRDATypeNGraphic:
 		charLen := int(binary.BigEndian.Uint16(ps))
 		byteLen := charLen * 2
-		var stackBuf [128]byte
 		var buf []byte
-		if byteLen <= 128 {
+		if byteLen <= len(stackBuf) {
 			buf = stackBuf[:byteLen]
 		} else {
 			buf = make([]byte, byteLen)
@@ -191,9 +191,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 			return nil, err
 		}
 		ln := int(rawLen)
-		var stackBuf [64]byte
 		var buf []byte
-		if ln <= 64 {
+		if ln <= len(stackBuf) {
 			buf = stackBuf[:ln]
 		} else {
 			buf = make([]byte, ln)
@@ -210,9 +209,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 			return nil, err
 		}
 		byteLen := int(rawLen) * 2
-		var stackBuf [128]byte
 		var buf []byte
-		if byteLen <= 128 {
+		if byteLen <= len(stackBuf) {
 			buf = stackBuf[:byteLen]
 		} else {
 			buf = make([]byte, byteLen)
@@ -276,9 +274,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		if ln <= 0 {
 			return false, nil
 		}
-		var stackBuf [16]byte
 		var buf []byte
-		if ln <= 16 {
+		if ln <= len(stackBuf) {
 			buf = stackBuf[:ln]
 		} else {
 			buf = make([]byte, ln)
@@ -290,9 +287,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 
 	case DRDATypeDate, DRDATypeNDate:
 		ln := int(binary.BigEndian.Uint16(ps))
-		var stackBuf [32]byte
 		var buf []byte
-		if ln <= 32 {
+		if ln <= len(stackBuf) {
 			buf = stackBuf[:ln]
 		} else {
 			buf = make([]byte, ln)
@@ -309,9 +305,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 
 	case DRDATypeTime, DRDATypeNTime:
 		ln := int(binary.BigEndian.Uint16(ps))
-		var stackBuf [32]byte
 		var buf []byte
-		if ln <= 32 {
+		if ln <= len(stackBuf) {
 			buf = stackBuf[:ln]
 		} else {
 			buf = make([]byte, ln)
@@ -323,9 +318,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 
 	case DRDATypeTimestamp, DRDATypeNTimestamp:
 		ln := int(binary.BigEndian.Uint16(ps))
-		var stackBuf [64]byte
 		var buf []byte
-		if ln <= 64 {
+		if ln <= len(stackBuf) {
 			buf = stackBuf[:ln]
 		} else {
 			buf = make([]byte, ln)
@@ -383,9 +377,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		precision := int(ps[0])
 		scale := int(ps[1])
 		byteLen := (precision + 2) / 2
-		var stackBuf [16]byte
 		var buf []byte
-		if byteLen <= 16 {
+		if byteLen <= len(stackBuf) {
 			buf = stackBuf[:byteLen]
 		} else {
 			buf = make([]byte, byteLen)
