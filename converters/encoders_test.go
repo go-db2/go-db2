@@ -65,6 +65,44 @@ func TestEncodePackedDecimalParam_InvalidPrecScaleBounds(t *testing.T) {
 	}
 }
 
+func TestToBool(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    any
+		expected bool
+	}{
+		{"Bool_True", true, true},
+		{"Bool_False", false, false},
+		{"Int_Positive", 1, true},
+		{"Int_Negative", -1, true},
+		{"Int_Zero", 0, false},
+		{"Int64_Positive", int64(42), true},
+		{"Int64_Negative", int64(-42), true},
+		{"Int64_Zero", int64(0), false},
+		{"String_True_Lowercase", "true", true},
+		{"String_True_Uppercase", "TRUE", true},
+		{"String_True_MixedCase", "True", true},
+		{"String_One", "1", true},
+		{"String_False", "false", false},
+		{"String_Zero", "0", false},
+		{"String_Random", "random", false},
+		{"String_Empty", "", false},
+		{"Default_Nil", nil, false},
+		{"Default_Float64", 1.0, false},
+		{"Default_Int32", int32(1), false},
+		{"Default_ByteSlice", []byte{1}, false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := toBool(tc.input)
+			if got != tc.expected {
+				t.Errorf("toBool(%v) = %v; want %v", tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestEncodePackedDecimalParam_TableDriven(t *testing.T) {
 	testCases := []struct {
 		name        string
