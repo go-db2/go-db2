@@ -1252,9 +1252,25 @@ func (s *Session) CurrentUser() string {
 }
 
 // quoteIdentifier safely quotes an SQL identifier with double quotes, escaping any embedded double quotes.
+// Optimization: Checks for double quotes with strings.IndexByte fast-path and pre-allocates exact capacity in strings.Builder to eliminate unnecessary allocations and string scanning overhead.
 func quoteIdentifier(name string) string {
-	escaped := strings.ReplaceAll(name, `"`, `""`)
-	return `"` + escaped + `"`
+	if strings.IndexByte(name, '"') == -1 {
+		return `"` + name + `"`
+	}
+	count := strings.Count(name, `"`)
+	var sb strings.Builder
+	sb.Grow(len(name) + 2 + count)
+	sb.WriteByte('"')
+	for i := 0; i < len(name); i++ {
+		ch := name[i]
+		if ch == '"' {
+			sb.WriteString(`""`)
+		} else {
+			sb.WriteByte(ch)
+		}
+	}
+	sb.WriteByte('"')
+	return sb.String()
 }
 
 // SwitchUser transitions the active user identity on the existing session.

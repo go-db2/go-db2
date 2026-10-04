@@ -172,3 +172,21 @@ func TestBuildDropDbSQL(t *testing.T) {
 		t.Errorf("buildDropDbSQL() = %q; want %q", got, expected)
 	}
 }
+
+func BenchmarkQuoteIdentifier_NoQuotes(b *testing.B) {
+	name := "TEST_DATABASE_IDENTIFIER"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = quoteIdentifier(name)
+	}
+}
+
+func BenchmarkQuoteIdentifier_WithQuotes(b *testing.B) {
+	name := `TEST_"DATABASE"_IDENTIFIER`
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = quoteIdentifier(name)
+	}
+}
