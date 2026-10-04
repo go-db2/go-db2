@@ -56,10 +56,10 @@ func init() {
 var ErrInvalidEBCDIC = errors.New("character cannot be encoded to CP500 EBCDIC")
 
 // EncodeCP500 encodes a UTF-8 Go string into IBM CP500 EBCDIC bytes.
-// Optimization: Scans input string for ASCII bytes (<= 0x7F) before allocating to avoid double allocations on non-ASCII inputs (~2.0x faster for ASCII).
+// Optimization: Scans input string for ASCII bytes (<= 0x7F) and valid mapping before allocating to avoid double allocations on non-ASCII or unmapped inputs (~2.0x faster for ASCII).
 func EncodeCP500(s string) ([]byte, error) {
 	i := 0
-	for i < len(s) && s[i] <= 0x7F {
+	for i < len(s) && s[i] <= 0x7F && unicodeToCP500Valid[s[i]] {
 		i++
 	}
 	if i == len(s) {
