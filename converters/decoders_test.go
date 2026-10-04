@@ -3,6 +3,7 @@ package converters
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"testing"
 	"time"
 )
@@ -187,6 +188,303 @@ func TestParseSQLDTARD_TableDriven(t *testing.T) {
 			}
 			if len(res) != tt.expectedCount {
 				t.Fatalf("expected %d decoded fields, got %d", tt.expectedCount, len(res))
+			}
+		})
+	}
+}
+
+type nonByteReader struct {
+	r io.Reader
+}
+
+func (n nonByteReader) Read(p []byte) (int, error) {
+	return n.r.Read(p)
+}
+
+func TestRead2Bytes(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      []byte
+		useByteR  bool
+		endian    binary.ByteOrder
+		wantVal   uint16
+		expectErr bool
+	}{
+		{
+			name:      "ByteReader BigEndian Success",
+			data:      []byte{0x12, 0x34},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0x1234,
+			expectErr: false,
+		},
+		{
+			name:      "ByteReader LittleEndian Success",
+			data:      []byte{0x34, 0x12},
+			useByteR:  true,
+			endian:    binary.LittleEndian,
+			wantVal:   0x1234,
+			expectErr: false,
+		},
+		{
+			name:      "ByteReader EOF on 1st byte",
+			data:      []byte{},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+		{
+			name:      "ByteReader EOF on 2nd byte",
+			data:      []byte{0x12},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+		{
+			name:      "NonByteReader BigEndian Success",
+			data:      []byte{0x12, 0x34},
+			useByteR:  false,
+			endian:    binary.BigEndian,
+			wantVal:   0x1234,
+			expectErr: false,
+		},
+		{
+			name:      "NonByteReader LittleEndian Success",
+			data:      []byte{0x34, 0x12},
+			useByteR:  false,
+			endian:    binary.LittleEndian,
+			wantVal:   0x1234,
+			expectErr: false,
+		},
+		{
+			name:      "NonByteReader Short Read EOF",
+			data:      []byte{0x12},
+			useByteR:  false,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var r io.Reader = bytes.NewReader(tt.data)
+			if !tt.useByteR {
+				r = nonByteReader{r: r}
+			}
+
+			val, err := read2Bytes(r, tt.endian)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if val != tt.wantVal {
+					t.Errorf("got val = 0x%X, want 0x%X", val, tt.wantVal)
+				}
+			}
+		})
+	}
+}
+
+func TestRead4Bytes(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      []byte
+		useByteR  bool
+		endian    binary.ByteOrder
+		wantVal   uint32
+		expectErr bool
+	}{
+		{
+			name:      "ByteReader BigEndian Success",
+			data:      []byte{0x12, 0x34, 0x56, 0x78},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0x12345678,
+			expectErr: false,
+		},
+		{
+			name:      "ByteReader LittleEndian Success",
+			data:      []byte{0x78, 0x56, 0x34, 0x12},
+			useByteR:  true,
+			endian:    binary.LittleEndian,
+			wantVal:   0x12345678,
+			expectErr: false,
+		},
+		{
+			name:      "ByteReader EOF on 1st byte",
+			data:      []byte{},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+		{
+			name:      "ByteReader EOF on 2nd byte",
+			data:      []byte{0x12},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+		{
+			name:      "ByteReader EOF on 3rd byte",
+			data:      []byte{0x12, 0x34},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+		{
+			name:      "ByteReader EOF on 4th byte",
+			data:      []byte{0x12, 0x34, 0x56},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+		{
+			name:      "NonByteReader BigEndian Success",
+			data:      []byte{0x12, 0x34, 0x56, 0x78},
+			useByteR:  false,
+			endian:    binary.BigEndian,
+			wantVal:   0x12345678,
+			expectErr: false,
+		},
+		{
+			name:      "NonByteReader LittleEndian Success",
+			data:      []byte{0x78, 0x56, 0x34, 0x12},
+			useByteR:  false,
+			endian:    binary.LittleEndian,
+			wantVal:   0x12345678,
+			expectErr: false,
+		},
+		{
+			name:      "NonByteReader Short Read EOF",
+			data:      []byte{0x12, 0x34, 0x56},
+			useByteR:  false,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var r io.Reader = bytes.NewReader(tt.data)
+			if !tt.useByteR {
+				r = nonByteReader{r: r}
+			}
+
+			val, err := read4Bytes(r, tt.endian)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if val != tt.wantVal {
+					t.Errorf("got val = 0x%X, want 0x%X", val, tt.wantVal)
+				}
+			}
+		})
+	}
+}
+
+func TestRead8Bytes(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      []byte
+		useByteR  bool
+		endian    binary.ByteOrder
+		wantVal   uint64
+		expectErr bool
+	}{
+		{
+			name:      "ByteReader BigEndian Success",
+			data:      []byte{0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0x123456789ABCDEF0,
+			expectErr: false,
+		},
+		{
+			name:      "ByteReader LittleEndian Success",
+			data:      []byte{0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12},
+			useByteR:  true,
+			endian:    binary.LittleEndian,
+			wantVal:   0x123456789ABCDEF0,
+			expectErr: false,
+		},
+		{
+			name:      "ByteReader EOF on 1st byte",
+			data:      []byte{},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+		{
+			name:      "ByteReader EOF on partial read (5 bytes)",
+			data:      []byte{0x12, 0x34, 0x56, 0x78, 0x9A},
+			useByteR:  true,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+		{
+			name:      "NonByteReader BigEndian Success",
+			data:      []byte{0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0},
+			useByteR:  false,
+			endian:    binary.BigEndian,
+			wantVal:   0x123456789ABCDEF0,
+			expectErr: false,
+		},
+		{
+			name:      "NonByteReader LittleEndian Success",
+			data:      []byte{0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12},
+			useByteR:  false,
+			endian:    binary.LittleEndian,
+			wantVal:   0x123456789ABCDEF0,
+			expectErr: false,
+		},
+		{
+			name:      "NonByteReader Short Read EOF",
+			data:      []byte{0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE},
+			useByteR:  false,
+			endian:    binary.BigEndian,
+			wantVal:   0,
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var r io.Reader = bytes.NewReader(tt.data)
+			if !tt.useByteR {
+				r = nonByteReader{r: r}
+			}
+
+			val, err := read8Bytes(r, tt.endian)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if val != tt.wantVal {
+					t.Errorf("got val = 0x%X, want 0x%X", val, tt.wantVal)
+				}
 			}
 		})
 	}
