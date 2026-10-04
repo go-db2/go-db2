@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-db2/go-db2/converters"
 )
 
 func TestSessionMockHandshake(t *testing.T) {
@@ -334,6 +336,156 @@ func TestSwitchUser_QuotedIdentifierSQL(t *testing.T) {
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("timed out waiting for SET SESSION_USER statement")
+	}
+}
+
+func TestIsLOBType(t *testing.T) {
+	tests := []struct {
+		name     string
+		typeCode uint8
+		expected bool
+	}{
+		// LOB Locators
+		{"DRDATypeLOBLOC", converters.DRDATypeLOBLOC, true},
+		{"DRDATypeNLOBLOC", converters.DRDATypeNLOBLOC, true},
+		{"DRDATypeCLOBLOC", converters.DRDATypeCLOBLOC, true},
+		{"DRDATypeNCLOBLOC", converters.DRDATypeNCLOBLOC, true},
+		{"DRDATypeDBCSCLOBLOC", converters.DRDATypeDBCSCLOBLOC, true},
+		{"DRDATypeNDBCSCLOBLOC", converters.DRDATypeNDBCSCLOBLOC, true},
+
+		// LOB Bytes & CSBCS
+		{"DRDATypeLOBBytes", converters.DRDATypeLOBBytes, true},
+		{"DRDATypeNLOBBytes", converters.DRDATypeNLOBBytes, true},
+		{"DRDATypeLOBCSBCS", converters.DRDATypeLOBCSBCS, true},
+		{"DRDATypeNLOBCSBCS", converters.DRDATypeNLOBCSBCS, true},
+
+		// XML Types
+		{"DRDATypeXML", converters.DRDATypeXML, true},
+		{"DRDATypeNXML", converters.DRDATypeNXML, true},
+
+		// Raw Hex Codes supported in isLOBType
+		{"Raw Hex 0x10", 0x10, true},
+		{"Raw Hex 0x11", 0x11, true},
+		{"Raw Hex 0xCD", 0xCD, true},
+		{"Raw Hex 0xF4", 0xF4, true},
+		{"Raw Hex 0xF5", 0xF5, true},
+		{"Raw Hex 0xF6", 0xF6, true},
+		{"Raw Hex 0xF7", 0xF7, true},
+		{"Raw Hex 0xF8", 0xF8, true},
+		{"Raw Hex 0xF9", 0xF9, true},
+
+		// Non-LOB Scalar Types (Negative Cases)
+		{"Integer", converters.DRDATypeInteger, false},
+		{"Nullable Integer", converters.DRDATypeNInteger, false},
+		{"SmallInt", converters.DRDATypeSmall, false},
+		{"VarChar", converters.DRDATypeVarChar, false},
+		{"Char", converters.DRDATypeChar, false},
+		{"Date", converters.DRDATypeDate, false},
+		{"Time", converters.DRDATypeTime, false},
+		{"Timestamp", converters.DRDATypeTimestamp, false},
+		{"Boolean", converters.DRDATypeBoolean, false},
+		{"DecFloat", converters.DRDATypeDecFloat, false},
+
+		// Unassigned/Arbitrary Raw Hex Codes (Negative Cases)
+		{"Unassigned 0x00", 0x00, false},
+		{"Unassigned 0x01", 0x01, false},
+		{"Unassigned 0x12", 0x12, false},
+		{"Unassigned 0xCC", 0xCC, false},
+		{"Unassigned 0xFA", 0xFA, false},
+		{"Unassigned 0xFF", 0xFF, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isLOBType(tt.typeCode)
+			if got != tt.expected {
+				t.Errorf("isLOBType(0x%02X) = %v, want %v", tt.typeCode, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsCLOBType(t *testing.T) {
+	tests := []struct {
+		name     string
+		typeCode uint8
+		expected bool
+	}{
+		// Positive CLOB types
+		{"DRDATypeCLOBLOC", converters.DRDATypeCLOBLOC, true},
+		{"DRDATypeNCLOBLOC", converters.DRDATypeNCLOBLOC, true},
+		{"DRDATypeDBCSCLOBLOC", converters.DRDATypeDBCSCLOBLOC, true},
+		{"DRDATypeNDBCSCLOBLOC", converters.DRDATypeNDBCSCLOBLOC, true},
+		{"DRDATypeLOBCSBCS", converters.DRDATypeLOBCSBCS, true},
+		{"DRDATypeNLOBCSBCS", converters.DRDATypeNLOBCSBCS, true},
+		{"DRDATypeXML", converters.DRDATypeXML, true},
+		{"DRDATypeNXML", converters.DRDATypeNXML, true},
+
+		// Raw Hex Codes supported in isCLOBType
+		{"Raw Hex 0xCD", 0xCD, true},
+		{"Raw Hex 0xF6", 0xF6, true},
+		{"Raw Hex 0xF7", 0xF7, true},
+		{"Raw Hex 0xF8", 0xF8, true},
+		{"Raw Hex 0xF9", 0xF9, true},
+
+		// Non-CLOB Types (Negative Cases)
+		{"BLOB Locator", converters.DRDATypeLOBLOC, false},
+		{"Nullable BLOB Locator", converters.DRDATypeNLOBLOC, false},
+		{"LOB Bytes", converters.DRDATypeLOBBytes, false},
+		{"Nullable LOB Bytes", converters.DRDATypeNLOBBytes, false},
+		{"Raw Hex 0x10", 0x10, false},
+		{"Raw Hex 0x11", 0x11, false},
+		{"Raw Hex 0xF4", 0xF4, false},
+		{"Raw Hex 0xF5", 0xF5, false},
+		{"Integer", converters.DRDATypeInteger, false},
+		{"VarChar", converters.DRDATypeVarChar, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isCLOBType(tt.typeCode)
+			if got != tt.expected {
+				t.Errorf("isCLOBType(0x%02X) = %v, want %v", tt.typeCode, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsDBCLOBType(t *testing.T) {
+	tests := []struct {
+		name     string
+		typeCode uint8
+		expected bool
+	}{
+		// Positive DBCLOB types
+		{"DRDATypeDBCSCLOBLOC", converters.DRDATypeDBCSCLOBLOC, true},
+		{"DRDATypeNDBCSCLOBLOC", converters.DRDATypeNDBCSCLOBLOC, true},
+
+		// Raw Hex Codes supported in isDBCLOBType
+		{"Raw Hex 0xCD", 0xCD, true},
+		{"Raw Hex 0xF8", 0xF8, true},
+		{"Raw Hex 0xF9", 0xF9, true},
+
+		// Non-DBCLOB Types (Negative Cases)
+		{"CLOB Locator", converters.DRDATypeCLOBLOC, false},
+		{"Nullable CLOB Locator", converters.DRDATypeNCLOBLOC, false},
+		{"BLOB Locator", converters.DRDATypeLOBLOC, false},
+		{"LOB Bytes", converters.DRDATypeLOBBytes, false},
+		{"LOBCSBCS", converters.DRDATypeLOBCSBCS, false},
+		{"XML", converters.DRDATypeXML, false},
+		{"Raw Hex 0xF6", 0xF6, false},
+		{"Raw Hex 0xF7", 0xF7, false},
+		{"Integer", converters.DRDATypeInteger, false},
+		{"VarChar", converters.DRDATypeVarChar, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isDBCLOBType(tt.typeCode)
+			if got != tt.expected {
+				t.Errorf("isDBCLOBType(0x%02X) = %v, want %v", tt.typeCode, got, tt.expected)
+			}
+		})
 	}
 }
 
