@@ -97,3 +97,78 @@ func TestEncryptPasswordSECMEC9(t *testing.T) {
 		t.Fatalf("Decrypted password mismatch! Got: '%s', expected: '%s'", string(decrypted), password)
 	}
 }
+
+func TestPkcs5Pad(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      []byte
+		blockSize int
+		expected  []byte
+	}{
+		{
+			name:      "data shorter than block size",
+			data:      []byte("hello"), // 5 bytes
+			blockSize: 8,
+			expected:  []byte{'h', 'e', 'l', 'l', 'o', 0x03, 0x03, 0x03},
+		},
+		{
+			name:      "data equal to block size",
+			data:      []byte("12345678"), // 8 bytes
+			blockSize: 8,
+			expected:  []byte{'1', '2', '3', '4', '5', '6', '7', '8', 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08},
+		},
+		{
+			name:      "data longer than block size but not multiple",
+			data:      []byte("1234567890"), // 10 bytes
+			blockSize: 8,
+			expected:  []byte{'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 0x06, 0x06, 0x06, 0x06, 0x06, 0x06},
+		},
+		{
+			name:      "data multiple of block size (larger than 1 block)",
+			data:      []byte("1234567890123456"), // 16 bytes
+			blockSize: 8,
+			expected:  append([]byte("1234567890123456"), bytes.Repeat([]byte{0x08}, 8)...),
+		},
+		{
+			name:      "empty input slice",
+			data:      []byte{},
+			blockSize: 8,
+			expected:  []byte{0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08},
+		},
+		{
+			name:      "nil input slice",
+			data:      nil,
+			blockSize: 8,
+			expected:  []byte{0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08},
+		},
+		{
+			name:      "larger block size (AES 16 bytes)",
+			data:      []byte("secret_data"), // 11 bytes
+			blockSize: 16,
+			expected:  append([]byte("secret_data"), bytes.Repeat([]byte{0x05}, 5)...),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pkcs5Pad(tt.data, tt.blockSize)
+
+			// 1. Check total length equals len(data) + padding
+			paddingNeeded := tt.blockSize - (len(tt.data) % tt.blockSize)
+			expectedLen := len(tt.data) + paddingNeeded
+			if len(got) != expectedLen {
+				t.Errorf("len(pkcs5Pad()) = %d; want %d", len(got), expectedLen)
+			}
+
+			// 2. Check prefix matches original data
+			if len(tt.data) > 0 && !bytes.Equal(got[:len(tt.data)], tt.data) {
+				t.Errorf("prefix mismatch: got %v, want %v", got[:len(tt.data)], tt.data)
+			}
+
+			// 3. Check full padded result against expected slice
+			if !bytes.Equal(got, tt.expected) {
+				t.Errorf("pkcs5Pad() = %v; want %v", got, tt.expected)
+			}
+		})
+	}
+}
