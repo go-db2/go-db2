@@ -1,6 +1,7 @@
 package db2
 
 import (
+	"math"
 	"testing"
 )
 
@@ -77,6 +78,18 @@ func TestDetectAndExtractBatch_BytesNotTreatedAsBatch(t *testing.T) {
 	}
 	if isBatch {
 		t.Fatalf("expected []byte to be treated as scalar BLOB, not batch slice")
+	}
+}
+
+func TestDetectAndExtractBatch_OverflowProtection(t *testing.T) {
+	// [math.MaxInt/2 + 100]struct{} has 0-size elements so it requires 0 memory allocation,
+	// but its reflect.Len() will trigger the integer overflow check when numCols >= 2.
+	var hugeArray [math.MaxInt/2 + 100]struct{}
+	rawArgs := []any{hugeArray, hugeArray}
+
+	_, _, err := detectAndExtractBatch(rawArgs)
+	if err == nil {
+		t.Fatalf("expected error due to batchSize * numCols integer overflow, got nil")
 	}
 }
 

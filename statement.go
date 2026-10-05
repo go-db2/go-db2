@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"time"
@@ -469,6 +470,10 @@ func detectAndExtractBatch(rawArgs []any) (bool, [][]any, error) {
 	}
 
 	numCols := len(rawArgs)
+	if numCols > 0 && batchSize > math.MaxInt/numCols {
+		return false, nil, fmt.Errorf("db2: batch size too large (%d rows, %d cols)", batchSize, numCols)
+	}
+
 	// Optimization: Allocate a single contiguous backing slice for all row arguments.
 	// This reduces heap allocations for batch extraction from 1+batchSize down to 2 allocations,
 	// reducing memory overhead and improving batch parameter extraction throughput by ~20-25%.
