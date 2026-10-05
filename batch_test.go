@@ -79,3 +79,61 @@ func TestDetectAndExtractBatch_BytesNotTreatedAsBatch(t *testing.T) {
 		t.Fatalf("expected []byte to be treated as scalar BLOB, not batch slice")
 	}
 }
+
+func BenchmarkDetectAndExtractBatch_100Rows(b *testing.B) {
+	ids := make([]int, 100)
+	names := make([]string, 100)
+	prices := make([]float64, 100)
+	for i := 0; i < 100; i++ {
+		ids[i] = i
+		names[i] = "item"
+		prices[i] = float64(i) * 1.5
+	}
+	tenantID := "tenant-123"
+	rawArgs := []any{ids, tenantID, names, prices}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, err := detectAndExtractBatch(rawArgs)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDetectAndExtractBatch_1000Rows(b *testing.B) {
+	ids := make([]int, 1000)
+	names := make([]string, 1000)
+	prices := make([]float64, 1000)
+	for i := 0; i < 1000; i++ {
+		ids[i] = i
+		names[i] = "item"
+		prices[i] = float64(i) * 1.5
+	}
+	tenantID := "tenant-123"
+	rawArgs := []any{ids, tenantID, names, prices}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, err := detectAndExtractBatch(rawArgs)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDetectAndExtractBatch_Scalar(b *testing.B) {
+	blob := []byte{0x01, 0x02, 0x03, 0x04}
+	rawArgs := []any{101, "sample-name", 99.9, blob}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, err := detectAndExtractBatch(rawArgs)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

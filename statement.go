@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/go-db2/go-db2/network"
 	"github.com/go-db2/go-db2/types"
@@ -402,21 +403,59 @@ func (s *Stmt) CheckNamedValue(nv *driver.NamedValue) error {
 	return nil
 }
 
+func getSliceLen(arg any) (int, bool) {
+	switch v := arg.(type) {
+	case nil, int, int64, int32, int16, int8, uint, uint64, uint32, uint16, string, float64, float32, bool, time.Time, []byte:
+		return 0, false
+
+	case []int:
+		return len(v), true
+	case []int64:
+		return len(v), true
+	case []int32:
+		return len(v), true
+	case []int16:
+		return len(v), true
+	case []int8:
+		return len(v), true
+	case []uint:
+		return len(v), true
+	case []uint64:
+		return len(v), true
+	case []uint32:
+		return len(v), true
+	case []uint16:
+		return len(v), true
+	case []string:
+		return len(v), true
+	case []float64:
+		return len(v), true
+	case []float32:
+		return len(v), true
+	case []bool:
+		return len(v), true
+	case []time.Time:
+		return len(v), true
+	case []any:
+		return len(v), true
+	case []driver.Value:
+		return len(v), true
+	default:
+		val := reflect.ValueOf(arg)
+		if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
+			return val.Len(), true
+		}
+		return 0, false
+	}
+}
+
 func detectAndExtractBatch(rawArgs []any) (bool, [][]any, error) {
 	batchSize := 0
 	hasSlice := false
 
 	for _, arg := range rawArgs {
-		if arg == nil {
-			continue
-		}
-		if _, isBytes := arg.([]byte); isBytes {
-			continue
-		}
-		val := reflect.ValueOf(arg)
-		if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
+		if sliceLen, isSlice := getSliceLen(arg); isSlice {
 			hasSlice = true
-			sliceLen := val.Len()
 			if batchSize == 0 {
 				batchSize = sliceLen
 			} else if sliceLen != batchSize {
@@ -429,26 +468,100 @@ func detectAndExtractBatch(rawArgs []any) (bool, [][]any, error) {
 		return false, nil, nil
 	}
 
+	numCols := len(rawArgs)
 	batchRows := make([][]any, batchSize)
 	for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
-		row := make([]any, len(rawArgs))
-		for colIdx, arg := range rawArgs {
-			if arg == nil {
-				row[colIdx] = nil
-				continue
+		batchRows[rowIdx] = make([]any, numCols)
+	}
+
+	for colIdx, arg := range rawArgs {
+		if arg == nil {
+			continue
+		}
+		if _, isBytes := arg.([]byte); isBytes {
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = arg
 			}
-			if _, isBytes := arg.([]byte); isBytes {
-				row[colIdx] = arg
-				continue
+			continue
+		}
+
+		switch v := arg.(type) {
+		case []int:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
 			}
+		case []int64:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []int32:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []int16:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []int8:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []uint:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []uint64:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []uint32:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []uint16:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []string:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []float64:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []float32:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []bool:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []time.Time:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []any:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case []driver.Value:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		default:
 			val := reflect.ValueOf(arg)
 			if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
-				row[colIdx] = val.Index(rowIdx).Interface()
+				for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+					batchRows[rowIdx][colIdx] = val.Index(rowIdx).Interface()
+				}
 			} else {
-				row[colIdx] = arg
+				for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+					batchRows[rowIdx][colIdx] = arg
+				}
 			}
 		}
-		batchRows[rowIdx] = row
 	}
 
 	return true, batchRows, nil
