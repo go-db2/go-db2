@@ -164,6 +164,7 @@ func BenchmarkIsPrintableUTF8(b *testing.B) {
 		{"ASCII_Printable", []byte("CUSTOMER_ID_123456789_COLUMN_NAME")},
 		{"ASCII_Control", []byte("CUSTOMER_ID\n123456789_COLUMN_NAME")},
 		{"NonASCII_UTF8", []byte("München_København_日本語_🚀")},
+		{"Mixed_NonASCII_Control", []byte("München\x01World")},
 		{"Invalid_UTF8", []byte{0xFF, 0xFE, 0xFD, 0xFC}},
 	}
 
@@ -496,6 +497,16 @@ func TestIsPrintableUTF8(t *testing.T) {
 			name:     "Non-ASCII printable UTF-8 Emojis and Symbols",
 			input:    []byte("🚀 Db2 Go Driver ✨ 🗄️"),
 			expected: true,
+		},
+		{
+			name:     "Mixed non-ASCII printable with ASCII control char",
+			input:    []byte("München\x01World"),
+			expected: false,
+		},
+		{
+			name:     "Non-ASCII printable with trailing ASCII control char",
+			input:    []byte("é\x01"),
+			expected: false,
 		},
 		{
 			name:     "Invalid UTF-8 truncated multibyte sequence",
