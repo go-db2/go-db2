@@ -45,6 +45,7 @@ func TestEncodePackedDecimalParam_InvalidPrecScaleBounds(t *testing.T) {
 	}{
 		{"NegativeScale", 10, -1},
 		{"NegativePrec", -5, 0},
+		{"ZeroPrec", 0, 0},
 		{"PrecExceedsMax", 32, 2},
 		{"ScaleExceedsPrec", 5, 6},
 	}

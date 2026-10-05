@@ -74,6 +74,9 @@ func EncodeUTF16BE(s string) []byte {
 
 // PadGraphicUTF16BE pads a UTF-16 BE byte slice with DBCS spaces (0x0020) up to targetCharLen characters.
 func PadGraphicUTF16BE(b []byte, targetCharLen int) []byte {
+	if targetCharLen <= 0 {
+		return nil
+	}
 	currentChars := len(b) / 2
 	if currentChars >= targetCharLen {
 		return b[:targetCharLen*2]

@@ -48,6 +48,18 @@ func TestGraphicPadding(t *testing.T) {
 	}
 }
 
+func TestGraphicPadding_NonPositiveTargetLen(t *testing.T) {
+	encoded := EncodeUTF16BE("DB2")
+
+	// Verify non-positive target lengths return nil without panicking
+	for _, targetLen := range []int{0, -1, -10} {
+		res := PadGraphicUTF16BE(encoded, targetLen)
+		if res != nil {
+			t.Errorf("expected nil for targetCharLen=%d, got %v", targetLen, res)
+		}
+	}
+}
+
 func TestDecodeField_GraphicAndVarGraph(t *testing.T) {
 	// 1. DRDATypeGraphic with padding
 	rawGraphic := PadGraphicUTF16BE(EncodeUTF16BE("IBM"), 5) // 5 chars = 10 bytes

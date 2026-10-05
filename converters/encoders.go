@@ -328,7 +328,7 @@ func encodePackedDecimalParam(val any, prec, scale int) ([]byte, error) {
 // appendPackedDecimalParam encodes a Go value into IBM DRDA packed decimal parameter format and appends to dst.
 // Optimization: Uses local stack buffer formatting for numeric types to eliminate intermediate string allocations.
 func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, error) {
-	if prec < 0 || scale < 0 || prec > 31 || scale > prec {
+	if prec < 1 || scale < 0 || prec > 31 || scale > prec {
 		return dst, fmt.Errorf("db2: invalid decimal precision (%d) or scale (%d)", prec, scale)
 	}
 
