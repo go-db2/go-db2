@@ -156,6 +156,28 @@ func TestParseQRYDSC(t *testing.T) {
 	})
 }
 
+func BenchmarkIsPrintableUTF8(b *testing.B) {
+	benchmarks := []struct {
+		name  string
+		input []byte
+	}{
+		{"ASCII_Printable", []byte("CUSTOMER_ID_123456789_COLUMN_NAME")},
+		{"ASCII_Control", []byte("CUSTOMER_ID\n123456789_COLUMN_NAME")},
+		{"NonASCII_UTF8", []byte("München_København_日本語_🚀")},
+		{"Invalid_UTF8", []byte{0xFF, 0xFE, 0xFD, 0xFC}},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = isPrintableUTF8(bm.input)
+			}
+		})
+	}
+}
+
 func packDDMString(s string) []byte {
 	buf := make([]byte, 2+len(s))
 	binary.BigEndian.PutUint16(buf[0:2], uint16(len(s)))

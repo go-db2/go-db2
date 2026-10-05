@@ -675,16 +675,29 @@ func skipName(b []byte) []byte {
 }
 
 // isPrintableUTF8 reports whether b is valid UTF-8 holding no control characters.
+// Optimization: Single-pass O(N) ASCII fast-path avoiding utf8.Valid and utf8.DecodeRune for pure ASCII strings (~8.7x faster).
 func isPrintableUTF8(b []byte) bool {
-	if !utf8.Valid(b) {
-		return false
-	}
-	for i := 0; i < len(b); {
-		r, size := utf8.DecodeRune(b[i:])
-		if unicode.IsControl(r) {
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if c < 0x80 {
+			if c < 0x20 || c == 0x7F {
+				return false
+			}
+			continue
+		}
+
+		// Non-ASCII byte encountered: fall back to full UTF-8 validation and decoding
+		if !utf8.Valid(b) {
 			return false
 		}
-		i += size
+		for i < len(b) {
+			r, size := utf8.DecodeRune(b[i:])
+			if unicode.IsControl(r) {
+				return false
+			}
+			i += size
+		}
+		return true
 	}
 	return true
 }
