@@ -97,3 +97,8 @@
 
 **Learning:** In `detectAndExtractBatch`, creating individual row slices via `make([]any, numCols)` inside a loop over `batchSize` created `1 + batchSize` heap allocations. Allocating a single contiguous backing slice (`backing := make([]any, batchSize*numCols)`) and slicing sub-buffers for each row reduces slice allocations down to 2, speeding up batch parameter extraction throughput by ~20-25% and saving 100-1000 heap allocations per batch execution.
 **Action:** When constructing multi-row argument matrices where dimensions are known upfront, allocate a single backing slice and slice row buffers from it instead of allocating row slices individually in a loop.
+
+## 2026-10-05 - Inlined Case-Local Stack Array Buffers in Switch Decoders
+
+**Learning:** Declaring a temporary stack buffer (`var stackBuf [128]byte`) at the top level of a decoder function like `DecodeField` forces Go's escape analysis to move `stackBuf` to the heap for ALL execution paths (including scalar integer, smallint, float, and boolean branches that never use `stackBuf`), adding 128 bytes of heap allocation to every function call. Moving `stackBuf` declarations down into individual `switch` cases localizes variable scope so scalar numeric branches avoid heap allocations entirely. This accelerated integer field decoding by ~1.9x (181.1 ns -> 94.6 ns/op) and reduced heap memory allocation by 70% (184 B -> 56 B/op).
+**Action:** When using temporary stack array buffers inside `switch` statements, declare the stack buffers locally inside the individual `case` clauses that need them rather than at the top level of the function to prevent non-buffer branches from incurring heap allocation overhead.
