@@ -80,8 +80,12 @@ func BuildGSSAPIToken(apReqBytes []byte) ([]byte, error) {
 		header = []byte{0x60, byte(length)}
 	} else if length < 256 {
 		header = []byte{0x60, 0x81, byte(length)}
-	} else {
+	} else if length < 65536 {
 		header = []byte{0x60, 0x82, byte(length >> 8), byte(length & 0xFF)}
+	} else if length < 16777216 {
+		header = []byte{0x60, 0x83, byte(length >> 16), byte((length >> 8) & 0xFF), byte(length & 0xFF)}
+	} else {
+		header = []byte{0x60, 0x84, byte(length >> 24), byte((length >> 16) & 0xFF), byte((length >> 8) & 0xFF), byte(length & 0xFF)}
 	}
 
 	return append(header, payload...), nil
@@ -167,6 +171,10 @@ func ParseKeytab(data []byte) ([]KeytabEntry, error) {
 			}
 			components = append(components, string(entryData[pos:pos+cLen]))
 			pos += cLen
+		}
+
+		if len(components) < numComponents {
+			continue
 		}
 
 		principal := strings.Join(components, "/")
