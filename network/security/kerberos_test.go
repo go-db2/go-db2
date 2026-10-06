@@ -285,6 +285,63 @@ func TestBuildGSSAPIToken_LargePayload(t *testing.T) {
 	}
 }
 
+func TestBuildGSSAPIToken_LengthBoundaryTransitions(t *testing.T) {
+	tests := []struct {
+		name            string
+		apReqSize       int
+		expectedTag     byte
+		headerHeaderLen int
+	}{
+		{
+			name:            "Boundary 65,535 bytes (0x82 tag)",
+			apReqSize:       65535 - 13, // total payload = 65,535
+			expectedTag:     0x82,
+			headerHeaderLen: 4, // 0x60 + 0x82 + 2 bytes len
+		},
+		{
+			name:            "Boundary 65,536 bytes (0x83 tag transition)",
+			apReqSize:       65536 - 13, // total payload = 65,536
+			expectedTag:     0x83,
+			headerHeaderLen: 5, // 0x60 + 0x83 + 3 bytes len
+		},
+		{
+			name:            "Boundary 16,777,215 bytes (0x83 tag)",
+			apReqSize:       16777215 - 13, // total payload = 16,777,215
+			expectedTag:     0x83,
+			headerHeaderLen: 5, // 0x60 + 0x83 + 3 bytes len
+		},
+		{
+			name:            "Boundary 16,777,216 bytes (0x84 tag transition)",
+			apReqSize:       16777216 - 13, // total payload = 16,777,216
+			expectedTag:     0x84,
+			headerHeaderLen: 6, // 0x60 + 0x84 + 4 bytes len
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			apReq := make([]byte, tt.apReqSize)
+			token, err := BuildGSSAPIToken(apReq)
+			if err != nil {
+				t.Fatalf("BuildGSSAPIToken() error: %v", err)
+			}
+
+			if token[0] != 0x60 {
+				t.Fatalf("expected ASN.1 tag 0x60, got 0x%02X", token[0])
+			}
+
+			if token[1] != tt.expectedTag {
+				t.Fatalf("expected length tag 0x%02X, got 0x%02X", tt.expectedTag, token[1])
+			}
+
+			expectedTotalLen := tt.headerHeaderLen + tt.apReqSize + 13
+			if len(token) != expectedTotalLen {
+				t.Fatalf("expected token total length %d, got %d", expectedTotalLen, len(token))
+			}
+		})
+	}
+}
+
 func TestParseKeytab_TruncatedComponent(t *testing.T) {
 	// Construct keytab entry with numComponents = 2, but provide only 1 component and truncate entryData
 	var entryBody []byte
