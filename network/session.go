@@ -1512,6 +1512,7 @@ func sanitizeClientRegister(val string) string {
 	return strings.ReplaceAll(val, "\n", "")
 }
 
+// escapeSingleQuotes sanitizes and escapes single quote characters for SQL literal strings.
 func escapeSingleQuotes(val string) string {
 	return strings.ReplaceAll(sanitizeClientRegister(val), "'", "''")
 }

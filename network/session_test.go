@@ -192,6 +192,32 @@ func TestQuoteIdentifier(t *testing.T) {
 	}
 }
 
+func TestEscapeSingleQuotes_ControlCharactersAndBackslashes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"Single quote doubling", "User'sApp", "User''sApp"},
+		{"Multiple single quotes", "a'b'c'd", "a''b''c''d"},
+		{"Null byte removal", "User\x00App", "UserApp"},
+		{"Carriage return removal", "User\rApp", "UserApp"},
+		{"Line feed removal", "User\nApp", "UserApp"},
+		{"Combined CRLF and quotes", "User\r\n's\x00App", "User''sApp"},
+		{"Backslash preservation", "C:\\Program Files\\App", "C:\\Program Files\\App"},
+		{"Backslash with single quotes", "C:\\User's\\App", "C:\\User''s\\App"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := escapeSingleQuotes(tt.input)
+			if got != tt.expected {
+				t.Errorf("escapeSingleQuotes(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestEscapeSingleQuotes(t *testing.T) {
 	tests := []struct {
 		input    string
