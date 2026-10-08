@@ -716,4 +716,50 @@ func TestSecurity_ClientInfo_CRLF_Sanitization(t *testing.T) {
 	}
 }
 
+// 21. SEC-21: sql.Out nil destination pointer dereference protection
+func TestSecurity_SqlOut_NilDestinationPanicProtection(t *testing.T) {
+	conn := &Conn{
+		session: &network.Session{},
+	}
+	stmt := NewStmt(conn, "CALL MY_PROC(?)", nil, []network.ColumnDescription{
+		{SQLType: uint16(types.SQLTypeInteger)},
+	})
+
+	testCases := []struct {
+		name string
+		arg  driver.NamedValue
+	}{
+		{
+			name: "sql.Out with untyped nil Dest",
+			arg:  driver.NamedValue{Ordinal: 1, Value: sql.Out{Dest: nil}},
+		},
+		{
+			name: "sql.Out with typed nil pointer Dest",
+			arg:  driver.NamedValue{Ordinal: 1, Value: sql.Out{Dest: (*int)(nil)}},
+		},
+		{
+			name: "*sql.Out with untyped nil Dest",
+			arg:  driver.NamedValue{Ordinal: 1, Value: &sql.Out{Dest: nil}},
+		},
+		{
+			name: "*sql.Out with typed nil pointer Dest",
+			arg:  driver.NamedValue{Ordinal: 1, Value: &sql.Out{Dest: (*int32)(nil)}},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("execContextLocked panicked on %s: %v", tc.name, r)
+				}
+			}()
+
+			_, err := stmt.ExecContext(context.Background(), []driver.NamedValue{tc.arg})
+			// Connection/session is dummy, so we expect a non-panic execution error or nil if handled
+			_ = err
+		})
+	}
+}
+
 var _ driver.Stmt = (*Stmt)(nil)

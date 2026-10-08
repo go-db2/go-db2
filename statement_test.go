@@ -138,6 +138,30 @@ func TestHasBlobParams(t *testing.T) {
 	}
 }
 
+func TestAssignOutParam_NilSafety(t *testing.T) {
+	// 1. Untyped nil dest
+	if err := assignOutParam(nil, "value"); err != nil {
+		t.Errorf("assignOutParam(nil, 'value') = %v, want nil", err)
+	}
+
+	// 2. Untyped nil val
+	var target int
+	if err := assignOutParam(&target, nil); err != nil {
+		t.Errorf("assignOutParam(&target, nil) = %v, want nil", err)
+	}
+
+	// 3. Non-pointer dest
+	if err := assignOutParam(target, 42); err == nil {
+		t.Errorf("assignOutParam(non-pointer) expected error, got nil")
+	}
+
+	// 4. Typed nil pointer dest
+	var nilPtr *int
+	if err := assignOutParam(nilPtr, 42); err == nil {
+		t.Errorf("assignOutParam(typed nil ptr) expected error, got nil")
+	}
+}
+
 func TestRewriteBinaryParams(t *testing.T) {
 	tests := []struct {
 		name              string

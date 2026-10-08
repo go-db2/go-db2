@@ -95,7 +95,12 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		case sql.Out:
 			outTargets = append(outTargets, outInfo{index: i, dest: v.Dest})
 			if v.Dest != nil {
-				rawArgs[i] = reflect.ValueOf(v.Dest).Elem().Interface()
+				val := reflect.ValueOf(v.Dest)
+				if val.Kind() == reflect.Ptr && !val.IsNil() {
+					rawArgs[i] = val.Elem().Interface()
+				} else {
+					rawArgs[i] = 0
+				}
 			} else {
 				rawArgs[i] = 0
 			}
@@ -103,7 +108,12 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 			if v != nil {
 				outTargets = append(outTargets, outInfo{index: i, dest: v.Dest})
 				if v.Dest != nil {
-					rawArgs[i] = reflect.ValueOf(v.Dest).Elem().Interface()
+					val := reflect.ValueOf(v.Dest)
+					if val.Kind() == reflect.Ptr && !val.IsNil() {
+						rawArgs[i] = val.Elem().Interface()
+					} else {
+						rawArgs[i] = 0
+					}
 				} else {
 					rawArgs[i] = 0
 				}
