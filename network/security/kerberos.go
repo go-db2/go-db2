@@ -146,6 +146,11 @@ func ParseKeytab(data []byte) ([]KeytabEntry, error) {
 		numComponents := int(uint16(entryData[pos])<<8 | uint16(entryData[pos+1]))
 		pos += 2
 
+		maxComponents := (len(entryData) - pos) / 2
+		if numComponents > maxComponents {
+			return nil, fmt.Errorf("db2/kerberos: invalid keytab entry num_components (%d exceeds remaining bytes)", numComponents)
+		}
+
 		// Parse realm
 		if pos+2 > len(entryData) {
 			continue
