@@ -558,22 +558,11 @@ func ParseSQLDTARD(data []byte, endian binary.ByteOrder) ([]any, error) {
 		ps  [2]byte
 	}
 
-	// First pass: Calculate total field count to allocate slice with exact capacity once
-	totalFields := 0
-	pos := 0
-	for pos+3 <= len(dscBytes) {
-		groupLen := int(dscBytes[pos])
-		if groupLen < 3 || pos+groupLen > len(dscBytes) {
-			break
-		}
-		if dscBytes[pos+1] == 0x76 {
-			totalFields += groupLen/3 - 1
-		}
-		pos += groupLen
-	}
+	// Optimization: Single pass descriptor parsing using stack buffer for standard field counts (<= 32 fields) to eliminate heap allocations and loop overhead.
+	var stackFields [32]triplet
+	fields := stackFields[:0]
 
-	fields := make([]triplet, 0, totalFields)
-	pos = 0
+	pos := 0
 	for pos+3 <= len(dscBytes) {
 		groupLen := int(dscBytes[pos])
 		if groupLen < 3 || pos+groupLen > len(dscBytes) {
@@ -593,21 +582,21 @@ func ParseSQLDTARD(data []byte, endian binary.ByteOrder) ([]any, error) {
 		pos += groupLen
 	}
 
-	r := bytes.NewReader(dtaBytes)
-	if r.Len() >= 2 {
+	br := bytes.NewReader(dtaBytes)
+	if br.Len() >= 2 {
 		var hdr [2]byte
-		_, _ = io.ReadFull(r, hdr[:])
+		_, _ = io.ReadFull(br, hdr[:])
 		if hdr[0] != 0xFF {
-			r = bytes.NewReader(dtaBytes)
+			br.Reset(dtaBytes)
 		}
 	}
 
 	results := make([]any, 0, len(fields))
 	for _, f := range fields {
-		if r.Len() == 0 {
+		if br.Len() == 0 {
 			break
 		}
-		val, err := DecodeField(f.typ, f.ps[:], r, endian)
+		val, err := DecodeField(f.typ, f.ps[:], br, endian)
 		if err != nil {
 			return results, err
 		}
