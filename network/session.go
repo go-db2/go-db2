@@ -51,10 +51,19 @@ type SessionConfig struct {
 	ClientCorrToken   string
 }
 
+func sanitizeLogString(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // String implements fmt.Stringer to ensure sensitive credentials (Password) are redacted in logs.
 func (s SessionConfig) String() string {
 	return fmt.Sprintf("SessionConfig{Host:%s, Port:%d, Database:%s, User:%s, Password:\"******\", UseSSL:%t, Timeout:%v}",
-		s.Host, s.Port, s.Database, s.User, s.UseSSL, s.Timeout)
+		sanitizeLogString(s.Host), s.Port, sanitizeLogString(s.Database), sanitizeLogString(s.User), s.UseSSL, s.Timeout)
 }
 
 // GoString implements fmt.GoStringer to ensure sensitive credentials (Password) are redacted in logs.

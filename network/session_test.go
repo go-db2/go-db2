@@ -524,6 +524,56 @@ func BenchmarkQuoteIdentifier_NoQuotes(b *testing.B) {
 	}
 }
 
+func TestSessionConfig_StringAndGoString(t *testing.T) {
+	cfg := SessionConfig{
+		Host:     "db2.example.com",
+		Port:     50000,
+		Database: "TESTDB",
+		User:     "db2admin",
+		Password: "super_secret_password",
+		UseSSL:   true,
+		Timeout:  10 * time.Second,
+	}
+
+	expected := `SessionConfig{Host:db2.example.com, Port:50000, Database:TESTDB, User:db2admin, Password:"******", UseSSL:true, Timeout:10s}`
+
+	if str := cfg.String(); str != expected {
+		t.Errorf("SessionConfig.String() = %q, want %q", str, expected)
+	}
+	if goStr := cfg.GoString(); goStr != expected {
+		t.Errorf("SessionConfig.GoString() = %q, want %q", goStr, expected)
+	}
+
+	if strings.Contains(cfg.String(), "super_secret_password") {
+		t.Errorf("SessionConfig.String() leaked sensitive password!")
+	}
+}
+
+func TestSessionConfig_SanitizeLogInjection(t *testing.T) {
+	cfg := SessionConfig{
+		Host:     "db2.example.com\r\n[SECURITY] Fake log entry",
+		Port:     50000,
+		Database: "TESTDB\nINJECTED",
+		User:     "db2admin\x00user",
+		Password: "super_secret_password",
+		UseSSL:   true,
+		Timeout:  10 * time.Second,
+	}
+
+	expected := `SessionConfig{Host:db2.example.com[SECURITY] Fake log entry, Port:50000, Database:TESTDBINJECTED, User:db2adminuser, Password:"******", UseSSL:true, Timeout:10s}`
+
+	if str := cfg.String(); str != expected {
+		t.Errorf("SessionConfig.String() = %q, want %q", str, expected)
+	}
+	if goStr := cfg.GoString(); goStr != expected {
+		t.Errorf("SessionConfig.GoString() = %q, want %q", goStr, expected)
+	}
+
+	if strings.Contains(cfg.String(), "\r") || strings.Contains(cfg.String(), "\n") || strings.Contains(cfg.String(), "\x00") {
+		t.Errorf("SessionConfig.String() contains unsanitized control characters!")
+	}
+}
+
 func BenchmarkQuoteIdentifier_WithQuotes(b *testing.B) {
 	name := `TEST_"DATABASE"_IDENTIFIER`
 	b.ReportAllocs()

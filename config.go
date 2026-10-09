@@ -56,10 +56,19 @@ type Config struct {
 	Params            map[string]string
 }
 
+func sanitizeLogString(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // String implements fmt.Stringer to ensure sensitive credentials (Password) are redacted in logs.
 func (c Config) String() string {
 	return fmt.Sprintf("Config{Host:%s, Port:%d, Database:%s, User:%s, Password:\"******\", UseSSL:%t, Timeout:%v}",
-		c.Host, c.Port, c.Database, c.User, c.UseSSL, c.Timeout)
+		sanitizeLogString(c.Host), c.Port, sanitizeLogString(c.Database), sanitizeLogString(c.User), c.UseSSL, c.Timeout)
 }
 
 // GoString implements fmt.GoStringer to ensure sensitive credentials (Password) are redacted in logs.

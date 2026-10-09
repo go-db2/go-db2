@@ -214,3 +214,28 @@ func TestConfig_StringAndGoString(t *testing.T) {
 		t.Errorf("Config.GoString() leaked sensitive password!")
 	}
 }
+
+func TestConfig_SanitizeLogInjection(t *testing.T) {
+	cfg := Config{
+		Host:     "db2.example.com\r\n[SECURITY] Fake log entry",
+		Port:     50000,
+		Database: "TESTDB\nINJECTED",
+		User:     "db2admin\x00user",
+		Password: "super_secret_password",
+		UseSSL:   true,
+		Timeout:  10 * time.Second,
+	}
+
+	expected := `Config{Host:db2.example.com[SECURITY] Fake log entry, Port:50000, Database:TESTDBINJECTED, User:db2adminuser, Password:"******", UseSSL:true, Timeout:10s}`
+
+	if str := cfg.String(); str != expected {
+		t.Errorf("Config.String() = %q, want %q", str, expected)
+	}
+	if goStr := cfg.GoString(); goStr != expected {
+		t.Errorf("Config.GoString() = %q, want %q", goStr, expected)
+	}
+
+	if strings.Contains(cfg.String(), "\r") || strings.Contains(cfg.String(), "\n") || strings.Contains(cfg.String(), "\x00") {
+		t.Errorf("Config.String() contains unsanitized control characters!")
+	}
+}
