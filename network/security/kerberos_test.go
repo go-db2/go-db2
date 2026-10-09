@@ -342,6 +342,26 @@ func TestBuildGSSAPIToken_LengthBoundaryTransitions(t *testing.T) {
 	}
 }
 
+func TestParseKeytab_MalformedNumComponents(t *testing.T) {
+	// Construct keytab entry claiming numComponents = 10000 (0x2710) in a 20-byte payload
+	var entryBody []byte
+	entryBody = append(entryBody, 0x27, 0x10) // numComponents = 10000
+	entryBody = append(entryBody, 0x00, 0x04) // realmLen = 4
+	entryBody = append(entryBody, []byte("TEST")...)
+	entryBody = append(entryBody, make([]byte, 10)...)
+
+	var data []byte
+	data = append(data, 0x05, 0x02) // Keytab v2 header
+	eLen := uint32(len(entryBody))
+	data = append(data, byte(eLen>>24), byte(eLen>>16), byte(eLen>>8), byte(eLen&0xFF))
+	data = append(data, entryBody...)
+
+	_, err := ParseKeytab(data)
+	if err == nil {
+		t.Fatal("expected error for keytab entry with malformed numComponents exceeding remaining bytes, got nil")
+	}
+}
+
 func TestParseKeytab_TruncatedComponent(t *testing.T) {
 	// Construct keytab entry with numComponents = 2, but provide only 1 component and truncate entryData
 	var entryBody []byte
