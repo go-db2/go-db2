@@ -83,44 +83,56 @@ func PackUint32(cp CodePoint, val uint32) []byte {
 }
 
 // PackString encodes a string into a DDM parameter object using the specified encoding.
+// Optimization: Direct single-buffer allocation for UTF-8/default strings eliminates intermediate []byte slice heap allocations.
 func PackString(cp CodePoint, val string, enc StringEncoding) ([]byte, error) {
-	var encoded []byte
-	var err error
-
-	switch enc {
-	case EncodingCP500:
-		encoded, err = converters.EncodeCP500(val)
+	if enc == EncodingCP500 {
+		encoded, err := converters.EncodeCP500(val)
 		if err != nil {
 			return nil, fmt.Errorf("failed to encode string to CP500: %w", err)
 		}
-	default:
-		encoded = []byte(val)
+		return PackDDMObject(cp, encoded), nil
 	}
 
-	return PackDDMObject(cp, encoded), nil
+	totalLen := len(val) + 4
+	if totalLen <= 0x7FFF {
+		buf := make([]byte, totalLen)
+		binary.BigEndian.PutUint16(buf[0:2], uint16(totalLen))
+		binary.BigEndian.PutUint16(buf[2:4], uint16(cp))
+		copy(buf[4:], val)
+		return buf, nil
+	}
+
+	buf := make([]byte, 8+len(val))
+	binary.BigEndian.PutUint16(buf[0:2], 0x8008)
+	binary.BigEndian.PutUint16(buf[2:4], uint16(cp))
+	binary.BigEndian.PutUint32(buf[4:8], uint32(len(val)))
+	copy(buf[8:], val)
+	return buf, nil
 }
 
 // PackNullString encodes a nullable string for SQL statements / parameters.
+// Optimization: Direct single-buffer allocation for UTF-8/default strings eliminates intermediate []byte slice heap allocations.
 func PackNullString(val *string, enc StringEncoding) []byte {
 	if val == nil {
 		return []byte{0xFF}
 	}
-	var b []byte
-	switch enc {
-	case EncodingCP500:
-		var err error
-		b, err = converters.EncodeCP500(*val)
+	if enc == EncodingCP500 {
+		b, err := converters.EncodeCP500(*val)
 		if err != nil {
 			b = []byte(*val)
 		}
-	default:
-		b = []byte(*val)
+		buf := make([]byte, 5+len(b))
+		buf[0] = 0x00
+		binary.BigEndian.PutUint32(buf[1:5], uint32(len(b)))
+		copy(buf[5:], b)
+		return buf
 	}
 
-	buf := make([]byte, 1+4+len(b))
+	s := *val
+	buf := make([]byte, 5+len(s))
 	buf[0] = 0x00
-	binary.BigEndian.PutUint32(buf[1:5], uint32(len(b)))
-	copy(buf[5:], b)
+	binary.BigEndian.PutUint32(buf[1:5], uint32(len(s)))
+	copy(buf[5:], s)
 	return buf
 }
 

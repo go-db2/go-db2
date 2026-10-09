@@ -706,6 +706,46 @@ func BenchmarkPackOPNQRY(b *testing.B) {
 	}
 }
 
+func BenchmarkPackString(b *testing.B) {
+	b.Run("UTF8", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = PackString(CodePointSQLSTT, str, EncodingUTF8)
+		}
+	})
+
+	b.Run("CP500", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = PackString(CodePointSQLSTT, str, EncodingCP500)
+		}
+	})
+}
+
+func BenchmarkPackNullString(b *testing.B) {
+	b.Run("UTF8", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = PackNullString(&str, EncodingUTF8)
+		}
+	})
+
+	b.Run("CP500", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = PackNullString(&str, EncodingCP500)
+		}
+	})
+}
+
 func BenchmarkPackSQLSTT(b *testing.B) {
 	sql := "SELECT ID, NAME, SALARY FROM EMPLOYEE WHERE DEPT = ?"
 	b.ReportAllocs()
