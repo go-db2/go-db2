@@ -103,6 +103,8 @@ func PackString(cp CodePoint, val string, enc StringEncoding) ([]byte, error) {
 	}
 
 	buf := make([]byte, 8+len(val))
+	// 0x8008 sets the 0x8000 extended length indicator bit along with an 8-byte header size
+	// (2-byte length field + 2-byte codepoint + 4-byte uint32 extended payload length).
 	binary.BigEndian.PutUint16(buf[0:2], 0x8008)
 	binary.BigEndian.PutUint16(buf[2:4], uint16(cp))
 	binary.BigEndian.PutUint32(buf[4:8], uint32(len(val)))
