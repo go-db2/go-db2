@@ -56,28 +56,41 @@ func init() {
 var ErrInvalidEBCDIC = errors.New("character cannot be encoded to CP500 EBCDIC")
 
 // EncodeCP500 encodes a UTF-8 Go string into IBM CP500 EBCDIC bytes.
-// Optimization: Scans input string for ASCII bytes (<= 0x7F) and valid mapping before allocating to avoid double allocations on non-ASCII or unmapped inputs (~2.0x faster for ASCII).
+// Optimization: Delegates to AppendCP500 to avoid duplicate allocation logic.
 func EncodeCP500(s string) ([]byte, error) {
+	return AppendCP500(nil, s)
+}
+
+// AppendCP500 encodes a UTF-8 Go string into IBM CP500 EBCDIC bytes, appending directly onto dst.
+// Optimization: Appends encoded EBCDIC bytes directly onto dst, eliminating intermediate slice heap allocations.
+func AppendCP500(dst []byte, s string) ([]byte, error) {
 	i := 0
 	for i < len(s) && s[i] <= 0x7F && unicodeToCP500Valid[s[i]] {
 		i++
 	}
 	if i == len(s) {
-		buf := make([]byte, len(s))
-		for j := 0; j < len(s); j++ {
-			buf[j] = unicodeToCP500Direct[s[j]]
+		origLen := len(dst)
+		needed := len(s)
+		if cap(dst)-origLen < needed {
+			newBuf := make([]byte, origLen, origLen+needed)
+			copy(newBuf, dst)
+			dst = newBuf
 		}
-		return buf, nil
+		dst = dst[:origLen+needed]
+		out := dst[origLen:]
+		for j := 0; j < len(s); j++ {
+			out[j] = unicodeToCP500Direct[s[j]]
+		}
+		return dst, nil
 	}
-	return encodeCP500Slow(s)
+	return appendCP500Slow(dst, s)
 }
 
-func encodeCP500Slow(s string) ([]byte, error) {
-	buf := make([]byte, 0, len(s))
+func appendCP500Slow(dst []byte, s string) ([]byte, error) {
 	for _, r := range s {
 		if r <= 0xFF {
 			if unicodeToCP500Valid[r] {
-				buf = append(buf, unicodeToCP500Direct[r])
+				dst = append(dst, unicodeToCP500Direct[r])
 				continue
 			}
 		}
@@ -85,9 +98,9 @@ func encodeCP500Slow(s string) ([]byte, error) {
 		if !ok {
 			return nil, ErrInvalidEBCDIC
 		}
-		buf = append(buf, b)
+		dst = append(dst, b)
 	}
-	return buf, nil
+	return dst, nil
 }
 
 // DecodeCP500 decodes IBM CP500 EBCDIC bytes into a UTF-8 Go string.

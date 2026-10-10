@@ -163,3 +163,71 @@ func TestEncodeCP500_ASCIIDetection(t *testing.T) {
 		t.Errorf("EncodeCP500 NUL/DEL = %v; want [%v %v]", nulDelEnc, unicodeToCP500Direct[0x00], unicodeToCP500Direct[0x7F])
 	}
 }
+
+func TestAppendCP500(t *testing.T) {
+	tests := []struct {
+		name      string
+		prefix    []byte
+		in        string
+		wantError bool
+	}{
+		{
+			name:      "ASCII_WithPrefix",
+			prefix:    []byte{0x01, 0x02, 0x03, 0x04},
+			in:        "go-db2",
+			wantError: false,
+		},
+		{
+			name:      "ASCII_EmptyPrefix",
+			prefix:    nil,
+			in:        "TESTDB",
+			wantError: false,
+		},
+		{
+			name:      "NonASCII_WithPrefix",
+			prefix:    []byte{0xAA, 0xBB},
+			in:        "São Paulo",
+			wantError: false,
+		},
+		{
+			name:      "UnmappedCharacter_Error",
+			prefix:    []byte{0x10},
+			in:        "日本語",
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prefixCopy := append([]byte(nil), tt.prefix...)
+			got, err := AppendCP500(prefixCopy, tt.in)
+			if tt.wantError {
+				if err == nil {
+					t.Fatalf("AppendCP500(%q) expected error, got nil", tt.in)
+				}
+				if !errors.Is(err, ErrInvalidEBCDIC) {
+					t.Errorf("AppendCP500(%q) err = %v; want %v", tt.in, err, ErrInvalidEBCDIC)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("AppendCP500(%q) unexpected error: %v", tt.in, err)
+			}
+
+			// Verify prefix was preserved
+			if !bytes.HasPrefix(got, tt.prefix) {
+				t.Errorf("AppendCP500 output lost prefix: got %v, want prefix %v", got[:len(tt.prefix)], tt.prefix)
+			}
+
+			// Verify payload matches EncodeCP500
+			payload := got[len(tt.prefix):]
+			wantPayload, err := EncodeCP500(tt.in)
+			if err != nil {
+				t.Fatalf("EncodeCP500(%q) unexpected error: %v", tt.in, err)
+			}
+			if !bytes.Equal(payload, wantPayload) {
+				t.Errorf("AppendCP500 payload = %v; want %v", payload, wantPayload)
+			}
+		})
+	}
+}
