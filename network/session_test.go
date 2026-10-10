@@ -156,7 +156,7 @@ func TestSessionMockHandshake(t *testing.T) {
 	}
 }
 
-func TestSessionConnect_SetClientInfoErrorClosesSession(t *testing.T) {
+func TestSession_Connect_SetClientInfoError(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to start mock listener: %v", err)
@@ -259,8 +259,8 @@ func TestSessionConnect_SetClientInfoErrorClosesSession(t *testing.T) {
 		t.Fatalf("expected Connect to fail when SetClientInfo fails, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "failed to apply client info") {
-		t.Fatalf("expected error message containing 'failed to apply client info', got: %v", err)
+	if !strings.Contains(err.Error(), "failed to apply client info (session closed)") {
+		t.Fatalf("expected error message containing 'failed to apply client info (session closed)', got: %v", err)
 	}
 
 	// Verify session was closed

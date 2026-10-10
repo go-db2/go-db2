@@ -224,7 +224,7 @@ func (s *Session) Connect(ctx context.Context) error {
 		return err
 	}
 
-	// Apply initial Client Info if configured in DSN (outside session mutex)
+	// Apply initial Client Info if configured in DSN (outside session mutex).
 	if s.cfg.ClientApplName != "" || s.cfg.ClientWrkstnName != "" || s.cfg.ClientUserid != "" || s.cfg.ClientAcctng != "" || s.cfg.ClientCorrToken != "" {
 		appl := s.cfg.ClientApplName
 		wrkstn := s.cfg.ClientWrkstnName
@@ -232,6 +232,8 @@ func (s *Session) Connect(ctx context.Context) error {
 		acctng := s.cfg.ClientAcctng
 		corr := s.cfg.ClientCorrToken
 
+		// ResetClientInfo compares target registers against s.cfg in memory.
+		// Clearing s.cfg client info fields ensures SetClientInfo executes the SET CLIENT commands on the Db2 server instead of skipping them thinking they were already set.
 		s.mu.Lock()
 		s.cfg.ClientApplName = ""
 		s.cfg.ClientWrkstnName = ""
@@ -242,7 +244,7 @@ func (s *Session) Connect(ctx context.Context) error {
 
 		if err := s.SetClientInfo(ctx, appl, wrkstn, userid, acctng, corr); err != nil {
 			_ = s.Close()
-			return fmt.Errorf("failed to apply client info: %w", err)
+			return fmt.Errorf("failed to apply client info (session closed): %w", err)
 		}
 	}
 
