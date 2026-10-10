@@ -226,7 +226,9 @@ func (s *Session) Connect(ctx context.Context) error {
 
 	// Apply initial Client Info if configured in DSN (outside session mutex)
 	if s.cfg.ClientApplName != "" || s.cfg.ClientWrkstnName != "" || s.cfg.ClientUserid != "" || s.cfg.ClientAcctng != "" || s.cfg.ClientCorrToken != "" {
-		_ = s.SetClientInfo(ctx, s.cfg.ClientApplName, s.cfg.ClientWrkstnName, s.cfg.ClientUserid, s.cfg.ClientAcctng, s.cfg.ClientCorrToken)
+		if err := s.SetClientInfo(ctx, s.cfg.ClientApplName, s.cfg.ClientWrkstnName, s.cfg.ClientUserid, s.cfg.ClientAcctng, s.cfg.ClientCorrToken); err != nil {
+			return err
+		}
 	}
 
 	return nil
