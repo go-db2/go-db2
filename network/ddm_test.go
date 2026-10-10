@@ -706,6 +706,125 @@ func BenchmarkPackOPNQRY(b *testing.B) {
 	}
 }
 
+func TestPackStringAndPackNullString_Regression(t *testing.T) {
+	t.Run("PackString_SmallUTF8", func(t *testing.T) {
+		str := "SELECT * FROM DUMMY"
+		cp := CodePointSQLSTT
+		got, err := PackString(cp, str, EncodingUTF8)
+		if err != nil {
+			t.Fatalf("PackString failed: %v", err)
+		}
+		want := PackDDMObject(cp, []byte(str))
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackString UTF8 mismatch:\ngot  %X\nwant %X", got, want)
+		}
+	})
+
+	t.Run("PackString_LargeUTF8_ExtendedLength", func(t *testing.T) {
+		str := bytes.Repeat([]byte("A"), 33000)
+		cp := CodePointSQLSTT
+		got, err := PackString(cp, string(str), EncodingUTF8)
+		if err != nil {
+			t.Fatalf("PackString large failed: %v", err)
+		}
+		want := PackDDMObject(cp, str)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackString large UTF8 mismatch: len(got)=%d, len(want)=%d", len(got), len(want))
+		}
+	})
+
+	t.Run("PackString_CP500", func(t *testing.T) {
+		str := "TESTDB"
+		cp := CodePointRDBNAM
+		got, err := PackString(cp, str, EncodingCP500)
+		if err != nil {
+			t.Fatalf("PackString CP500 failed: %v", err)
+		}
+		enc, _ := converters.EncodeCP500(str)
+		want := PackDDMObject(cp, enc)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackString CP500 mismatch:\ngot  %X\nwant %X", got, want)
+		}
+	})
+
+	t.Run("PackNullString_Nil", func(t *testing.T) {
+		got := PackNullString(nil, EncodingUTF8)
+		want := []byte{0xFF}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackNullString nil mismatch: got %X, want %X", got, want)
+		}
+	})
+
+	t.Run("PackNullString_UTF8", func(t *testing.T) {
+		str := "HELLO WORLD"
+		got := PackNullString(&str, EncodingUTF8)
+		var want []byte
+		want = append(want, 0x00)
+		lenBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(lenBytes, uint32(len(str)))
+		want = append(want, lenBytes...)
+		want = append(want, []byte(str)...)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackNullString UTF8 mismatch:\ngot  %X\nwant %X", got, want)
+		}
+	})
+
+	t.Run("PackNullString_CP500", func(t *testing.T) {
+		str := "HELLO WORLD"
+		got := PackNullString(&str, EncodingCP500)
+		enc, _ := converters.EncodeCP500(str)
+		var want []byte
+		want = append(want, 0x00)
+		lenBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(lenBytes, uint32(len(enc)))
+		want = append(want, lenBytes...)
+		want = append(want, enc...)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackNullString CP500 mismatch:\ngot  %X\nwant %X", got, want)
+		}
+	})
+}
+
+func BenchmarkPackString(b *testing.B) {
+	b.Run("UTF8", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = PackString(CodePointSQLSTT, str, EncodingUTF8)
+		}
+	})
+
+	b.Run("CP500", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = PackString(CodePointSQLSTT, str, EncodingCP500)
+		}
+	})
+}
+
+func BenchmarkPackNullString(b *testing.B) {
+	b.Run("UTF8", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = PackNullString(&str, EncodingUTF8)
+		}
+	})
+
+	b.Run("CP500", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = PackNullString(&str, EncodingCP500)
+		}
+	})
+}
+
 func BenchmarkPackSQLSTT(b *testing.B) {
 	sql := "SELECT ID, NAME, SALARY FROM EMPLOYEE WHERE DEPT = ?"
 	b.ReportAllocs()
