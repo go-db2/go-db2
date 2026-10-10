@@ -156,6 +156,123 @@ func TestSessionMockHandshake(t *testing.T) {
 	}
 }
 
+func TestSessionConnect_SetClientInfoErrorClosesSession(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock listener: %v", err)
+	}
+	defer listener.Close()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+
+		// 1. Read EXCSAT + ACCSEC from client
+		for {
+			hdr, cp, _, _, err := ReadDSS(conn)
+			if err != nil {
+				_ = conn.Close()
+				return
+			}
+			if cp == CodePointACCSEC || !hdr.Chained {
+				break
+			}
+		}
+
+		// 2. Respond with ACCSECRD
+		accsecRdBody := PackUint16(CodePointSECMEC, SecMecUSRIDPWD)
+		accsecRdObj := PackDDMObject(CodePointACCSECRD, accsecRdBody)
+		dssHdr := BuildDSSHeader(len(accsecRdObj), DSSTypeReply, false, false, false, 1)
+		_, _ = conn.Write(append(dssHdr, accsecRdObj...))
+
+		// 3. Read SECCHK + ACCRDB from client
+		for {
+			hdr, cp, _, _, err := ReadDSS(conn)
+			if err != nil {
+				_ = conn.Close()
+				return
+			}
+			if cp == CodePointACCRDB || !hdr.Chained {
+				break
+			}
+		}
+
+		// 4. Respond with SECCHKRM and ACCRDBRM
+		secchkRmBody := PackBytes(CodePointSECCHKCD, []byte{0x00})
+		secchkRmObj := PackDDMObject(CodePointSECCHKRM, secchkRmBody)
+		accrdbRmObj := PackDDMObject(CodePointACCRDBRM, nil)
+
+		hdr1 := BuildDSSHeader(len(secchkRmObj), DSSTypeReply, true, false, false, 1)
+		hdr2 := BuildDSSHeader(len(accrdbRmObj), DSSTypeReply, false, false, false, 1)
+
+		var respBuf bytes.Buffer
+		respBuf.Write(hdr1)
+		respBuf.Write(secchkRmObj)
+		respBuf.Write(hdr2)
+		respBuf.Write(accrdbRmObj)
+		_, _ = conn.Write(respBuf.Bytes())
+
+		// 5. Read post-connect setup (EXCSAT -> EXCSQLSET -> SQLSTT -> RDBCMM)
+		for {
+			_, cp, _, _, err := ReadDSS(conn)
+			if err != nil {
+				_ = conn.Close()
+				return
+			}
+			if cp == CodePointRDBCMM {
+				break
+			}
+		}
+
+		sqlcardPayload := make([]byte, 20)
+		sqlcardPayload[0] = 0x00
+		binary.LittleEndian.PutUint32(sqlcardPayload[1:5], 0)
+		copy(sqlcardPayload[5:10], "00000")
+		sqlcardObj := PackDDMObject(CodePointSQLCARD, sqlcardPayload)
+		sqlcardHdr := BuildDSSHeader(len(sqlcardObj), DSSTypeReply, false, false, false, 1)
+		_, _ = conn.Write(append(sqlcardHdr, sqlcardObj...))
+
+		// 6. Read SetClientInfo request and then close connection to cause SetClientInfo failure
+		_, _, _, _, _ = ReadDSS(conn)
+		_ = conn.Close()
+	}()
+
+	session := NewSession(SessionConfig{
+		Host:           "127.0.0.1",
+		Port:           port,
+		Database:       "SAMPLE",
+		User:           "db2inst1",
+		Password:       "password",
+		ClientApplName: "failing_appl_name",
+		Timeout:        2 * time.Second,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err = session.Connect(ctx)
+	if err == nil {
+		t.Fatalf("expected Connect to fail when SetClientInfo fails, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "failed to apply client info") {
+		t.Fatalf("expected error message containing 'failed to apply client info', got: %v", err)
+	}
+
+	// Verify session was closed
+	session.mu.Lock()
+	closed := session.closed
+	session.mu.Unlock()
+
+	if !closed {
+		t.Fatalf("expected session to be closed after SetClientInfo error in Connect")
+	}
+}
+
 func TestPackSQLINTR(t *testing.T) {
 	pkgid := "SYSSH200"
 	pkgcnstkn := "SYSLVL01"

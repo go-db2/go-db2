@@ -226,8 +226,23 @@ func (s *Session) Connect(ctx context.Context) error {
 
 	// Apply initial Client Info if configured in DSN (outside session mutex)
 	if s.cfg.ClientApplName != "" || s.cfg.ClientWrkstnName != "" || s.cfg.ClientUserid != "" || s.cfg.ClientAcctng != "" || s.cfg.ClientCorrToken != "" {
-		if err := s.SetClientInfo(ctx, s.cfg.ClientApplName, s.cfg.ClientWrkstnName, s.cfg.ClientUserid, s.cfg.ClientAcctng, s.cfg.ClientCorrToken); err != nil {
-			return err
+		appl := s.cfg.ClientApplName
+		wrkstn := s.cfg.ClientWrkstnName
+		userid := s.cfg.ClientUserid
+		acctng := s.cfg.ClientAcctng
+		corr := s.cfg.ClientCorrToken
+
+		s.mu.Lock()
+		s.cfg.ClientApplName = ""
+		s.cfg.ClientWrkstnName = ""
+		s.cfg.ClientUserid = ""
+		s.cfg.ClientAcctng = ""
+		s.cfg.ClientCorrToken = ""
+		s.mu.Unlock()
+
+		if err := s.SetClientInfo(ctx, appl, wrkstn, userid, acctng, corr); err != nil {
+			_ = s.Close()
+			return fmt.Errorf("failed to apply client info: %w", err)
 		}
 	}
 
