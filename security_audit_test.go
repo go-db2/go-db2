@@ -496,14 +496,46 @@ func TestSecurity_NullByteSanitization_AdminCmd(t *testing.T) {
 
 // 16. SEC-16: Context Metadata (WithUser & WithClientInfo) Enforcement in Prepared Statements
 func TestSecurity_PreparedStatement_ContextMetadata(t *testing.T) {
-	sess := network.NewSession(network.SessionConfig{Database: "TESTDB"})
-	conn := &Conn{session: sess}
+	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+		switch cp {
+		case network.CodePointEXCSQLSET, network.CodePointRDBCMM:
+			return writeSQLCARDOK(c)
+		}
+		return false
+	})
+
+	db, err := sql.Open("db2", "db2://BASEUSER:password@"+srv.addr+"/TESTDB?ssl=false")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	driverConn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("db.Conn failed: %v", err)
+	}
+	defer driverConn.Close()
+
+	var conn *Conn
+	err = driverConn.Raw(func(raw any) error {
+		if c, ok := raw.(*Conn); ok {
+			conn = c
+		}
+		return nil
+	})
+	if err != nil || conn == nil {
+		t.Fatalf("failed to extract *Conn: %v", err)
+	}
+
 	stmt := NewStmt(conn, "SELECT 1 FROM SYSIBM.SYSDUMMY1", nil, nil)
 
 	maliciousCtx := WithUser(context.Background(), "ADMIN; DROP TABLE USERS; --")
 
 	// 1. Stmt.ExecContext must enforce user validation / switching
-	_, err := stmt.ExecContext(maliciousCtx, nil)
+	_, err = stmt.ExecContext(maliciousCtx, nil)
 	if err == nil {
 		t.Fatal("expected error executing Stmt.ExecContext with malicious WithUser, got nil (authorization bypass!)")
 	}

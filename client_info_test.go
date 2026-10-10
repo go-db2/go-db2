@@ -153,3 +153,19 @@ func TestSetClientInfo_CorrelationToken(t *testing.T) {
 		t.Error("expected error calling SetClientInfo on closed connection, got nil")
 	}
 }
+
+func TestApplyContextMetadata_SetClientInfoError(t *testing.T) {
+	sess := network.NewSession(network.SessionConfig{Database: "TESTDB"})
+	conn := NewConn(sess, &Config{Database: "TESTDB"})
+
+	// Close connection so SetClientInfo will fail
+	_ = conn.Close()
+
+	info := ClientInfo{ApplicationName: "failing_app"}
+	clientCtx := WithClientInfo(context.Background(), info)
+
+	err := conn.applyContextMetadata(clientCtx)
+	if err == nil {
+		t.Fatal("expected applyContextMetadata to propagate SetClientInfo error when connection is closed, got nil")
+	}
+}

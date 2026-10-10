@@ -42,7 +42,9 @@ func (c *Conn) applyContextMetadata(ctx context.Context) error {
 	}
 
 	if clientInfo := ClientInfoFromContext(ctx); !clientInfo.IsEmpty() {
-		_ = c.session.SetClientInfo(ctx, clientInfo.ApplicationName, clientInfo.WorkstationName, clientInfo.UserID, clientInfo.Accounting, clientInfo.CorrelationToken)
+		if err := c.session.SetClientInfo(ctx, clientInfo.ApplicationName, clientInfo.WorkstationName, clientInfo.UserID, clientInfo.Accounting, clientInfo.CorrelationToken); err != nil {
+			return err
+		}
 	}
 	return nil
 }
