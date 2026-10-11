@@ -187,12 +187,32 @@ func stripLeadingCommentsAndSpaces(sql string) string {
 	return s
 }
 
+// hasPrefixFold reports whether s begins with prefix (expected to be uppercase ASCII),
+// ignoring ASCII case differences.
+// Optimization: Checks bytes inline without converting s to upper case via strings.ToUpper,
+// eliminating heap allocations and full-string scanning overhead (0 allocs/op, O(1) prefix time).
+func hasPrefixFold(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' {
+			c -= 'a' - 'A'
+		}
+		if c != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func isQueryStatement(sql string) bool {
-	cleaned := strings.ToUpper(stripLeadingCommentsAndSpaces(sql))
-	return strings.HasPrefix(cleaned, "SELECT") ||
-		strings.HasPrefix(cleaned, "WITH") ||
-		strings.HasPrefix(cleaned, "VALUES") ||
-		strings.HasPrefix(cleaned, "TABLE")
+	s := stripLeadingCommentsAndSpaces(sql)
+	return hasPrefixFold(s, "SELECT") ||
+		hasPrefixFold(s, "WITH") ||
+		hasPrefixFold(s, "VALUES") ||
+		hasPrefixFold(s, "TABLE")
 }
 
 // CurrentUser returns the currently active user on this connection.

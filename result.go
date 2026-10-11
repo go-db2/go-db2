@@ -80,8 +80,8 @@ func (r *Result) RowsAffected() (int64, error) {
 }
 
 func isInsertQuery(sql string) bool {
-	trimmed := strings.ToUpper(stripLeadingCommentsAndSpaces(sql))
-	return strings.HasPrefix(trimmed, "INSERT")
+	s := stripLeadingCommentsAndSpaces(sql)
+	return hasPrefixFold(s, "INSERT")
 }
 
 func parseIdentityValue(val any) (int64, error) {

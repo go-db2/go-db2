@@ -229,8 +229,8 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		return nil, fmt.Errorf("db2: expected %d arguments, got %d", len(s.paramCols), len(args))
 	}
 
-	trimmed := strings.ToUpper(stripLeadingCommentsAndSpaces(s.query))
-	if strings.HasPrefix(trimmed, "CALL") || len(s.outputCols) == 0 {
+	sQuery := stripLeadingCommentsAndSpaces(s.query)
+	if hasPrefixFold(sQuery, "CALL") || len(s.outputCols) == 0 {
 		_, err := s.execContextLocked(ctx, args)
 		if err != nil {
 			return nil, err

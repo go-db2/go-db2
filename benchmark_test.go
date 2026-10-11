@@ -125,6 +125,24 @@ func BenchmarkDecodeField_PackedDecimal(b *testing.B) {
 	}
 }
 
+func BenchmarkIsQueryStatement(b *testing.B) {
+	query := "  \n -- get active users\n /* multi line comment */ \n SELECT id, name, email FROM users WHERE status = 'ACTIVE' AND age >= 18 ORDER BY created_at DESC"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = isQueryStatement(query)
+	}
+}
+
+func BenchmarkIsInsertQuery(b *testing.B) {
+	query := "  \n -- insert user record\n INSERT INTO users (id, name, email, status) VALUES (101, 'Alice Smith', 'alice@example.com', 'ACTIVE')"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = isInsertQuery(query)
+	}
+}
+
 func BenchmarkBuildSQLDTA(b *testing.B) {
 	colTypes := []types.SQLType{types.SQLTypeInteger, types.SQLTypeVarChar, types.SQLTypeDecimal}
 	colLens := []int64{4, 100, 10}
