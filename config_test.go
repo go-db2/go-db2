@@ -109,6 +109,47 @@ func TestParseDSN_Invalid(t *testing.T) {
 	}
 }
 
+func TestParseDSN_RedactPassword_SpecialChars(t *testing.T) {
+	secretPwd := "SecretP@ssw0rd!Special@123"
+
+	// 1. URL DSN with @ in password and invalid port error
+	urlDSN := fmt.Sprintf("db2://admin:%s@localhost:invalidport/sample", secretPwd)
+	_, err := ParseDSN(urlDSN)
+	if err == nil {
+		t.Fatal("expected error for invalid port in URL DSN, got nil")
+	}
+	if strings.Contains(err.Error(), secretPwd) {
+		t.Fatalf("ParseDSN leaked password in error message: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "******") {
+		t.Fatalf("ParseDSN error message missing '******' redaction: %s", err.Error())
+	}
+
+	// 2. Key-Value DSN with password and invalid port
+	kvDSN := fmt.Sprintf("host=localhost;port=abc;database=db;user=admin;password=%s;", secretPwd)
+	_, err = ParseDSN(kvDSN)
+	if err != nil && strings.Contains(err.Error(), secretPwd) {
+		t.Fatalf("ParseDSN KV error leaked password: %s", err.Error())
+	}
+
+	// 3. Verify redactDSNPassword function directly on strings with special characters
+	redactedURL := redactDSNPassword(urlDSN)
+	if strings.Contains(redactedURL, secretPwd) {
+		t.Fatalf("redactDSNPassword failed to redact URL password containing '@': %s", redactedURL)
+	}
+	if !strings.Contains(redactedURL, "******") {
+		t.Fatalf("redactDSNPassword did not insert '******' into URL string: %s", redactedURL)
+	}
+
+	redactedKV := redactDSNPassword(kvDSN)
+	if strings.Contains(redactedKV, secretPwd) {
+		t.Fatalf("redactDSNPassword failed to redact KV password: %s", redactedKV)
+	}
+	if !strings.Contains(redactedKV, "******") {
+		t.Fatalf("redactDSNPassword did not insert '******' into KV string: %s", redactedKV)
+	}
+}
+
 func TestParseDSN_Kerberos(t *testing.T) {
 	dsn := "db2://localhost:50000/TESTDB?security_mechanism=kerberos&spn=db2/server.corp.local@CORP.LOCAL&krb5_config=/etc/krb5.conf&krb5_keytab=/etc/db2.keytab&krb5_ccache=/tmp/krb5cc_1000"
 	cfg, err := ParseDSN(dsn)
