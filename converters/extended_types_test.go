@@ -99,6 +99,22 @@ func TestEncodeDFP_EdgeCasesAndValidation(t *testing.T) {
 		{"ExponentOutOfRangeLow", "1.23E-500", 8},
 	}
 
+	t.Run("MantissaTruncationPreservesMagnitude", func(t *testing.T) {
+		input := "12345678901234567890"
+		b, err := EncodeDFP(input, 8)
+		if err != nil {
+			t.Fatalf("EncodeDFP(%s, 8) error: %v", input, err)
+		}
+		decoded, err := DecodeDFP(b)
+		if err != nil {
+			t.Fatalf("DecodeDFP error: %v", err)
+		}
+		expected := "12345678901234560000"
+		if decoded != expected {
+			t.Errorf("EncodeDFP(%s, 8) decoded = %q, want %q", input, decoded, expected)
+		}
+	})
+
 	for _, tc := range invalidCases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := EncodeDFP(tc.input, tc.nBytes)

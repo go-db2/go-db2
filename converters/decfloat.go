@@ -305,6 +305,7 @@ func EncodeDFP(val any, nBytes int) ([]byte, error) {
 	}
 
 	if len(mantissaStr) > maxDigits {
+		exp += len(mantissaStr) - maxDigits
 		mantissaStr = mantissaStr[:maxDigits]
 	}
 

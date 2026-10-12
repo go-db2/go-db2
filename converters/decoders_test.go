@@ -99,6 +99,22 @@ func TestDecodePackedDecimal_LargePayload(t *testing.T) {
 	}
 }
 
+func TestDecodePackedDecimal_NegativeScale(t *testing.T) {
+	// 123 in packed decimal (0x12, 0x3C) with scale = -2 -> "12300"
+	b := []byte{0x12, 0x3C}
+	res := DecodePackedDecimal(b, -2)
+	if res != "12300" {
+		t.Errorf("DecodePackedDecimal with scale -2 = %q, want %q", res, "12300")
+	}
+
+	// Negative number -456 with scale = -3 -> "-456000"
+	bNeg := []byte{0x45, 0x6D}
+	resNeg := DecodePackedDecimal(bNeg, -3)
+	if resNeg != "-456000" {
+		t.Errorf("DecodePackedDecimal with scale -3 = %q, want %q", resNeg, "-456000")
+	}
+}
+
 func TestParseSQLDTARD_TableDriven(t *testing.T) {
 	// Helper to create an object header (uint16 len + uint16 codepoint)
 	makeObj := func(cp uint16, body []byte) []byte {
