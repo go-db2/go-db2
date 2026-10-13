@@ -641,6 +641,33 @@ func BenchmarkQuoteIdentifier_NoQuotes(b *testing.B) {
 	}
 }
 
+func BenchmarkEscapeSingleQuotes_Clean(b *testing.B) {
+	val := "my_application_name_123"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = escapeSingleQuotes(val)
+	}
+}
+
+func BenchmarkEscapeSingleQuotes_WithQuotes(b *testing.B) {
+	val := "User's Application Identifier '2026'"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = escapeSingleQuotes(val)
+	}
+}
+
+func BenchmarkEscapeSingleQuotes_WithControlChars(b *testing.B) {
+	val := "User\r\n's\x00Application\n"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = escapeSingleQuotes(val)
+	}
+}
+
 func TestSessionConfig_StringAndGoString(t *testing.T) {
 	cfg := SessionConfig{
 		Host:     "db2.example.com",

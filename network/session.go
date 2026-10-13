@@ -1535,14 +1535,44 @@ func (s *Session) SetClientInfo(ctx context.Context, applName, wrkstnName, useri
 }
 
 func sanitizeClientRegister(val string) string {
-	val = strings.ReplaceAll(val, "\x00", "")
-	val = strings.ReplaceAll(val, "\r", "")
-	return strings.ReplaceAll(val, "\n", "")
+	idx := strings.IndexAny(val, "\x00\r\n")
+	if idx == -1 {
+		return val
+	}
+	var sb strings.Builder
+	sb.Grow(len(val))
+	sb.WriteString(val[:idx])
+	for i := idx; i < len(val); i++ {
+		ch := val[i]
+		if ch != '\x00' && ch != '\r' && ch != '\n' {
+			sb.WriteByte(ch)
+		}
+	}
+	return sb.String()
 }
 
 // escapeSingleQuotes sanitizes and escapes single quote characters for SQL literal strings.
+// Optimization: Fast-path using strings.IndexAny returns clean strings immediately (0 allocs) and uses a single pre-allocated strings.Builder pass for escaping/sanitizing modified strings.
 func escapeSingleQuotes(val string) string {
-	return strings.ReplaceAll(sanitizeClientRegister(val), "'", "''")
+	idx := strings.IndexAny(val, "\x00\r\n'")
+	if idx == -1 {
+		return val
+	}
+	var sb strings.Builder
+	sb.Grow(len(val) + 8)
+	sb.WriteString(val[:idx])
+	for i := idx; i < len(val); i++ {
+		ch := val[i]
+		switch ch {
+		case '\x00', '\r', '\n':
+			// skip control characters
+		case '\'':
+			sb.WriteString("''")
+		default:
+			sb.WriteByte(ch)
+		}
+	}
+	return sb.String()
 }
 
 // Interrupt requests cancellation of any active statement on the session via SQLINTR.
