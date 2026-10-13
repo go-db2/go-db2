@@ -13,9 +13,21 @@ import (
 )
 
 var (
-	dsnPasswordURLRegex = regexp.MustCompile(`(://[^:]+:)(.*)(@([a-zA-Z0-9.\-_\[\]]+)(:[^/\?\s"']+)?(/|\?|#|\s|"|'|$))`)
+	dsnPasswordURLRegex = regexp.MustCompile(`(://[^:]+:)([^/\?\s#]+)(@([a-zA-Z0-9.\-_\[\]]*)(:[^/\?\s"']+)?(/|\?|#|\s|"|'|$))`)
 	dsnPasswordKVRegex  = regexp.MustCompile(`(?i)\b(password|pwd)\s*=\s*("[^"]*"|'[^']*'|[^;]+)`)
 )
+
+type redactedError struct {
+	err error
+}
+
+func (e *redactedError) Error() string {
+	return redactDSNPassword(e.err.Error())
+}
+
+func (e *redactedError) Unwrap() error {
+	return e.err
+}
 
 func redactDSNPassword(s string) string {
 	s = dsnPasswordURLRegex.ReplaceAllString(s, "${1}******${3}")
@@ -108,7 +120,7 @@ func ParseDSN(dsn string) (*Config, error) {
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("%s", redactDSNPassword(err.Error()))
+		return nil, &redactedError{err: err}
 	}
 
 	return cfg, nil

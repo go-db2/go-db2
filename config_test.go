@@ -1,6 +1,7 @@
 package db2
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -118,6 +119,9 @@ func TestParseDSN_RedactPassword_SpecialChars(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid port in URL DSN, got nil")
 	}
+	if !errors.Is(err, ErrInvalidConnectionStr) {
+		t.Fatalf("expected errors.Is(err, ErrInvalidConnectionStr) to be true, got err=%v", err)
+	}
 	if strings.Contains(err.Error(), secretPwd) {
 		t.Fatalf("ParseDSN leaked password in error message: %s", err.Error())
 	}
@@ -125,11 +129,20 @@ func TestParseDSN_RedactPassword_SpecialChars(t *testing.T) {
 		t.Fatalf("ParseDSN error message missing '******' redaction: %s", err.Error())
 	}
 
-	// 2. Key-Value DSN with password and invalid port
-	kvDSN := fmt.Sprintf("host=localhost;port=abc;database=db;user=admin;password=%s;", secretPwd)
+	// 2. Key-Value DSN with password and malformed URL scheme error
+	kvDSN := fmt.Sprintf("db2://admin:%s@:invalidport/sample", secretPwd)
 	_, err = ParseDSN(kvDSN)
-	if err != nil && strings.Contains(err.Error(), secretPwd) {
+	if err == nil {
+		t.Fatal("expected error for malformed host/port, got nil")
+	}
+	if !errors.Is(err, ErrInvalidConnectionStr) {
+		t.Fatalf("expected errors.Is(err, ErrInvalidConnectionStr) to be true, got err=%v", err)
+	}
+	if strings.Contains(err.Error(), secretPwd) {
 		t.Fatalf("ParseDSN KV error leaked password: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "******") {
+		t.Fatalf("ParseDSN error message missing '******' redaction: %s", err.Error())
 	}
 
 	// 3. Verify redactDSNPassword function directly on strings with special characters
@@ -141,12 +154,30 @@ func TestParseDSN_RedactPassword_SpecialChars(t *testing.T) {
 		t.Fatalf("redactDSNPassword did not insert '******' into URL string: %s", redactedURL)
 	}
 
-	redactedKV := redactDSNPassword(kvDSN)
+	redactedKV := redactDSNPassword(fmt.Sprintf("host=localhost;port=50000;database=db;user=admin;password=%s;", secretPwd))
 	if strings.Contains(redactedKV, secretPwd) {
 		t.Fatalf("redactDSNPassword failed to redact KV password: %s", redactedKV)
 	}
 	if !strings.Contains(redactedKV, "******") {
 		t.Fatalf("redactDSNPassword did not insert '******' into KV string: %s", redactedKV)
+	}
+}
+
+func TestParseDSN_KerberosSPN_RedactionPreservation(t *testing.T) {
+	secretPwd := "SecretP@ss123"
+	spn := "db2/server.corp.local@CORP.LOCAL"
+	dsn := fmt.Sprintf("db2://user:%s@localhost:50000/TESTDB?spn=%s", secretPwd, spn)
+
+	redacted := redactDSNPassword(dsn)
+	if strings.Contains(redacted, secretPwd) {
+		t.Fatalf("redactDSNPassword failed to redact password: %s", redacted)
+	}
+	if !strings.Contains(redacted, spn) {
+		t.Fatalf("redactDSNPassword mutilated Kerberos SPN parameter in query string: %s", redacted)
+	}
+	expected := fmt.Sprintf("db2://user:******@localhost:50000/TESTDB?spn=%s", spn)
+	if redacted != expected {
+		t.Fatalf("redacted string mismatch: got %q, want %q", redacted, expected)
 	}
 }
 
