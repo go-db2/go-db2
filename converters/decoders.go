@@ -468,6 +468,13 @@ func DecodePackedDecimal(b []byte, scale int) string {
 	significant := digits[start:pos]
 	numSig := len(significant)
 
+	if numSig == 1 && significant[0] == '0' && scale < 0 {
+		if isNegative {
+			return "-0"
+		}
+		return "0"
+	}
+
 	negLen := 0
 	if isNegative {
 		negLen = 1

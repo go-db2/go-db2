@@ -114,11 +114,11 @@ func TestDecodePackedDecimal_NegativeScale(t *testing.T) {
 		t.Errorf("DecodePackedDecimal with scale -3 = %q, want %q", resNeg, "-456000")
 	}
 
-	// Zero in packed decimal (0x00, 0x0C) with scale = -2 -> "000"
+	// Zero in packed decimal (0x00, 0x0C) with scale = -2 -> "0"
 	bZero := []byte{0x00, 0x0C}
 	resZero := DecodePackedDecimal(bZero, -2)
-	if resZero != "000" {
-		t.Errorf("DecodePackedDecimal zero with scale -2 = %q, want %q", resZero, "000")
+	if resZero != "0" {
+		t.Errorf("DecodePackedDecimal zero with scale -2 = %q, want %q", resZero, "0")
 	}
 }
 
