@@ -393,3 +393,32 @@ func TestParseKeytab_TruncatedComponent(t *testing.T) {
 		t.Fatalf("expected 0 entries for truncated component keytab, got %d", len(entries))
 	}
 }
+
+func TestAcquireKerberosToken_MalformedKeytabNoSecretLeak(t *testing.T) {
+	// Create a temp malformed keytab file containing secret key material
+	secretMaterial := []byte("CORRUPTED_KEYTAB_SECRET_KEY_MATERIAL_1234567890")
+	tmpFile, err := os.CreateTemp("", "malformed_keytab_*.keytab")
+	if err != nil {
+		t.Fatalf("Failed to create temp keytab: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.Write(secretMaterial); err != nil {
+		t.Fatalf("Failed to write temp keytab: %v", err)
+	}
+	_ = tmpFile.Close()
+
+	cfg := KerberosConfig{
+		KeytabFile: tmpFile.Name(),
+		Host:       "db2host",
+	}
+
+	token, err := AcquireKerberosToken(cfg)
+	if err == nil {
+		t.Fatalf("expected error when parsing malformed keytab, got token of len %d (raw secret bytes leaked!)", len(token))
+	}
+
+	if bytes.Contains(token, secretMaterial) {
+		t.Fatal("SECURITY LEAK: GSSAPI token returned raw keytab secret bytes")
+	}
+}

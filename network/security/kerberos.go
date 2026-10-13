@@ -312,27 +312,36 @@ func AcquireKerberosToken(cfg KerberosConfig) ([]byte, error) {
 
 	// Check keytab binary file
 	if cfg.KeytabFile != "" {
-		if data, err := os.ReadFile(cfg.KeytabFile); err == nil && len(data) > 0 {
-			entries, parseErr := ParseKeytab(data)
-			if parseErr == nil && len(entries) > 0 {
-				// Find matching principal or use first entry
-				var selectedEntry *KeytabEntry
-				for _, ent := range entries {
-					if strings.EqualFold(ent.Principal, spn) || strings.EqualFold(ent.Principal, cfg.Username) {
-						selectedEntry = &ent
-						break
-					}
-				}
-				if selectedEntry == nil {
-					selectedEntry = &entries[0]
-				}
-
-				ticketPayload := []byte(fmt.Sprintf("KRB5_KEYTAB_TOKEN:%s:KVNO=%d:TYPE=%d", selectedEntry.Principal, selectedEntry.KVNO, selectedEntry.KeyType))
-				return BuildGSSAPIToken(ticketPayload)
-			}
-			// Fallback: wrap raw keytab bytes if parser encounters non-standard format
-			return BuildGSSAPIToken(data)
+		data, err := os.ReadFile(cfg.KeytabFile)
+		if err != nil {
+			return nil, fmt.Errorf("db2/kerberos: failed to read keytab file %q: %w", cfg.KeytabFile, err)
 		}
+		if len(data) == 0 {
+			return nil, fmt.Errorf("db2/kerberos: keytab file %q is empty", cfg.KeytabFile)
+		}
+
+		entries, parseErr := ParseKeytab(data)
+		if parseErr != nil {
+			return nil, fmt.Errorf("db2/kerberos: failed to parse keytab file %q: %w", cfg.KeytabFile, parseErr)
+		}
+		if len(entries) == 0 {
+			return nil, fmt.Errorf("db2/kerberos: keytab file %q contains no valid entries", cfg.KeytabFile)
+		}
+
+		// Find matching principal or use first entry
+		var selectedEntry *KeytabEntry
+		for _, ent := range entries {
+			if strings.EqualFold(ent.Principal, spn) || strings.EqualFold(ent.Principal, cfg.Username) {
+				selectedEntry = &ent
+				break
+			}
+		}
+		if selectedEntry == nil {
+			selectedEntry = &entries[0]
+		}
+
+		ticketPayload := []byte(fmt.Sprintf("KRB5_KEYTAB_TOKEN:%s:KVNO=%d:TYPE=%d", selectedEntry.Principal, selectedEntry.KVNO, selectedEntry.KeyType))
+		return BuildGSSAPIToken(ticketPayload)
 	}
 
 	return nil, fmt.Errorf("db2/kerberos: no authentic Kerberos credentials found for SPN %q (specify a valid krb5_keytab, krb5_ccache, or GSSAPI token)", spn)
