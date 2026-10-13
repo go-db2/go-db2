@@ -113,6 +113,13 @@ func TestDecodePackedDecimal_NegativeScale(t *testing.T) {
 	if resNeg != "-456000" {
 		t.Errorf("DecodePackedDecimal with scale -3 = %q, want %q", resNeg, "-456000")
 	}
+
+	// Zero in packed decimal (0x00, 0x0C) with scale = -2 -> "000"
+	bZero := []byte{0x00, 0x0C}
+	resZero := DecodePackedDecimal(bZero, -2)
+	if resZero != "000" {
+		t.Errorf("DecodePackedDecimal zero with scale -2 = %q, want %q", resZero, "000")
+	}
 }
 
 func TestParseSQLDTARD_TableDriven(t *testing.T) {

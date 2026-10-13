@@ -115,6 +115,15 @@ func TestEncodeDFP_EdgeCasesAndValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("MantissaTruncationExponentOverflowCheck", func(t *testing.T) {
+		// Near max exponent where truncating digits pushes exponent over max allowed (maxBiasedExp 767 -> exp 369)
+		input := "12345678901234567890E+366"
+		_, err := EncodeDFP(input, 8)
+		if err == nil {
+			t.Fatalf("expected error due to exponent overflow after mantissa truncation, got nil")
+		}
+	})
+
 	for _, tc := range invalidCases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := EncodeDFP(tc.input, tc.nBytes)

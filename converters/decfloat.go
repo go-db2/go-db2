@@ -304,6 +304,8 @@ func EncodeDFP(val any, nBytes int) ([]byte, error) {
 		mantissaStr = "0"
 	}
 
+	// Truncate mantissa digits exceeding maxDigits (16 for DECFLOAT(16), 34 for DECFLOAT(34))
+	// and adjust exponent accordingly to preserve overall numerical magnitude.
 	if len(mantissaStr) > maxDigits {
 		exp += len(mantissaStr) - maxDigits
 		mantissaStr = mantissaStr[:maxDigits]
