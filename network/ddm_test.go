@@ -747,6 +747,20 @@ func TestPackStringAndPackNullString_Regression(t *testing.T) {
 		}
 	})
 
+	t.Run("PackString_LargeCP500_ExtendedLength", func(t *testing.T) {
+		str := bytes.Repeat([]byte("A"), 33000)
+		cp := CodePointSQLSTT
+		got, err := PackString(cp, string(str), EncodingCP500)
+		if err != nil {
+			t.Fatalf("PackString large CP500 failed: %v", err)
+		}
+		enc, _ := converters.EncodeCP500(string(str))
+		want := PackDDMObject(cp, enc)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackString large CP500 mismatch: len(got)=%d, len(want)=%d", len(got), len(want))
+		}
+	})
+
 	t.Run("PackNullString_Nil", func(t *testing.T) {
 		got := PackNullString(nil, EncodingUTF8)
 		want := []byte{0xFF}

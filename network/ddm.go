@@ -83,14 +83,28 @@ func PackUint32(cp CodePoint, val uint32) []byte {
 }
 
 // PackString encodes a string into a DDM parameter object using the specified encoding.
-// Optimization: Direct single-buffer allocation for UTF-8/default strings eliminates intermediate []byte slice heap allocations.
+// Optimization: Direct single-buffer allocation for both UTF-8 and CP500 strings eliminates intermediate []byte slice heap allocations.
 func PackString(cp CodePoint, val string, enc StringEncoding) ([]byte, error) {
 	if enc == EncodingCP500 {
-		encoded, err := converters.EncodeCP500(val)
+		// Allocate header buffer with initial capacity hint using UTF-8 length
+		buf := make([]byte, 4, 4+len(val))
+		binary.BigEndian.PutUint16(buf[2:4], uint16(cp))
+		encoded, err := converters.AppendCP500(buf, val)
 		if err != nil {
 			return nil, fmt.Errorf("failed to encode string to CP500: %w", err)
 		}
-		return PackDDMObject(cp, encoded), nil
+		payloadLen := len(encoded) - 4
+		if 4+payloadLen <= 0x7FFF {
+			binary.BigEndian.PutUint16(encoded[0:2], uint16(4+payloadLen))
+			return encoded, nil
+		}
+
+		// Extended length object required (>32KB)
+		extBuf := make([]byte, 8, 8+payloadLen)
+		binary.BigEndian.PutUint16(extBuf[0:2], 0x8008)
+		binary.BigEndian.PutUint16(extBuf[2:4], uint16(cp))
+		binary.BigEndian.PutUint32(extBuf[4:8], uint32(payloadLen))
+		return append(extBuf, encoded[4:]...), nil
 	}
 
 	totalLen := len(val) + 4
@@ -113,24 +127,29 @@ func PackString(cp CodePoint, val string, enc StringEncoding) ([]byte, error) {
 }
 
 // PackNullString encodes a nullable string for SQL statements / parameters.
-// Optimization: Direct single-buffer allocation for UTF-8/default strings eliminates intermediate []byte slice heap allocations.
+// Optimization: Direct single-buffer allocation for both UTF-8 and CP500 strings eliminates intermediate []byte slice heap allocations.
 func PackNullString(val *string, enc StringEncoding) []byte {
 	if val == nil {
 		return []byte{0xFF}
 	}
+	s := *val
 	if enc == EncodingCP500 {
-		b, err := converters.EncodeCP500(*val)
-		if err != nil {
-			b = []byte(*val)
-		}
-		buf := make([]byte, 5+len(b))
+		buf := make([]byte, 5, 5+len(s))
 		buf[0] = 0x00
-		binary.BigEndian.PutUint32(buf[1:5], uint32(len(b)))
-		copy(buf[5:], b)
-		return buf
+		res, err := converters.AppendCP500(buf, s)
+		if err != nil {
+			b := []byte(s)
+			fallbackBuf := make([]byte, 5+len(b))
+			fallbackBuf[0] = 0x00
+			binary.BigEndian.PutUint32(fallbackBuf[1:5], uint32(len(b)))
+			copy(fallbackBuf[5:], b)
+			return fallbackBuf
+		}
+		payloadLen := len(res) - 5
+		binary.BigEndian.PutUint32(res[1:5], uint32(payloadLen))
+		return res
 	}
 
-	s := *val
 	buf := make([]byte, 5+len(s))
 	buf[0] = 0x00
 	binary.BigEndian.PutUint32(buf[1:5], uint32(len(s)))

@@ -13,9 +13,21 @@ import (
 )
 
 var (
-	dsnPasswordURLRegex = regexp.MustCompile(`(://[^:]+:)([^@]+)(@)`)
-	dsnPasswordKVRegex  = regexp.MustCompile(`(?i)\b(password|pwd)\s*=\s*([^;]+)`)
+	dsnPasswordURLRegex = regexp.MustCompile(`(://[^:]+:)([^/\?\s#]+)(@([a-zA-Z0-9.\-_\[\]]*)(:[^/\?\s"']+)?(/|\?|#|\s|"|'|$))`)
+	dsnPasswordKVRegex  = regexp.MustCompile(`(?i)\b(password|pwd)\s*=\s*("[^"]*"|'[^']*'|[^;]+)`)
 )
+
+type redactedError struct {
+	err error
+}
+
+func (e *redactedError) Error() string {
+	return redactDSNPassword(e.err.Error())
+}
+
+func (e *redactedError) Unwrap() error {
+	return e.err
+}
 
 func redactDSNPassword(s string) string {
 	s = dsnPasswordURLRegex.ReplaceAllString(s, "${1}******${3}")
@@ -99,11 +111,19 @@ func ParseDSN(dsn string) (*Config, error) {
 		return nil, ErrInvalidConnectionStr
 	}
 
+	var cfg *Config
+	var err error
 	if strings.HasPrefix(dsn, "db2://") || strings.HasPrefix(dsn, "db2s://") {
-		return parseURL(dsn)
+		cfg, err = parseURL(dsn)
+	} else {
+		cfg, err = parseKeyValue(dsn)
 	}
 
-	return parseKeyValue(dsn)
+	if err != nil {
+		return nil, &redactedError{err: err}
+	}
+
+	return cfg, nil
 }
 
 func parseURL(dsn string) (*Config, error) {
