@@ -797,6 +797,45 @@ func TestPackStringAndPackNullString_Regression(t *testing.T) {
 			t.Fatalf("PackNullString CP500 mismatch:\ngot  %X\nwant %X", got, want)
 		}
 	})
+
+	t.Run("PackNullString_CP500_UnmappableFallback", func(t *testing.T) {
+		str := "Emoji ⚡ Test"
+		got := PackNullString(&str, EncodingCP500)
+		var want []byte
+		want = append(want, 0x00)
+		lenBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(lenBytes, uint32(len(str)))
+		want = append(want, lenBytes...)
+		want = append(want, []byte(str)...)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackNullString CP500 unmappable fallback mismatch:\ngot  %X\nwant %X", got, want)
+		}
+	})
+
+	t.Run("PackString_CP500_UnmappableError", func(t *testing.T) {
+		str := "Emoji ⚡ Test"
+		_, err := PackString(CodePointRDBNAM, str, EncodingCP500)
+		if err == nil {
+			t.Fatalf("expected error for unmappable string in PackString CP500, got nil")
+		}
+	})
+
+	t.Run("PackString_CP500_Boundary_0x7FFF", func(t *testing.T) {
+		// Test lengths spanning standard 15-bit DDM header (<=0x7FFF) and 0x8008 extended length (>0x7FFF)
+		for payloadLen := 0x7FFA; payloadLen <= 0x8000; payloadLen++ {
+			str := string(bytes.Repeat([]byte("A"), payloadLen-4))
+			cp := CodePointSQLSTT
+			got, err := PackString(cp, str, EncodingCP500)
+			if err != nil {
+				t.Fatalf("PackString CP500 boundary test failed at len %d: %v", payloadLen, err)
+			}
+			enc, _ := converters.EncodeCP500(str)
+			want := PackDDMObject(cp, enc)
+			if !bytes.Equal(got, want) {
+				t.Fatalf("PackString CP500 boundary mismatch at payload len %d:\ngot  len=%d %X\nwant len=%d %X", payloadLen, len(got), got[:16], len(want), want[:16])
+			}
+		}
+	})
 }
 
 func BenchmarkPackString(b *testing.B) {
