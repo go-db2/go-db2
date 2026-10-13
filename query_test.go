@@ -112,6 +112,85 @@ func TestSQLHelpers(t *testing.T) {
 	}
 }
 
+func TestHasPrefixFold(t *testing.T) {
+	tests := []struct {
+		name     string
+		s        string
+		prefix   string
+		expected bool
+	}{
+		{
+			name:     "exact uppercase match",
+			s:        "SELECT * FROM users",
+			prefix:   "SELECT",
+			expected: true,
+		},
+		{
+			name:     "lowercase match",
+			s:        "select * from users",
+			prefix:   "SELECT",
+			expected: true,
+		},
+		{
+			name:     "mixed case match",
+			s:        "sElEcT * fRoM users",
+			prefix:   "SELECT",
+			expected: true,
+		},
+		{
+			name:     "exact length prefix match",
+			s:        "SELECT",
+			prefix:   "SELECT",
+			expected: true,
+		},
+		{
+			name:     "exact length lowercase match",
+			s:        "select",
+			prefix:   "SELECT",
+			expected: true,
+		},
+		{
+			name:     "string shorter than prefix",
+			s:        "SEL",
+			prefix:   "SELECT",
+			expected: false,
+		},
+		{
+			name:     "empty input string",
+			s:        "",
+			prefix:   "SELECT",
+			expected: false,
+		},
+		{
+			name:     "mismatched keyword",
+			s:        "UPDATE users SET name = 'x'",
+			prefix:   "SELECT",
+			expected: false,
+		},
+		{
+			name:     "unicode character input non-matching",
+			s:        "SELEÇT * FROM users",
+			prefix:   "SELECT",
+			expected: false,
+		},
+		{
+			name:     "leading unicode symbol",
+			s:        "🔥SELECT * FROM users",
+			prefix:   "SELECT",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hasPrefixFold(tt.s, tt.prefix)
+			if got != tt.expected {
+				t.Errorf("hasPrefixFold(%q, %q) = %v; want %v", tt.s, tt.prefix, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestQueryContextWithDDLDirect(t *testing.T) {
 	// Start a mock Db2 TCP server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
