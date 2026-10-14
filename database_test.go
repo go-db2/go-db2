@@ -289,6 +289,24 @@ func BenchmarkQuoteIdentifier_NoQuotes(b *testing.B) {
 	}
 }
 
+func BenchmarkValidateSQLIdentifier_Valid(b *testing.B) {
+	name := "TEST_DATABASE_123"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = validateSQLIdentifier(name, "database name")
+	}
+}
+
+func BenchmarkValidateSQLIdentifier_Invalid(b *testing.B) {
+	name := "TEST_DATABASE-123!"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = validateSQLIdentifier(name, "database name")
+	}
+}
+
 func BenchmarkQuoteIdentifier_WithQuotes(b *testing.B) {
 	name := `TEST_"DATABASE"_IDENTIFIER`
 	b.ReportAllocs()

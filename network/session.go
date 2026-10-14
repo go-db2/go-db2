@@ -11,7 +11,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,7 +21,24 @@ import (
 	"github.com/go-db2/go-db2/types"
 )
 
-var validUserIdentRegex = regexp.MustCompile(`^[a-zA-Z0-9_#$]{1,128}$`)
+// isValidSQLIdentifier checks whether s contains 1 to 128 valid Db2 identifier characters (alphanumeric, _, #, $).
+// Optimization: Replaces regexp.MatchString with a direct byte-scanning loop to eliminate regexp NFA engine evaluation overhead.
+func isValidSQLIdentifier(s string) bool {
+	if len(s) == 0 || len(s) > 128 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if (ch >= 'a' && ch <= 'z') ||
+			(ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') ||
+			ch == '_' || ch == '#' || ch == '$' {
+			continue
+		}
+		return false
+	}
+	return true
+}
 
 // SessionConfig holds configuration parameters for establishing a Db2 session.
 type SessionConfig struct {
@@ -1309,7 +1325,7 @@ func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...st
 	if trimmedUser == "" {
 		return errors.New("db2: switch user name cannot be empty")
 	}
-	if !validUserIdentRegex.MatchString(trimmedUser) {
+	if !isValidSQLIdentifier(trimmedUser) {
 		return fmt.Errorf("db2: invalid switch user identifier %q", newUser)
 	}
 
