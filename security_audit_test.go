@@ -748,6 +748,52 @@ func TestSecurity_ClientInfo_CRLF_Sanitization(t *testing.T) {
 	}
 }
 
+// 22. SEC-22: Context Metadata (WithUser) Username Identifier Validation
+func TestSecurity_WithUser_Validation(t *testing.T) {
+	conn := &Conn{
+		session: &network.Session{},
+	}
+
+	invalidUsers := []string{
+		"ADMIN; DROP TABLE USERS; --",
+		"USER' OR '1'='1",
+		"ROOT\x00ADMIN",
+		"USER WITH SPACES",
+		"USER-MINUS",
+	}
+
+	for _, user := range invalidUsers {
+		t.Run("InvalidUser_"+user, func(t *testing.T) {
+			ctx := WithUser(context.Background(), user)
+			err := conn.applyContextMetadata(ctx)
+			if err == nil {
+				t.Fatalf("expected error applying context metadata with invalid WithUser %q, got nil", user)
+			}
+			if !strings.Contains(err.Error(), "invalid context user identifier") {
+				t.Fatalf("expected invalid identifier error message, got: %v", err)
+			}
+		})
+	}
+
+	validUsers := []string{
+		"VALID_USER",
+		"USER123",
+		"APP_USER#1",
+		"DB2ADMIN$",
+	}
+
+	for _, user := range validUsers {
+		t.Run("ValidUser_"+user, func(t *testing.T) {
+			ctx := WithUser(context.Background(), user)
+			// SwitchUser on dummy session will fail, but applyContextMetadata must pass validation
+			err := conn.applyContextMetadata(ctx)
+			if err != nil && strings.Contains(err.Error(), "invalid context user identifier") {
+				t.Fatalf("unexpected validation error for valid context user %q: %v", user, err)
+			}
+		})
+	}
+}
+
 // 21. SEC-21: sql.Out nil destination pointer dereference protection
 func TestSecurity_SqlOut_NilDestinationPanicProtection(t *testing.T) {
 	conn := &Conn{

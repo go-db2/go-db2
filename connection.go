@@ -35,9 +35,14 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 // audit registers (WithClientInfo) propagated in ctx to ensure proper multi-tenant
 // identity isolation and auditability across all execution paths.
 func (c *Conn) applyContextMetadata(ctx context.Context) error {
-	if targetUser := UserFromContext(ctx); targetUser != "" && targetUser != c.session.CurrentUser() {
-		if err := c.session.SwitchUser(ctx, targetUser); err != nil {
+	if targetUser := UserFromContext(ctx); targetUser != "" {
+		if err := validateSQLIdentifier(targetUser, "context user"); err != nil {
 			return err
+		}
+		if targetUser != c.session.CurrentUser() {
+			if err := c.session.SwitchUser(ctx, targetUser); err != nil {
+				return err
+			}
 		}
 	}
 
