@@ -292,6 +292,14 @@ func PackSECCHKWithBytes(secmec uint16, sectkn []byte, database, user string, pa
 	return PackDDMObject(CodePointSECCHK, body), nil
 }
 
+var defaultParamNames [64]string
+
+func init() {
+	for i := 0; i < len(defaultParamNames); i++ {
+		defaultParamNames[i] = fmt.Sprintf("PARAM%d", i+1)
+	}
+}
+
 // Default constants for ACCRDB and PKGNAMCSN
 var (
 	defaultCRRTKN = []byte{
@@ -859,7 +867,11 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 		}
 
 		if colName == "" {
-			colName = fmt.Sprintf("PARAM%d", i+1)
+			if i < len(defaultParamNames) {
+				colName = defaultParamNames[i]
+			} else {
+				colName = fmt.Sprintf("PARAM%d", i+1)
+			}
 		}
 
 		cols = append(cols, ColumnDescription{
@@ -933,7 +945,7 @@ func ParseSQLCARD(obj []byte, endian binary.ByteOrder) (int32, string, string, i
 
 	sqlcode := int32(endian.Uint32(obj[1:5]))
 	var sqlstate string
-	if bytes.Equal(obj[5:10], []byte{'0', '0', '0', '0', '0'}) {
+	if obj[5] == '0' && obj[6] == '0' && obj[7] == '0' && obj[8] == '0' && obj[9] == '0' {
 		sqlstate = "00000"
 	} else {
 		sqlstate = string(obj[5:10])

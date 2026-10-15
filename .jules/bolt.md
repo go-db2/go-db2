@@ -127,3 +127,8 @@
 
 **Learning:** Validating SQL and user identifiers using `regexp.MustCompile(`^[a-zA-Z0-9_#$]{1,128}$`)` and `.MatchString()` introduces regex NFA engine setup and scanning overhead (~505ns/op). Replacing regex matching with a direct byte-scanning loop (`isValidSQLIdentifier`) checks string length and permitted ASCII character ranges (`a-z`, `A-Z`, `0-9`, `_`, `#`, `$`) directly. This accelerates identifier validation by ~22x (505ns -> 22.6ns/op) while maintaining 0 B/op and 0 allocs/op.
 **Action:** In Go, when validating string inputs against fixed ASCII character set rules (e.g. identifiers, keys), replace regular expressions with a direct byte-scanning loop.
+
+## 2026-10-15 - Inline Byte Comparisons and Static Parameter Table for SQLCARD/SQLDARD Parsing
+
+**Learning:** Slicing byte literals directly inside function calls like `bytes.Equal(obj[5:10], []byte{'0', '0', '0', '0', '0'})` forces Go escape analysis to allocate the slice header/array on the heap on every execution call. Replacing `bytes.Equal` with direct inline byte index comparisons (`obj[5] == '0' && obj[6] == '0' ...`) eliminates the allocation entirely. In addition, pre-allocating default string identifiers (`PARAM1`..`PARAM64`) in a package-level static array during `init()` eliminates `fmt.Sprintf` heap string allocations during repeated parameter descriptor parsing.
+**Action:** When comparing fixed-length byte patterns in hot protocol parsers, use direct inline byte index comparisons instead of `bytes.Equal` with slice literals, and use static pre-computed lookup tables for repeating default string identifiers.
