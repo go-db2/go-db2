@@ -84,6 +84,19 @@ func TestDecodeFieldBooleanZeroLength(t *testing.T) {
 	}
 }
 
+func TestDecodeFieldFallbackTruncatedStream(t *testing.T) {
+	// Unknown/fallback DRDA type 0xFE with length 10 in ps
+	// Stream contains only 3 bytes (truncated)
+	var buf bytes.Buffer
+	buf.Write([]byte{0x01, 0x02, 0x03})
+	ps := []byte{0x00, 0x0A} // Length = 10 bytes
+
+	_, err := DecodeField(0xFE, ps, &buf, binary.BigEndian)
+	if err == nil {
+		t.Fatalf("expected error when decoding fallback type 0xFE from truncated stream, got nil")
+	}
+}
+
 func TestDecodePackedDecimal_LargePayload(t *testing.T) {
 	// 40-byte packed decimal payload (> 32 bytes)
 	// Example: 79 digits of '1' plus positive sign 'C'

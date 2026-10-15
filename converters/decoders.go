@@ -423,7 +423,9 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 			ln := int(binary.BigEndian.Uint16(ps)) & 0x7FFF
 			if ln > 0 {
 				buf := make([]byte, ln)
-				_, _ = io.ReadFull(r, buf)
+				if _, err := io.ReadFull(r, buf); err != nil {
+					return nil, err
+				}
 				return buf, nil
 			}
 		}
