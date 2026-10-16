@@ -14,7 +14,7 @@ import (
 
 var (
 	dsnPasswordURLRegex = regexp.MustCompile(`(://[^:]+:)([^/\?\s#]+)(@([a-zA-Z0-9.\-_\[\]]*)(:[^/\?\s"']+)?(/|\?|#|\s|"|'|$))`)
-	dsnPasswordKVRegex  = regexp.MustCompile(`(?i)\b(password|pwd)\s*=\s*("[^"]*"|'[^']*'|[^;]+)`)
+	dsnPasswordKVRegex  = regexp.MustCompile(`(?i)\b(password|pwd)\s*=\s*("[^"]*"|'[^']*'|[^;&\s"']+)`)
 )
 
 type redactedError struct {
