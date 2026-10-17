@@ -181,6 +181,20 @@ func TestParseDSN_KerberosSPN_RedactionPreservation(t *testing.T) {
 	}
 }
 
+func TestParseDSN_RedactPassword_PreservesAdjacentQueryParameters(t *testing.T) {
+	secretPwd := "mySecretPass"
+	urlQueryDSN := fmt.Sprintf("db2://localhost:50000/sample?password=%s&ssl=true&timeout=30s", secretPwd)
+
+	redacted := redactDSNPassword(urlQueryDSN)
+	if strings.Contains(redacted, secretPwd) {
+		t.Fatalf("redactDSNPassword failed to redact unquoted password in query parameter: %s", redacted)
+	}
+	expected := "db2://localhost:50000/sample?password=******&ssl=true&timeout=30s"
+	if redacted != expected {
+		t.Fatalf("redacted DSN query string truncated adjacent parameters: got %q, want %q", redacted, expected)
+	}
+}
+
 func TestParseDSN_Kerberos(t *testing.T) {
 	dsn := "db2://localhost:50000/TESTDB?security_mechanism=kerberos&spn=db2/server.corp.local@CORP.LOCAL&krb5_config=/etc/krb5.conf&krb5_keytab=/etc/db2.keytab&krb5_ccache=/tmp/krb5cc_1000"
 	cfg, err := ParseDSN(dsn)
