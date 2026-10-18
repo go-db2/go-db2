@@ -43,3 +43,8 @@
 **Vulnerability:** In DSN URL parsing, passwords containing `@` symbols or DSNs with non-digit port strings (e.g. `:invalidport`) failed `dsnPasswordURLRegex` matching (`(:[0-9]+)?`), causing raw plaintext password credentials to be leaked in `url.Parse` error strings and `ParseDSN` return values.
 **Learning:** DSN password redaction regexes using strict port assertions (`:[0-9]+`) bypass redaction when parsing malformed DSN inputs. Redaction regexes must match non-digit port delimiters (`(:[^/\?\s"']+)?`) and all error returns in `ParseDSN` must sanitize error strings with `redactDSNPassword`.
 **Prevention:** Always wrap DSN parsing error returns with `redactDSNPassword` and ensure URL password redaction regexes handle special password characters (`@`) and malformed port strings.
+
+## 2026-10-02 - Sign Extension of Negative Decimal Scale in DRDA Decoders
+**Vulnerability:** Direct casting of `ps[1]` (uint8) to `int` in `DecodeField` treated negative DRDA decimal scale bytes (e.g. `0xFE` for `-2`) as `254`, causing corrupted decimal string formatting and potential denial-of-service via large memory allocations in `DecodePackedDecimal`.
+**Learning:** DRDA wire protocol scale descriptors (`ps[1]`) for `DRDATypeDecimal` carry signed two's complement 8-bit values (`int8`). Casting `uint8` directly to `int` skips sign extension for negative scale parameters.
+**Prevention:** Convert `ps[1]` to `int8` before casting to `int` (`scale := int(int8(ps[1]))`) in DRDA field decoders.
