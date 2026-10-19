@@ -349,6 +349,20 @@ func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, err
 		buf = strconv.AppendInt(stackBuf[:0], v, 10)
 	case int32:
 		buf = strconv.AppendInt(stackBuf[:0], int64(v), 10)
+	case int16:
+		buf = strconv.AppendInt(stackBuf[:0], int64(v), 10)
+	case int8:
+		buf = strconv.AppendInt(stackBuf[:0], int64(v), 10)
+	case uint:
+		buf = strconv.AppendUint(stackBuf[:0], uint64(v), 10)
+	case uint64:
+		buf = strconv.AppendUint(stackBuf[:0], v, 10)
+	case uint32:
+		buf = strconv.AppendUint(stackBuf[:0], uint64(v), 10)
+	case uint16:
+		buf = strconv.AppendUint(stackBuf[:0], uint64(v), 10)
+	case uint8:
+		buf = strconv.AppendUint(stackBuf[:0], uint64(v), 10)
 	default:
 		str = fmt.Sprint(val)
 	}
@@ -411,42 +425,46 @@ func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, err
 		lenFrac = len(fracPartStr)
 	}
 
-	for d := 0; d < prec; d++ {
-		var digit byte
-		if d < intDigitsNeeded {
-			idx := lenInt - intDigitsNeeded + d
-			if idx >= 0 && idx < lenInt {
-				var c byte
-				if buf != nil {
-					c = intPartBuf[idx]
-				} else {
-					c = intPartStr[idx]
-				}
-				if c >= '0' && c <= '9' {
-					digit = c - '0'
-				}
+	// Optimization: Direct nibble placement for integer and fraction digits, bypassing leading/trailing zero digit loops and inner conditionals.
+	for idx := 0; idx < lenInt; idx++ {
+		d := intDigitsNeeded - lenInt + idx
+		if d >= 0 && d < intDigitsNeeded {
+			var c byte
+			if buf != nil {
+				c = intPartBuf[idx]
+			} else {
+				c = intPartStr[idx]
 			}
-		} else {
-			idx := d - intDigitsNeeded
-			if idx >= 0 && idx < lenFrac {
-				var c byte
-				if buf != nil {
-					c = fracPartBuf[idx]
+			if c >= '0' && c <= '9' {
+				nibblePos := startIdx + d
+				byteIdx := 1 + (nibblePos >> 1)
+				if nibblePos&1 == 0 {
+					out[byteIdx] |= (c - '0') << 4
 				} else {
-					c = fracPartStr[idx]
-				}
-				if c >= '0' && c <= '9' {
-					digit = c - '0'
+					out[byteIdx] |= c - '0'
 				}
 			}
 		}
+	}
 
-		nibblePos := startIdx + d
-		byteIdx := 1 + (nibblePos >> 1)
-		if nibblePos%2 == 0 {
-			out[byteIdx] |= digit << 4
-		} else {
-			out[byteIdx] |= digit
+	for idx := 0; idx < lenFrac; idx++ {
+		d := intDigitsNeeded + idx
+		if d < prec {
+			var c byte
+			if buf != nil {
+				c = fracPartBuf[idx]
+			} else {
+				c = fracPartStr[idx]
+			}
+			if c >= '0' && c <= '9' {
+				nibblePos := startIdx + d
+				byteIdx := 1 + (nibblePos >> 1)
+				if nibblePos&1 == 0 {
+					out[byteIdx] |= (c - '0') << 4
+				} else {
+					out[byteIdx] |= c - '0'
+				}
+			}
 		}
 	}
 
