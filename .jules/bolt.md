@@ -127,3 +127,8 @@
 
 **Learning:** Validating SQL and user identifiers using `regexp.MustCompile(`^[a-zA-Z0-9_#$]{1,128}$`)` and `.MatchString()` introduces regex NFA engine setup and scanning overhead (~505ns/op). Replacing regex matching with a direct byte-scanning loop (`isValidSQLIdentifier`) checks string length and permitted ASCII character ranges (`a-z`, `A-Z`, `0-9`, `_`, `#`, `$`) directly. This accelerates identifier validation by ~22x (505ns -> 22.6ns/op) while maintaining 0 B/op and 0 allocs/op.
 **Action:** In Go, when validating string inputs against fixed ASCII character set rules (e.g. identifiers, keys), replace regular expressions with a direct byte-scanning loop.
+
+## 2026-10-11 - Single Contiguous Backing Slice Allocation for Query Row Decoding
+
+**Learning:** When decoding multi-row result sets in `decodeRows`, allocating individual row slices `make([]driver.Value, numFields)` inside the row loop creates $N$ heap allocations for $N$ rows. Pre-allocating a single contiguous backing slice `backing := make([]driver.Value, initCap*numFields)` and sub-slicing row buffers with 3-index slicing `backing[:numFields:numFields]` cuts row slice allocations from $O(N)$ down to $O(1)$, reducing memory allocations by ~16.4% (602 -> 503 allocs/op for 100 rows).
+**Action:** When constructing row-based interface/slice matrices where estimated row count and column count are known upfront, pre-allocate a contiguous backing slice and slice sub-buffers with 3-index slicing.
