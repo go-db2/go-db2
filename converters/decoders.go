@@ -381,7 +381,10 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 			return nil, fmt.Errorf("invalid Decimal ps descriptor length: %d", len(ps))
 		}
 		precision := int(ps[0])
-		scale := int(ps[1])
+		if precision < 1 || precision > 31 {
+			return nil, fmt.Errorf("invalid Decimal precision: %d", precision)
+		}
+		scale := int(int8(ps[1]))
 		byteLen := (precision + 2) / 2
 		var stackBuf [64]byte
 		var buf []byte
