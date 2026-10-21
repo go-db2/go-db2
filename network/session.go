@@ -1097,15 +1097,43 @@ func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) 
 	reader := bytes.NewReader(data)
 	numFields := len(fields)
 
-	// Pre-allocate rows capacity based on data length and field count to minimize slice reallocations.
+	// Pre-allocate rows capacity based on data length and field type sizes to minimize slice reallocations.
+	minRowLen := 2 // 1-byte SQLCA indicator + 1-byte data indicator
+	for _, f := range fields {
+		if converters.IsNullableDRDAType(f.Type) {
+			minRowLen++
+		}
+		switch f.Type {
+		case converters.DRDATypeInteger, converters.DRDATypeNInteger, converters.DRDATypeFloat4, converters.DRDATypeNFloat4:
+			minRowLen += 4
+		case converters.DRDATypeInteger8, converters.DRDATypeNInteger8, converters.DRDATypeFloat8, converters.DRDATypeNFloat8:
+			minRowLen += 8
+		case converters.DRDATypeSmall, converters.DRDATypeNSmall, converters.DRDATypeVarChar, converters.DRDATypeNVarChar,
+			converters.DRDATypeVarByte, converters.DRDATypeNVarByte, converters.DRDATypeVarGraph, converters.DRDATypeNVarGraph:
+			minRowLen += 2
+		case converters.DRDATypeChar, converters.DRDATypeNChar:
+			minRowLen += int(binary.BigEndian.Uint16(f.PS[:]))
+		default:
+			minRowLen++
+		}
+	}
+
 	initCap := 0
-	if minRowLen := 2 + numFields; minRowLen > 0 && len(data) >= minRowLen {
+	if minRowLen > 0 && len(data) >= minRowLen {
 		initCap = len(data) / minRowLen
 		if initCap > 1024 {
 			initCap = 1024
 		}
 	}
 	rows := make([][]driver.Value, 0, initCap)
+
+	// Optimization: Pre-allocate a single contiguous backing slice for all expected row value elements.
+	// Sub-slicing with 3-index slicing (backing[:numFields:numFields]) avoids 1 heap slice allocation per row.
+	var backing []driver.Value
+	if initCap > 0 && numFields > 0 {
+		backing = make([]driver.Value, initCap*numFields)
+	}
+
 	for reader.Len() >= 2 {
 		first, err := reader.ReadByte()
 		if err != nil {
@@ -1135,7 +1163,13 @@ func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) 
 			break
 		}
 
-		row := make([]driver.Value, numFields)
+		var row []driver.Value
+		if len(backing) >= numFields {
+			row, backing = backing[:numFields:numFields], backing[numFields:]
+		} else {
+			row = make([]driver.Value, numFields)
+		}
+
 		for i := 0; i < numFields; i++ {
 			f := fields[i]
 			val, err := converters.DecodeField(f.Type, f.PS[:], reader, endian)
