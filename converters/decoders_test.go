@@ -133,6 +133,19 @@ func TestDecodePackedDecimal_NegativeScale(t *testing.T) {
 	if resZero != "0" {
 		t.Errorf("DecodePackedDecimal zero with scale -2 = %q, want %q", resZero, "0")
 	}
+
+	// Test DecodeField with DRDATypeDecimal and negative scale byte (0xFE = -2)
+	// ps = [precision=3, scale=0xFE (-2)]
+	ps := []byte{0x03, 0xFE}
+	var buf bytes.Buffer
+	buf.Write([]byte{0x12, 0x3C}) // Packed decimal 123
+	fieldVal, err := DecodeField(DRDATypeDecimal, ps, &buf, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("DecodeField failed for negative scale DRDATypeDecimal: %v", err)
+	}
+	if got, want := fieldVal.(string), "12300"; got != want {
+		t.Errorf("DecodeField DRDATypeDecimal with scale 0xFE = %q, want %q", got, want)
+	}
 }
 
 func TestParseSQLDTARD_TableDriven(t *testing.T) {
