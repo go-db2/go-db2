@@ -127,3 +127,8 @@
 
 **Learning:** Validating SQL and user identifiers using `regexp.MustCompile(`^[a-zA-Z0-9_#$]{1,128}$`)` and `.MatchString()` introduces regex NFA engine setup and scanning overhead (~505ns/op). Replacing regex matching with a direct byte-scanning loop (`isValidSQLIdentifier`) checks string length and permitted ASCII character ranges (`a-z`, `A-Z`, `0-9`, `_`, `#`, `$`) directly. This accelerates identifier validation by ~22x (505ns -> 22.6ns/op) while maintaining 0 B/op and 0 allocs/op.
 **Action:** In Go, when validating string inputs against fixed ASCII character set rules (e.g. identifiers, keys), replace regular expressions with a direct byte-scanning loop.
+
+## 2026-10-11 - Direct Rune Iteration and AppendUTF16BE for Zero-Allocation UTF-16 BE Encoding
+
+**Learning:** Calling `utf16.Encode([]rune(s))` allocates both a `[]rune` slice and a `[]uint16` slice on the heap. Providing an `AppendUTF16BE(dst, s)` function with a direct `s[i] <= 0x7F` byte scanning loop for ASCII and direct `for _, r := range s` rune iteration for non-ASCII strings appends UTF-16 BE bytes directly onto destination slices. This eliminates intermediate `[]rune` and `[]uint16` heap allocations, speeding up non-ASCII UTF-16 BE string encoding by ~2.2x (280 ns -> 124 ns/op) and cutting memory allocations by 50-100%.
+**Action:** When encoding Go strings into multi-byte unicode byte sequences (like UTF-16 BE), avoid `utf16.Encode([]rune(s))` and instead append bytes directly into target buffers during single-pass rune iteration (`for _, r := range s`).
