@@ -32,6 +32,43 @@ func TestGraphicUTF16BE_EncodeDecode(t *testing.T) {
 	}
 }
 
+func TestAppendUTF16BE(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix []byte
+		input  string
+	}{
+		{"Empty string with prefix", []byte{0x01, 0x02, 0x03}, ""},
+		{"ASCII with prefix", []byte{0xFF, 0xFE}, "IBM Db2 Pure Go Driver"},
+		{"Multibyte non-ASCII with prefix", []byte{0xAA, 0xBB}, "São Paulo / München"},
+		{"Japanese Kanji with prefix", []byte{0x10, 0x20}, "日本語データベース"},
+		{"Surrogate pairs emoji", []byte{}, "🚀 Go-Db2 📦 ✨"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prefixCopy := append([]byte(nil), tt.prefix...)
+			got := AppendUTF16BE(prefixCopy, tt.input)
+
+			if !bytes.HasPrefix(got, tt.prefix) {
+				t.Fatalf("AppendUTF16BE lost prefix: got %v, want prefix %v", got[:len(tt.prefix)], tt.prefix)
+			}
+
+			payload := got[len(tt.prefix):]
+			wantPayload := EncodeUTF16BE(tt.input)
+
+			if !bytes.Equal(payload, wantPayload) {
+				t.Fatalf("AppendUTF16BE payload mismatch:\n got  %v\n want %v", payload, wantPayload)
+			}
+
+			decoded := DecodeUTF16BE(payload)
+			if decoded != tt.input {
+				t.Fatalf("DecodeUTF16BE of appended payload mismatch: expected %q, got %q", tt.input, decoded)
+			}
+		})
+	}
+}
+
 func TestGraphicPadding(t *testing.T) {
 	str := "DB2"
 	encoded := EncodeUTF16BE(str)            // 3 runes = 6 bytes

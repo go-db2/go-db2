@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"github.com/go-db2/go-db2/types"
 )
@@ -254,29 +253,23 @@ func appendFDODTA(dst []byte, sqlType types.SQLType, sqllen int64, prec, scale i
 
 	case types.SQLTypeXML, types.SQLTypeNXML:
 		str := fmt.Sprint(val)
-		utf16Runes := utf16.Encode([]rune(str))
 		origLen := len(dst)
 		dst = append(dst, 0x00, 0, 0)
-		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(len(utf16Runes)*2))
-		for _, r := range utf16Runes {
-			orig := len(dst)
-			dst = append(dst, 0, 0)
-			binary.BigEndian.PutUint16(dst[orig:orig+2], r)
-		}
+		encodedStart := len(dst)
+		dst = AppendUTF16BE(dst, str)
+		byteLen := len(dst) - encodedStart
+		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(byteLen))
 		return dst, nil
 
 	default:
 		// Fallback as UTF-16 string
 		str := fmt.Sprint(val)
-		utf16Runes := utf16.Encode([]rune(str))
 		origLen := len(dst)
 		dst = append(dst, 0x00, 0, 0)
-		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(len(utf16Runes)*2))
-		for _, r := range utf16Runes {
-			orig := len(dst)
-			dst = append(dst, 0, 0)
-			binary.BigEndian.PutUint16(dst[orig:orig+2], r)
-		}
+		encodedStart := len(dst)
+		dst = AppendUTF16BE(dst, str)
+		byteLen := len(dst) - encodedStart
+		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(byteLen))
 		return dst, nil
 	}
 }
@@ -313,11 +306,12 @@ func appendStringFDODTA(dst []byte, s string) []byte {
 		return dst
 	}
 
-	utf16Bytes := EncodeUTF16BE(s)
-	numRunes := len(utf16Bytes) / 2
 	dst = append(dst, 0x00, 0, 0)
+	encodedStart := len(dst)
+	dst = AppendUTF16BE(dst, s)
+	numRunes := (len(dst) - encodedStart) / 2
 	binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(numRunes))
-	return append(dst, utf16Bytes...)
+	return dst
 }
 
 // encodePackedDecimalParam encodes a Go value into IBM DRDA packed decimal parameter format.
