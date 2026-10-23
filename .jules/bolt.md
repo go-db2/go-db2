@@ -127,3 +127,8 @@
 
 **Learning:** Validating SQL and user identifiers using `regexp.MustCompile(`^[a-zA-Z0-9_#$]{1,128}$`)` and `.MatchString()` introduces regex NFA engine setup and scanning overhead (~505ns/op). Replacing regex matching with a direct byte-scanning loop (`isValidSQLIdentifier`) checks string length and permitted ASCII character ranges (`a-z`, `A-Z`, `0-9`, `_`, `#`, `$`) directly. This accelerates identifier validation by ~22x (505ns -> 22.6ns/op) while maintaining 0 B/op and 0 allocs/op.
 **Action:** In Go, when validating string inputs against fixed ASCII character set rules (e.g. identifiers, keys), replace regular expressions with a direct byte-scanning loop.
+
+## 2026-10-11 - Contiguous Backing Slice Allocation and Accurate Minimum Row Length Estimation for Query Row Decoding
+
+**Learning:** In `decodeRows` (`network/session.go`), allocating a separate `make([]driver.Value, numFields)` slice for every row created $N$ heap allocations per query result set of $N$ rows. Allocating a single contiguous backing slice (`backing := make([]driver.Value, initCap*numFields)`) and sub-slicing row buffers with 3-index slicing (`backing[:numFields:numFields]`) eliminates per-row slice allocations. Furthermore, calculating `minRowLen` by inspecting DRDA field types (fixed integers, floats, timestamps, string lengths) ensures accurate initial capacity estimation (`len(data) / minRowLen`), avoiding oversized slice allocations. This improved query row decoding throughput by ~15% (36,573 ns -> 31,241 ns/op) and eliminated 99 allocations per 100 decoded rows.
+**Action:** When decoding multi-row binary protocol result sets, pre-allocate a single contiguous backing slice for row fields and sub-slice row buffers using 3-index slicing `backing[:cols:cols]`.
