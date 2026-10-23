@@ -1088,24 +1088,65 @@ func (s *Session) fetchQuery(replies []ReplyPacket, columns []ColumnDescription)
 	return q.columns, rows, nil
 }
 
+func estimateMinRowLen(fields []FieldDescriptor) int {
+	minRowLen := 2 // SQLCA null indicator + row data indicator
+	for _, f := range fields {
+		switch f.Type {
+		case converters.DRDATypeInteger, converters.DRDATypeNInteger, converters.DRDATypeFloat4, converters.DRDATypeNFloat4:
+			minRowLen += 4
+		case converters.DRDATypeSmall, converters.DRDATypeNSmall, converters.DRDATypeVarChar, converters.DRDATypeNVarChar,
+			converters.DRDATypeVarGraph, converters.DRDATypeNVarGraph, converters.DRDATypeVarBinary, converters.DRDATypeNVarBinary,
+			converters.DRDATypeVarByte, converters.DRDATypeNVarByte, converters.DRDATypeLong, converters.DRDATypeNLong:
+			minRowLen += 2
+		case converters.DRDATypeInteger8, converters.DRDATypeNInteger8, converters.DRDATypeFloat8, converters.DRDATypeNFloat8,
+			converters.DRDATypeDecFloat, converters.DRDATypeNDecFloat:
+			minRowLen += 8
+		case converters.DRDAType1ByteInt, converters.DRDATypeN1ByteInt:
+			minRowLen += 1
+		case converters.DRDATypeChar, converters.DRDATypeNChar:
+			minRowLen += int(binary.BigEndian.Uint16(f.PS[:]))
+		case converters.DRDATypeDate, converters.DRDATypeNDate:
+			minRowLen += 10
+		case converters.DRDATypeTime, converters.DRDATypeNTime:
+			minRowLen += 8
+		case converters.DRDATypeTimestamp, converters.DRDATypeNTimestamp:
+			minRowLen += 19
+		case converters.DRDATypeDecimal, converters.DRDATypeNDecimal:
+			minRowLen += (int(f.PS[0]) + 2) / 2
+		default:
+			minRowLen += 1
+		}
+	}
+	return minRowLen
+}
+
 // decodeRows decodes QRYDTA row data. Each row starts with its SQLCA, which is
 // the null indicator 0xFF unless the server attached a warning or an error to
 // the row, then the indicator of the row data (0x00 when present), then one
 // value per field.
-// Optimization: Decodes rows directly as driver.Value slices to eliminate redundant slice allocations during query execution.
+// Optimization: Pre-allocates a single contiguous backing slice (backing := make([]driver.Value, initCap*numFields))
+// and sub-slices row buffers (backing[:numFields:numFields]) to eliminate per-row heap slice allocations.
 func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) ([][]driver.Value, error) {
 	reader := bytes.NewReader(data)
 	numFields := len(fields)
 
 	// Pre-allocate rows capacity based on data length and field count to minimize slice reallocations.
 	initCap := 0
-	if minRowLen := 2 + numFields; minRowLen > 0 && len(data) >= minRowLen {
+	if minRowLen := estimateMinRowLen(fields); minRowLen > 0 && len(data) >= minRowLen {
 		initCap = len(data) / minRowLen
 		if initCap > 1024 {
 			initCap = 1024
 		}
 	}
 	rows := make([][]driver.Value, 0, initCap)
+
+	// Optimization: Allocate a single contiguous backing slice for all row driver.Value buffers.
+	// Sub-slicing with 3-index slicing backing[:numFields:numFields] eliminates per-row heap allocations.
+	var backing []driver.Value
+	if initCap > 0 && numFields > 0 {
+		backing = make([]driver.Value, initCap*numFields)
+	}
+
 	for reader.Len() >= 2 {
 		first, err := reader.ReadByte()
 		if err != nil {
@@ -1135,7 +1176,18 @@ func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) 
 			break
 		}
 
-		row := make([]driver.Value, numFields)
+		var row []driver.Value
+		if len(backing) >= numFields {
+			row, backing = backing[:numFields:numFields], backing[numFields:]
+		} else if numFields > 0 {
+			// Re-allocate backing slice in chunks if initCap was exceeded or was 0
+			chunkSize := 128
+			backing = make([]driver.Value, chunkSize*numFields)
+			row, backing = backing[:numFields:numFields], backing[numFields:]
+		} else {
+			row = make([]driver.Value, 0)
+		}
+
 		for i := 0; i < numFields; i++ {
 			f := fields[i]
 			val, err := converters.DecodeField(f.Type, f.PS[:], reader, endian)
