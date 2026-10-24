@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"github.com/go-db2/go-db2/types"
 )
@@ -254,70 +253,35 @@ func appendFDODTA(dst []byte, sqlType types.SQLType, sqllen int64, prec, scale i
 
 	case types.SQLTypeXML, types.SQLTypeNXML:
 		str := fmt.Sprint(val)
-		utf16Runes := utf16.Encode([]rune(str))
 		origLen := len(dst)
-		dst = append(dst, 0x00, 0, 0)
-		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(len(utf16Runes)*2))
-		for _, r := range utf16Runes {
-			orig := len(dst)
-			dst = append(dst, 0, 0)
-			binary.BigEndian.PutUint16(dst[orig:orig+2], r)
-		}
+		dst = append(dst, 0x00, 0, 0) // Null indicator (0x00) + 2-byte length placeholder
+		dst = AppendUTF16BE(dst, str)
+		encodedBytesLen := len(dst) - (origLen + 3)
+		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(encodedBytesLen))
 		return dst, nil
 
 	default:
 		// Fallback as UTF-16 string
 		str := fmt.Sprint(val)
-		utf16Runes := utf16.Encode([]rune(str))
 		origLen := len(dst)
-		dst = append(dst, 0x00, 0, 0)
-		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(len(utf16Runes)*2))
-		for _, r := range utf16Runes {
-			orig := len(dst)
-			dst = append(dst, 0, 0)
-			binary.BigEndian.PutUint16(dst[orig:orig+2], r)
-		}
+		dst = append(dst, 0x00, 0, 0) // Null indicator (0x00) + 2-byte length placeholder
+		dst = AppendUTF16BE(dst, str)
+		encodedBytesLen := len(dst) - (origLen + 3)
+		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(encodedBytesLen))
 		return dst, nil
 	}
 }
 
 // appendStringFDODTA appends a string parameter in UTF-16 BE format directly onto dst.
-// Optimization: Fast-path for ASCII strings encodes directly without intermediate slice allocations.
+// Optimization: Uses AppendUTF16BE to encode bytes directly onto dst without intermediate slice allocations.
 func appendStringFDODTA(dst []byte, s string) []byte {
-	isASCII := true
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 0x80 {
-			isASCII = false
-			break
-		}
-	}
-
 	origLen := len(dst)
-	if isASCII {
-		numRunes := len(s)
-		needed := 3 + numRunes*2
-		if cap(dst)-origLen < needed {
-			newBuf := make([]byte, origLen, origLen+needed+32)
-			copy(newBuf, dst)
-			dst = newBuf
-		}
-		dst = dst[:origLen+needed]
-		dst[origLen] = 0x00
-		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(numRunes))
-		idx := origLen + 3
-		for i := 0; i < len(s); i++ {
-			dst[idx] = 0x00
-			dst[idx+1] = s[i]
-			idx += 2
-		}
-		return dst
-	}
-
-	utf16Bytes := EncodeUTF16BE(s)
-	numRunes := len(utf16Bytes) / 2
-	dst = append(dst, 0x00, 0, 0)
-	binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(numRunes))
-	return append(dst, utf16Bytes...)
+	dst = append(dst, 0x00, 0, 0) // Null indicator (0x00) + 2-byte length placeholder
+	dst = AppendUTF16BE(dst, s)
+	encodedBytesLen := len(dst) - (origLen + 3)
+	// DRDA string length header field in FDODTA specifies character/UTF-16 code unit count
+	binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(encodedBytesLen/2))
+	return dst
 }
 
 // encodePackedDecimalParam encodes a Go value into IBM DRDA packed decimal parameter format.

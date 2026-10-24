@@ -79,6 +79,44 @@ func BenchmarkDecodeUTF16BE(b *testing.B) {
 	}
 }
 
+func BenchmarkEncodeUTF16BE(b *testing.B) {
+	b.Run("ASCII", func(b *testing.B) {
+		str := "IBM Db2 Pure Go Driver High Performance"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = EncodeUTF16BE(str)
+		}
+	})
+
+	b.Run("Non-ASCII", func(b *testing.B) {
+		str := "Ação, Coração, Informática, São Paulo"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = EncodeUTF16BE(str)
+		}
+	})
+
+	b.Run("CJK", func(b *testing.B) {
+		str := "日本語のテスト 数据库 / 資料庫"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = EncodeUTF16BE(str)
+		}
+	})
+
+	b.Run("SurrogatePairs", func(b *testing.B) {
+		str := "🚀 Go-Db2 Pure Go 📦 ✨"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = EncodeUTF16BE(str)
+		}
+	})
+}
+
 func BenchmarkEncodePackedDecimalParam(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()

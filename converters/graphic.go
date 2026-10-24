@@ -47,8 +47,15 @@ func DecodeUTF16BE(b []byte) string {
 }
 
 // EncodeUTF16BE encodes a UTF-8 Go string into a sequence of Big-Endian UTF-16 bytes.
-// Optimization: Fast-path for pure ASCII strings avoids rune decoding and utf16 slice allocation.
+// Optimization: Delegates to AppendUTF16BE to eliminate intermediate []rune and []uint16 slice allocations.
 func EncodeUTF16BE(s string) []byte {
+	return AppendUTF16BE(nil, s)
+}
+
+// AppendUTF16BE encodes a UTF-8 Go string into Big-Endian UTF-16 bytes and appends them to dst.
+// Optimization: Fast-path for ASCII strings encodes directly into pre-allocated slice capacity;
+// non-ASCII strings iterate directly over UTF-8 runes to avoid intermediate []rune and []uint16 heap allocations.
+func AppendUTF16BE(dst []byte, s string) []byte {
 	isASCII := true
 	for i := 0; i < len(s); i++ {
 		if s[i] >= 0x80 {
@@ -56,20 +63,36 @@ func EncodeUTF16BE(s string) []byte {
 			break
 		}
 	}
+	origLen := len(dst)
 	if isASCII {
-		buf := make([]byte, len(s)*2)
-		for i := 0; i < len(s); i++ {
-			buf[i*2] = 0
-			buf[i*2+1] = s[i]
+		needed := len(s) * 2
+		if cap(dst)-origLen < needed {
+			newBuf := make([]byte, origLen, origLen+needed+32)
+			copy(newBuf, dst)
+			dst = newBuf
 		}
-		return buf
+		dst = dst[:origLen+needed]
+		idx := origLen
+		for i := 0; i < len(s); i++ {
+			dst[idx] = 0x00
+			dst[idx+1] = s[i]
+			idx += 2
+		}
+		return dst
 	}
-	u16 := utf16.Encode([]rune(s))
-	buf := make([]byte, len(u16)*2)
-	for i, v := range u16 {
-		binary.BigEndian.PutUint16(buf[i*2:i*2+2], v)
+
+	for _, r := range s {
+		if r <= 0xFFFF {
+			dst = append(dst, byte(r>>8), byte(r))
+		} else {
+			// Encode surrogate pair
+			r -= 0x10000
+			u1 := uint16(0xD800 + (r >> 10))
+			u2 := uint16(0xDC00 + (r & 0x3FF))
+			dst = append(dst, byte(u1>>8), byte(u1), byte(u2>>8), byte(u2))
+		}
 	}
-	return buf
+	return dst
 }
 
 // PadGraphicUTF16BE pads a UTF-16 BE byte slice with DBCS spaces (0x0020) up to targetCharLen characters.
