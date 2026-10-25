@@ -840,4 +840,49 @@ func TestSecurity_SqlOut_NilDestinationPanicProtection(t *testing.T) {
 	}
 }
 
+// 23. SEC-23: ParseSQLDTARD extended length DDM parameter header parsing and bounds validation
+func TestSecurity_ParseSQLDTARD_ExtendedLengthAndBounds(t *testing.T) {
+	// Construct an FDODSC sub-object with normal length (CodePoint 0x0010)
+	fdodscPayload := []byte{
+		0x06, 0x76, 0xD0, // descriptor group header
+		0x02, 0x00, 0x04, // Integer (0x02), PS=(0,4)
+		0x06, 0x71, 0xE4, 0xD0, 0x00, 0x01, // end descriptor
+	}
+	var fdodscObj []byte
+	fdodscObj = binary.BigEndian.AppendUint16(fdodscObj, uint16(4+len(fdodscPayload)))
+	fdodscObj = binary.BigEndian.AppendUint16(fdodscObj, 0x0010)
+	fdodscObj = append(fdodscObj, fdodscPayload...)
+
+	// Construct an FDODTA sub-object with extended length header 0x8008 (CodePoint 0x147A)
+	// Payload: 0xFF 0x00 header + 4-byte int32 value (42)
+	fdodtaPayload := []byte{0xFF, 0x00, 0x00, 0x00, 0x00, 0x2A}
+	var fdodtaObj []byte
+	fdodtaObj = binary.BigEndian.AppendUint16(fdodtaObj, 0x8008) // Extended length flag (0x8000 + 8)
+	fdodtaObj = binary.BigEndian.AppendUint16(fdodtaObj, 0x147A) // FDODTA CodePoint
+	fdodtaObj = binary.BigEndian.AppendUint32(fdodtaObj, uint32(len(fdodtaPayload)))
+	fdodtaObj = append(fdodtaObj, fdodtaPayload...)
+
+	sqldtardPayload := append(fdodscObj, fdodtaObj...)
+
+	res, err := converters.ParseSQLDTARD(sqldtardPayload, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("ParseSQLDTARD failed for extended length FDODTA parameter: %v", err)
+	}
+
+	if len(res) != 1 {
+		t.Fatalf("expected 1 output parameter parsed, got %d", len(res))
+	}
+
+	if val, ok := res[0].(int64); !ok || val != 42 {
+		t.Fatalf("expected output parameter value 42, got %v (%T)", res[0], res[0])
+	}
+
+	// Test malformed payload bounds
+	malformed := []byte{0x80, 0x08, 0x14, 0x7A, 0x00, 0x00, 0x01, 0xFF} // claims 0x1FF bytes payload but data truncated
+	_, err = converters.ParseSQLDTARD(malformed, binary.BigEndian)
+	if err == nil {
+		t.Fatalf("expected error for malformed extended length payload, got nil")
+	}
+}
+
 var _ driver.Stmt = (*Stmt)(nil)

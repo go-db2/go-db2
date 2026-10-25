@@ -549,22 +549,44 @@ func ParseSQLDTARD(data []byte, endian binary.ByteOrder) ([]any, error) {
 
 	for offset < len(data) {
 		if offset+4 > len(data) {
-			break
+			return nil, errors.New("incomplete SQLDTARD parameter header")
 		}
-		objLen := int(binary.BigEndian.Uint16(data[offset : offset+2]))
+		paramLen := int(binary.BigEndian.Uint16(data[offset : offset+2]))
 		codePoint := binary.BigEndian.Uint16(data[offset+2 : offset+4])
 
-		if objLen < 4 || offset+objLen > len(data) {
-			break
+		var payload []byte
+		if paramLen&0x8000 == 0 {
+			if paramLen < 4 || offset+paramLen > len(data) {
+				return nil, fmt.Errorf("invalid SQLDTARD parameter length %d at offset %d", paramLen, offset)
+			}
+			payload = data[offset+4 : offset+paramLen]
+			offset += paramLen
+		} else {
+			extBytes := int(paramLen&0x7FFF) - 4
+			if extBytes == 0 {
+				payload = data[offset+4:]
+				offset = len(data)
+			} else {
+				if extBytes < 0 || extBytes > 8 || offset+4+extBytes > len(data) {
+					return nil, fmt.Errorf("invalid SQLDTARD extended length field 0x%04X at offset %d", paramLen, offset)
+				}
+				var dataLen uint64
+				for _, b := range data[offset+4 : offset+4+extBytes] {
+					dataLen = dataLen<<8 | uint64(b)
+				}
+				if dataLen > uint64(len(data)-(offset+4+extBytes)) {
+					return nil, fmt.Errorf("invalid SQLDTARD extended payload length %d at offset %d", dataLen, offset)
+				}
+				payload = data[offset+4+extBytes : offset+4+extBytes+int(dataLen)]
+				offset += 4 + extBytes + int(dataLen)
+			}
 		}
 
-		payload := data[offset+4 : offset+objLen]
 		if codePoint == 0x0010 { // FDODSC
 			dscBytes = payload
 		} else if codePoint == 0x147A { // FDODTA
 			dtaBytes = payload
 		}
-		offset += objLen
 	}
 
 	if len(dtaBytes) == 0 {
