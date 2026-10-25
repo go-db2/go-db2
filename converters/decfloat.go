@@ -1,6 +1,7 @@
 package converters
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -69,75 +70,108 @@ func dpdEncode(d2, d1, d0 int) uint16 {
 }
 
 // DecodeDFP decodes IEEE 754-2008 DPD decimal floating-point bytes (8 or 16 bytes) into a string representation.
+// Optimization: Replaces math/big.Int bit manipulation with direct uint64 bitwise operations and stack buffers for zero heap allocation parsing.
 func DecodeDFP(data []byte) (string, error) {
 	nBytes := len(data)
 	if nBytes != 8 && nBytes != 16 {
 		return "", fmt.Errorf("invalid DFP byte length: %d (must be 8 or 16)", nBytes)
 	}
 
-	var bias, nDpdGroups, expContBits int
+	var sign bool
+	var g, e, biasedExp, leadingDigit, bias int
+	var digitBuf [34]int
+	var numDigits int
+
 	if nBytes == 8 {
 		bias = 398
-		nDpdGroups = 5
-		expContBits = 8
+		w := binary.BigEndian.Uint64(data)
+
+		sign = (w >> 63) == 1
+		g = int((w >> 58) & 0x1F)
+		e = int((w >> 50) & 0xFF)
+		t := w & 0x0003FFFFFFFFFFFF
+
+		if g >= 0x1E {
+			if (g & 0x01) != 0 {
+				return "NaN", nil
+			}
+			if sign {
+				return "-Infinity", nil
+			}
+			return "Infinity", nil
+		}
+
+		if g >= 0x18 {
+			biasedExp = (((g >> 1) & 0x03) << 8) | e
+			leadingDigit = 8 + (g & 1)
+		} else {
+			biasedExp = ((g >> 3) << 8) | e
+			leadingDigit = g & 0x07
+		}
+
+		digitBuf[0] = leadingDigit
+		idx := 1
+		for i := 4; i >= 0; i-- {
+			grp := uint16((t >> (i * 10)) & 0x3FF)
+			d2, d1, d0 := dpdDecode(grp)
+			digitBuf[idx] = d2
+			digitBuf[idx+1] = d1
+			digitBuf[idx+2] = d0
+			idx += 3
+		}
+		numDigits = 16
 	} else {
 		bias = 6176
-		nDpdGroups = 11
-		expContBits = 12
-	}
+		hi := binary.BigEndian.Uint64(data[0:8])
+		lo := binary.BigEndian.Uint64(data[8:16])
 
-	coeffContBits := nDpdGroups * 10
-	totalBits := nBytes * 8
+		sign = (hi >> 63) == 1
+		g = int((hi >> 58) & 0x1F)
+		e = int((hi >> 46) & 0xFFF)
+		tHi := hi & 0x00003FFFFFFFFFFF
+		tLo := lo
 
-	w := new(big.Int).SetBytes(data)
-
-	// sign = (w >> (totalBits - 1)) & 1
-	signBig := new(big.Int).Rsh(w, uint(totalBits-1))
-	sign := signBig.Bit(0) == 1
-
-	// G = (w >> (totalBits - 6)) & 0x1F
-	gBig := new(big.Int).Rsh(w, uint(totalBits-6))
-	g := int(gBig.Int64() & 0x1F)
-
-	// E = (w >> coeffContBits) & ((1 << expContBits) - 1)
-	eMask := (1 << expContBits) - 1
-	eBig := new(big.Int).Rsh(w, uint(coeffContBits))
-	e := int(eBig.Int64()) & eMask
-
-	// T = w & ((1 << coeffContBits) - 1)
-	tMask := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(coeffContBits)), big.NewInt(1))
-	t := new(big.Int).And(w, tMask)
-
-	// Special values: Infinity and NaN
-	if g >= 0x1E {
-		if (g & 0x01) != 0 {
-			return "NaN", nil
+		if g >= 0x1E {
+			if (g & 0x01) != 0 {
+				return "NaN", nil
+			}
+			if sign {
+				return "-Infinity", nil
+			}
+			return "Infinity", nil
 		}
-		if sign {
-			return "-Infinity", nil
+
+		if g >= 0x18 {
+			biasedExp = (((g >> 1) & 0x03) << 12) | e
+			leadingDigit = 8 + (g & 1)
+		} else {
+			biasedExp = ((g >> 3) << 12) | e
+			leadingDigit = g & 0x07
 		}
-		return "Infinity", nil
-	}
 
-	var biasedExp, leadingDigit int
-	if g >= 0x18 {
-		biasedExp = (((g >> 1) & 0x03) << expContBits) | e
-		leadingDigit = 8 + (g & 1)
-	} else {
-		biasedExp = ((g >> 3) << expContBits) | e
-		leadingDigit = g & 0x07
-	}
-
-	digits := []int{leadingDigit}
-	for i := nDpdGroups - 1; i >= 0; i-- {
-		grpBig := new(big.Int).Rsh(t, uint(i*10))
-		grp := uint16(grpBig.Int64() & 0x3FF)
-		d2, d1, d0 := dpdDecode(grp)
-		digits = append(digits, d2, d1, d0)
+		digitBuf[0] = leadingDigit
+		idx := 1
+		for i := 10; i >= 0; i-- {
+			shift := i * 10
+			var grp uint16
+			if shift <= 54 {
+				grp = uint16((tLo >> shift) & 0x3FF)
+			} else if shift == 60 {
+				grp = uint16(((tLo >> 60) & 0x0F) | ((tHi & 0x3F) << 4))
+			} else {
+				grp = uint16((tHi >> (shift - 64)) & 0x3FF)
+			}
+			d2, d1, d0 := dpdDecode(grp)
+			digitBuf[idx] = d2
+			digitBuf[idx+1] = d1
+			digitBuf[idx+2] = d0
+			idx += 3
+		}
+		numDigits = 34
 	}
 
 	exp := biasedExp - bias
-	return formatDFP(sign, digits, exp), nil
+	return formatDFP(sign, digitBuf[:numDigits], exp), nil
 }
 
 func formatDFP(sign bool, digits []int, exp int) string {
@@ -156,56 +190,67 @@ func formatDFP(sign bool, digits []int, exp int) string {
 		return "0"
 	}
 
-	var b strings.Builder
+	var stackBuf [64]byte
+	buf := stackBuf[:0]
+
 	if sign {
-		b.WriteByte('-')
+		buf = append(buf, '-')
 	}
 
-	digitStr := make([]byte, len(significant))
-	for i, d := range significant {
-		digitStr[i] = '0' + byte(d)
-	}
-	sDigits := string(digitStr)
-
-	numDigits := len(sDigits)
+	numDigits := len(significant)
 	dotPos := numDigits + exp
 
 	if dotPos > 0 && dotPos <= numDigits {
 		// e.g. 12345 with exp -2 -> dotPos 3 -> "123.45"
 		if dotPos == numDigits {
-			b.WriteString(sDigits)
+			for _, d := range significant {
+				buf = append(buf, '0'+byte(d))
+			}
 		} else {
-			b.WriteString(sDigits[:dotPos])
-			b.WriteByte('.')
-			b.WriteString(sDigits[dotPos:])
+			for _, d := range significant[:dotPos] {
+				buf = append(buf, '0'+byte(d))
+			}
+			buf = append(buf, '.')
+			for _, d := range significant[dotPos:] {
+				buf = append(buf, '0'+byte(d))
+			}
 		}
 	} else if dotPos > numDigits && dotPos <= numDigits+10 {
 		// e.g. 12 with exp 2 -> "1200"
-		b.WriteString(sDigits)
-		b.WriteString(strings.Repeat("0", dotPos-numDigits))
+		for _, d := range significant {
+			buf = append(buf, '0'+byte(d))
+		}
+		for i := 0; i < dotPos-numDigits; i++ {
+			buf = append(buf, '0')
+		}
 	} else if dotPos <= 0 && dotPos >= -6 {
 		// e.g. 12 with exp -3 -> "0.012"
-		b.WriteString("0.")
-		b.WriteString(strings.Repeat("0", -dotPos))
-		b.WriteString(sDigits)
+		buf = append(buf, '0', '.')
+		for i := 0; i < -dotPos; i++ {
+			buf = append(buf, '0')
+		}
+		for _, d := range significant {
+			buf = append(buf, '0'+byte(d))
+		}
 	} else {
 		// Scientific notation
 		if numDigits == 1 {
-			b.WriteString(sDigits)
+			buf = append(buf, '0'+byte(significant[0]))
 		} else {
-			b.WriteByte(sDigits[0])
-			b.WriteByte('.')
-			b.WriteString(sDigits[1:])
+			buf = append(buf, '0'+byte(significant[0]), '.')
+			for _, d := range significant[1:] {
+				buf = append(buf, '0'+byte(d))
+			}
 		}
 		sciExp := exp + numDigits - 1
-		b.WriteByte('E')
+		buf = append(buf, 'E')
 		if sciExp >= 0 {
-			b.WriteByte('+')
+			buf = append(buf, '+')
 		}
-		b.WriteString(strconv.Itoa(sciExp))
+		buf = strconv.AppendInt(buf, int64(sciExp), 10)
 	}
 
-	return b.String()
+	return string(buf)
 }
 
 // EncodeDFP encodes a value into IEEE 754-2008 DPD decimal floating-point bytes (8 or 16 bytes).
