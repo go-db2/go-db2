@@ -48,6 +48,7 @@ func DecodeUTF16BE(b []byte) string {
 
 // EncodeUTF16BE encodes a UTF-8 Go string into a sequence of Big-Endian UTF-16 bytes.
 // Optimization: Fast-path for pure ASCII strings avoids rune decoding and utf16 slice allocation.
+// Iteration directly over string runes (`for _, r := range s`) avoids intermediate `[]rune` and `[]uint16` heap slice allocations.
 func EncodeUTF16BE(s string) []byte {
 	isASCII := true
 	for i := 0; i < len(s); i++ {
@@ -64,10 +65,16 @@ func EncodeUTF16BE(s string) []byte {
 		}
 		return buf
 	}
-	u16 := utf16.Encode([]rune(s))
-	buf := make([]byte, len(u16)*2)
-	for i, v := range u16 {
-		binary.BigEndian.PutUint16(buf[i*2:i*2+2], v)
+
+	// For non-ASCII / UTF-8 strings, iterate directly over runes to avoid utf16.Encode([]rune(s)) slice heap allocations.
+	buf := make([]byte, 0, len(s)*2)
+	for _, r := range s {
+		if r <= 0xFFFF {
+			buf = append(buf, byte(r>>8), byte(r))
+		} else {
+			r1, r2 := utf16.EncodeRune(r)
+			buf = append(buf, byte(r1>>8), byte(r1), byte(r2>>8), byte(r2))
+		}
 	}
 	return buf
 }

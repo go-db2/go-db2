@@ -79,6 +79,26 @@ func BenchmarkDecodeUTF16BE(b *testing.B) {
 	}
 }
 
+func BenchmarkEncodeUTF16BE(b *testing.B) {
+	b.Run("ASCII", func(b *testing.B) {
+		str := "IBM Db2 Pure Go Driver High Performance"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = EncodeUTF16BE(str)
+		}
+	})
+
+	b.Run("Mixed", func(b *testing.B) {
+		str := "IBM Db2 São Paulo / München"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = EncodeUTF16BE(str)
+		}
+	})
+}
+
 func BenchmarkEncodePackedDecimalParam(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
