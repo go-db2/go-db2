@@ -49,6 +49,42 @@ func TestDecFloat16EncodeDecode(t *testing.T) {
 	}
 }
 
+func TestEncodeDFP_SliceBoundsAndByteAlignment(t *testing.T) {
+	inputs := []struct {
+		val    any
+		nBytes int
+	}{
+		{"0", 8},
+		{"0", 16},
+		{"Infinity", 8},
+		{"Infinity", 16},
+		{"-Infinity", 8},
+		{"-Infinity", 16},
+		{"NaN", 8},
+		{"NaN", 16},
+		{"123.456", 8},
+		{"123.456", 16},
+	}
+
+	for _, tc := range inputs {
+		t.Run(testing.TB.Name(t)+"/"+tc.val.(string), func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("EncodeDFP(%v, %d) panicked: %v", tc.val, tc.nBytes, r)
+				}
+			}()
+
+			b, err := EncodeDFP(tc.val, tc.nBytes)
+			if err != nil {
+				t.Fatalf("EncodeDFP(%v, %d) error: %v", tc.val, tc.nBytes, err)
+			}
+			if len(b) != tc.nBytes {
+				t.Fatalf("EncodeDFP(%v, %d) returned byte length %d; want exact %d", tc.val, tc.nBytes, len(b), tc.nBytes)
+			}
+		})
+	}
+}
+
 func TestEncodeDFP_EdgeCasesAndValidation(t *testing.T) {
 	validCases := []struct {
 		name     string

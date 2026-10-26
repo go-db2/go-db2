@@ -257,6 +257,20 @@ func formatDFP(sign bool, digits []int, exp int) string {
 	return string(buf)
 }
 
+// alignBytes pads or slices big.Int byte representations to guarantee an exact nBytes output slice
+// without negative indexing panics when len(b) > nBytes or len(b) < nBytes.
+func alignBytes(b []byte, nBytes int) []byte {
+	if len(b) < nBytes {
+		padded := make([]byte, nBytes)
+		copy(padded[nBytes-len(b):], b)
+		return padded
+	}
+	if len(b) > nBytes {
+		return b[len(b)-nBytes:]
+	}
+	return b
+}
+
 // EncodeDFP encodes a value into IEEE 754-2008 DPD decimal floating-point bytes (8 or 16 bytes).
 func EncodeDFP(val any, nBytes int) ([]byte, error) {
 	if nBytes != 8 && nBytes != 16 {
@@ -291,13 +305,7 @@ func EncodeDFP(val any, nBytes int) ([]byte, error) {
 			new(big.Int).Lsh(big.NewInt(int64(g)), uint(totalBits-6)),
 			new(big.Int).Lsh(big.NewInt(int64(e)), uint(coeffContBits)),
 		)
-		b := w.Bytes()
-		if len(b) < nBytes {
-			padded := make([]byte, nBytes)
-			copy(padded[nBytes-len(b):], b)
-			return padded, nil
-		}
-		return b, nil
+		return alignBytes(w.Bytes(), nBytes), nil
 	}
 
 	sign := false
@@ -313,17 +321,11 @@ func EncodeDFP(val any, nBytes int) ([]byte, error) {
 		if sign {
 			w.Or(w, new(big.Int).Lsh(big.NewInt(1), uint(totalBits-1)))
 		}
-		b := w.Bytes()
-		padded := make([]byte, nBytes)
-		copy(padded[nBytes-len(b):], b)
-		return padded, nil
+		return alignBytes(w.Bytes(), nBytes), nil
 	}
 	if strings.EqualFold(str, "nan") {
 		w := new(big.Int).Lsh(big.NewInt(0x1F), uint(totalBits-6))
-		b := w.Bytes()
-		padded := make([]byte, nBytes)
-		copy(padded[nBytes-len(b):], b)
-		return padded, nil
+		return alignBytes(w.Bytes(), nBytes), nil
 	}
 
 	// Parse mantissa and exponent from string
@@ -408,13 +410,5 @@ func EncodeDFP(val any, nBytes int) ([]byte, error) {
 		w.Or(w, new(big.Int).Lsh(big.NewInt(1), uint(totalBits-1)))
 	}
 
-	b := w.Bytes()
-	if len(b) < nBytes {
-		padded := make([]byte, nBytes)
-		copy(padded[nBytes-len(b):], b)
-		return padded, nil
-	} else if len(b) > nBytes {
-		return b[len(b)-nBytes:], nil
-	}
-	return b, nil
+	return alignBytes(w.Bytes(), nBytes), nil
 }
