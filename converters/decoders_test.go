@@ -135,6 +135,31 @@ func TestDecodePackedDecimal_NegativeScale(t *testing.T) {
 	}
 }
 
+func TestDecodeFieldDecimal_NegativeScale(t *testing.T) {
+	// 123 in packed decimal (0x12, 0x3C), precision = 3 (ps[0] = 0x03), scale = -2 (ps[1] = 0xFE)
+	var buf bytes.Buffer
+	buf.Write([]byte{0x12, 0x3C})
+	v, err := DecodeField(DRDATypeDecimal, []byte{0x03, 0xFE}, &buf, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("DecodeField DRDATypeDecimal error: %v", err)
+	}
+	if v.(string) != "12300" {
+		t.Errorf("DecodeField DRDATypeDecimal with scale -2 = %q, want %q", v, "12300")
+	}
+
+	// Nullable Decimal with value and scale -1 (ps[1] = 0xFF)
+	buf.Reset()
+	buf.WriteByte(0x00) // Not null
+	buf.Write([]byte{0x45, 0x6C})
+	vNull, err := DecodeField(DRDATypeNDecimal, []byte{0x03, 0xFF}, &buf, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("DecodeField DRDATypeNDecimal error: %v", err)
+	}
+	if vNull.(string) != "4560" {
+		t.Errorf("DecodeField DRDATypeNDecimal with scale -1 = %q, want %q", vNull, "4560")
+	}
+}
+
 func TestParseSQLDTARD_TableDriven(t *testing.T) {
 	// Helper to create an object header (uint16 len + uint16 codepoint)
 	makeObj := func(cp uint16, body []byte) []byte {
