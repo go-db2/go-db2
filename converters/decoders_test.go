@@ -229,6 +229,45 @@ func TestParseSQLDTARD_TableDriven(t *testing.T) {
 	}
 }
 
+func TestParseSQLDTARD_ExtendedLength(t *testing.T) {
+	makeExtObj := func(cp uint16, body []byte) []byte {
+		buf := make([]byte, 8+len(body))
+		binary.BigEndian.PutUint16(buf[0:2], 0x8008)
+		binary.BigEndian.PutUint16(buf[2:4], cp)
+		binary.BigEndian.PutUint32(buf[4:8], uint32(len(body)))
+		copy(buf[8:], body)
+		return buf
+	}
+
+	dscBytes := []byte{
+		0x09, 0x76, 0xD0,
+		DRDATypeSmall, 0x00, 0x02,
+		DRDATypeInteger, 0x00, 0x04,
+	}
+
+	var dtaBuf bytes.Buffer
+	dtaBuf.Write([]byte{0xFF, 0x00}) // row header
+	binary.Write(&dtaBuf, binary.BigEndian, int16(77))
+	binary.Write(&dtaBuf, binary.BigEndian, int32(8888))
+	dtaBytes := dtaBuf.Bytes()
+
+	var payload []byte
+	payload = append(payload, makeExtObj(0x0010, dscBytes)...) // FDODSC extended length
+	payload = append(payload, makeExtObj(0x147A, dtaBytes)...) // FDODTA extended length
+
+	res, err := ParseSQLDTARD(payload, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("ParseSQLDTARD with extended length failed: %v", err)
+	}
+
+	if len(res) != 2 {
+		t.Fatalf("expected 2 decoded fields, got %d", len(res))
+	}
+	if res[0].(int64) != 77 || res[1].(int64) != 8888 {
+		t.Errorf("got %v, %v; want 77, 8888", res[0], res[1])
+	}
+}
+
 type nonByteReader struct {
 	r io.Reader
 }

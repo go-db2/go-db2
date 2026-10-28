@@ -554,17 +554,39 @@ func ParseSQLDTARD(data []byte, endian binary.ByteOrder) ([]any, error) {
 		objLen := int(binary.BigEndian.Uint16(data[offset : offset+2]))
 		codePoint := binary.BigEndian.Uint16(data[offset+2 : offset+4])
 
-		if objLen < 4 || offset+objLen > len(data) {
-			break
+		var payload []byte
+		if objLen&0x8000 == 0 {
+			if objLen < 4 || offset+objLen > len(data) {
+				break
+			}
+			payload = data[offset+4 : offset+objLen]
+			offset += objLen
+		} else {
+			extBytes := int(objLen&0x7FFF) - 4
+			if extBytes == 0 {
+				payload = data[offset+4:]
+				offset = len(data)
+			} else if extBytes < 0 || extBytes > 8 || offset+4+extBytes > len(data) {
+				break
+			} else {
+				var dataLen uint64
+				for _, b := range data[offset+4 : offset+4+extBytes] {
+					dataLen = dataLen<<8 | uint64(b)
+				}
+				if dataLen > uint64(len(data)-offset-4-extBytes) {
+					break
+				}
+				start := offset + 4 + extBytes
+				payload = data[start : start+int(dataLen)]
+				offset = start + int(dataLen)
+			}
 		}
 
-		payload := data[offset+4 : offset+objLen]
 		if codePoint == 0x0010 { // FDODSC
 			dscBytes = payload
 		} else if codePoint == 0x147A { // FDODTA
 			dtaBytes = payload
 		}
-		offset += objLen
 	}
 
 	if len(dtaBytes) == 0 {
