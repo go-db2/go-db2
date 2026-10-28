@@ -79,6 +79,26 @@ func BenchmarkDecodeUTF16BE(b *testing.B) {
 	}
 }
 
+func BenchmarkDecodeDFP_16(b *testing.B) {
+	// DECFLOAT(16) encoding of 123.456
+	data, _ := EncodeDFP("123.456", 8)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = DecodeDFP(data)
+	}
+}
+
+func BenchmarkDecodeDFP_34(b *testing.B) {
+	// DECFLOAT(34) encoding of 12345678901234567890.12345678901234
+	data, _ := EncodeDFP("12345678901234567890.12345678901234", 16)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = DecodeDFP(data)
+	}
+}
+
 func BenchmarkEncodePackedDecimalParam(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()

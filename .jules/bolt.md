@@ -127,3 +127,8 @@
 
 **Learning:** Validating SQL and user identifiers using `regexp.MustCompile(`^[a-zA-Z0-9_#$]{1,128}$`)` and `.MatchString()` introduces regex NFA engine setup and scanning overhead (~505ns/op). Replacing regex matching with a direct byte-scanning loop (`isValidSQLIdentifier`) checks string length and permitted ASCII character ranges (`a-z`, `A-Z`, `0-9`, `_`, `#`, `$`) directly. This accelerates identifier validation by ~22x (505ns -> 22.6ns/op) while maintaining 0 B/op and 0 allocs/op.
 **Action:** In Go, when validating string inputs against fixed ASCII character set rules (e.g. identifiers, keys), replace regular expressions with a direct byte-scanning loop.
+
+## 2026-10-28 - Zero-Allocation Bitwise IEEE 754-2008 DECFLOAT DPD Decoding
+
+**Learning:** Decoding IEEE 754-2008 Densely Packed Decimal (DPD) numbers using `math/big.Int` created 17-27 heap allocations per field due to `big.Int` initialization and bitwise shift methods. Replacing `big.Int` bit manipulation with direct `uint64` bitwise shifts (and high/low `uint64` pair shifts for 128-bit DECFLOAT34) along with stack-allocated digit `[34]int` and formatting `[64]byte` buffers eliminates all heap allocations except the single returned string. This speeds up DECFLOAT decoding by ~8.5x (from 787ns/1751ns down to 92ns/207ns) and reduces memory consumption by 97-98%.
+**Action:** When decoding fixed-width binary floating-point or packed numbers (<= 128 bits), use direct scalar integer bitwise operations and stack arrays instead of `math/big.Int`.

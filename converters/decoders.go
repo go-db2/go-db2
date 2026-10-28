@@ -351,7 +351,8 @@ func DecodeField(drdaType uint8, ps []byte, r io.Reader, endian binary.ByteOrder
 		} else if len(ps) > 0 && ps[0] == 16 {
 			nBytes = 16
 		}
-		buf := make([]byte, nBytes)
+		var stackBuf [16]byte
+		buf := stackBuf[:nBytes]
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
 		}
