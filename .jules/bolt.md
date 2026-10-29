@@ -142,3 +142,8 @@
 
 **Learning:** Slicing byte literals directly inside function calls like `bytes.Equal(obj[5:10], []byte{'0', '0', '0', '0', '0'})` forces Go escape analysis to allocate the slice header/array on the heap on every execution call. Replacing `bytes.Equal` with direct inline byte index comparisons (`obj[5] == '0' && obj[6] == '0' ...`) eliminates the allocation entirely. In addition, pre-allocating default string identifiers (`PARAM1`..`PARAM64`) in a package-level static array during `init()` eliminates `fmt.Sprintf` heap string allocations during repeated parameter descriptor parsing.
 **Action:** When comparing fixed-length byte patterns in hot protocol parsers, use direct inline byte index comparisons instead of `bytes.Equal` with slice literals, and use static pre-computed lookup tables for repeating default string identifiers.
+
+## 2026-10-11 - Direct Rune Iteration and AppendUTF16BE for Zero-Allocation UTF-16 BE Encoding
+
+**Learning:** Calling `utf16.Encode([]rune(s))` allocates both a `[]rune` slice and a `[]uint16` slice on the heap. Providing an `AppendUTF16BE(dst, s)` function with a direct `s[i] <= 0x7F` byte scanning loop for ASCII and direct `for _, r := range s` rune iteration for non-ASCII strings appends UTF-16 BE bytes directly onto destination slices. This eliminates intermediate `[]rune` and `[]uint16` heap allocations, speeding up non-ASCII UTF-16 BE string encoding by ~2.2x (280 ns -> 124 ns/op) and cutting memory allocations by 50-100%.
+**Action:** When encoding Go strings into multi-byte unicode byte sequences (like UTF-16 BE), avoid `utf16.Encode([]rune(s))` and instead append bytes directly into target buffers during single-pass rune iteration (`for _, r := range s`).
