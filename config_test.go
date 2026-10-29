@@ -181,6 +181,28 @@ func TestParseDSN_KerberosSPN_RedactionPreservation(t *testing.T) {
 	}
 }
 
+func TestParseDSN_QueryParamsPasswordRedaction(t *testing.T) {
+	secretPwd := "MySecretPassword123"
+
+	queryDSNs := []string{
+		fmt.Sprintf("db2://user@localhost:50000/TESTDB?password=%s&ssl=true", secretPwd),
+		fmt.Sprintf("db2://localhost:50000/TESTDB?user=admin&pwd=%s&timeout=30s", secretPwd),
+		fmt.Sprintf("db2s://localhost:50001/PRODDB?pwd=%s", secretPwd),
+	}
+
+	for i, dsn := range queryDSNs {
+		t.Run(fmt.Sprintf("DSN_%d", i+1), func(t *testing.T) {
+			redacted := redactDSNPassword(dsn)
+			if strings.Contains(redacted, secretPwd) {
+				t.Fatalf("redactDSNPassword failed to redact query param password: %s", redacted)
+			}
+			if !strings.Contains(redacted, "******") {
+				t.Fatalf("redactDSNPassword did not contain '******' in redacted query string: %s", redacted)
+			}
+		})
+	}
+}
+
 func TestParseDSN_Kerberos(t *testing.T) {
 	dsn := "db2://localhost:50000/TESTDB?security_mechanism=kerberos&spn=db2/server.corp.local@CORP.LOCAL&krb5_config=/etc/krb5.conf&krb5_keytab=/etc/db2.keytab&krb5_ccache=/tmp/krb5cc_1000"
 	cfg, err := ParseDSN(dsn)
