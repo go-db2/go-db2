@@ -47,3 +47,32 @@ func BenchmarkParseSQLDARD(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkParseSQLDARD_DefaultParams(b *testing.B) {
+	// Construct SQLDARD payload without column names (e.g., parameter markers where colName evaluates to empty)
+	// Header byte 0xFF indicates parameter descriptors (no SQLCARD header, hasName=false)
+	// followed by 2-byte column count (10 parameters) and 16-byte field descriptors.
+	obj := []byte{0xFF, 0x00, 0x0A} // 0xFF header, 10 columns
+	for i := 0; i < 10; i++ {
+		// 16 bytes per column: 2-byte prec, 2-byte scale, 8-byte sqllen, 2-byte sqltype, plus trailing padding
+		colBytes := []byte{
+			0x00, 0x0A, // Precision
+			0x00, 0x02, // Scale
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, // Length
+			0x01, 0xF4, // SQLType (500)
+		}
+		// 29 bytes padding for hasName=false
+		pad := make([]byte, 29)
+		obj = append(obj, colBytes...)
+		obj = append(obj, pad...)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := ParseSQLDARD(obj, binary.LittleEndian)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
