@@ -128,6 +128,11 @@
 **Learning:** Validating SQL and user identifiers using `regexp.MustCompile(`^[a-zA-Z0-9_#$]{1,128}$`)` and `.MatchString()` introduces regex NFA engine setup and scanning overhead (~505ns/op). Replacing regex matching with a direct byte-scanning loop (`isValidSQLIdentifier`) checks string length and permitted ASCII character ranges (`a-z`, `A-Z`, `0-9`, `_`, `#`, `$`) directly. This accelerates identifier validation by ~22x (505ns -> 22.6ns/op) while maintaining 0 B/op and 0 allocs/op.
 **Action:** In Go, when validating string inputs against fixed ASCII character set rules (e.g. identifiers, keys), replace regular expressions with a direct byte-scanning loop.
 
+## 2026-10-11 - Direct Bitwise Shifting and Stack Buffers for IEEE 754-2008 DECFLOAT DPD Decoding
+
+**Learning:** Decoding IEEE 754-2008 DPD decimal floating-point numbers (`DecodeDFP`) using `math/big.BigInt` creates 17 to 27 heap allocations per field decode due to repeated `big.Int` bit shifting and masking. Replacing `big.Int` with direct `uint64` bitwise shifts for DECFLOAT(16) and low/high `uint64` pair shifts for 128-bit DECFLOAT(34), along with local stack-allocated digit (`[34]int`) and byte (`[64]byte`) buffers, reduces allocations from 17-27 allocs/op down to 1 alloc/op (only the returned string), speeds up decoding by ~15x-17x (1242ns -> 82.8ns/op for DECFLOAT16; 2899ns -> 172ns/op for DECFLOAT34), and cuts memory usage by 97-98%.
+**Action:** When parsing fixed-length binary floating-point or packed structures (up to 128 bits), use native `uint64` bitwise operations and local stack array buffers instead of allocating `math/big.Int` objects.
+
 ## 2026-10-15 - Inline Byte Comparisons and Static Parameter Table for SQLCARD/SQLDARD Parsing
 
 **Learning:** Slicing byte literals directly inside function calls like `bytes.Equal(obj[5:10], []byte{'0', '0', '0', '0', '0'})` forces Go escape analysis to allocate the slice header/array on the heap on every execution call. Replacing `bytes.Equal` with direct inline byte index comparisons (`obj[5] == '0' && obj[6] == '0' ...`) eliminates the allocation entirely. In addition, pre-allocating default string identifiers (`PARAM1`..`PARAM64`) in a package-level static array during `init()` eliminates `fmt.Sprintf` heap string allocations during repeated parameter descriptor parsing.
