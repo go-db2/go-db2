@@ -307,10 +307,11 @@ var (
 	defaultConsistencyToken = [8]byte{
 		0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
 	}
-	paramRDBCMTOK  = []byte{0x00, 0x05, 0x21, 0x05, 0xF1}
-	paramRTNSQLDA  = []byte{0x00, 0x05, 0x21, 0x16, 0xF1}
-	paramTYPSQLDA  = []byte{0x00, 0x05, 0x21, 0x46, 0x01}
-	paramQRYCLSIMP = []byte{0x00, 0x05, 0x21, 0x5D, 0x01}
+	paramRDBCMTOK    = []byte{0x00, 0x05, 0x21, 0x05, 0xF1}
+	paramRTNSQLDA    = []byte{0x00, 0x05, 0x21, 0x16, 0xF1}
+	paramTYPSQLDA    = []byte{0x00, 0x05, 0x21, 0x46, 0x01}
+	paramQRYCLSIMP   = []byte{0x00, 0x05, 0x21, 0x5D, 0x01}
+	sqlDardDelimiter = []byte{0xFF, 0xFF, 0xFF}
 )
 
 // PackACCRDB builds the ACCRDB (Access Relational Database) DDM command.
@@ -812,7 +813,7 @@ func ParseSQLDARD(obj []byte, endian binary.ByteOrder) ([]ColumnDescription, err
 
 		var colName string
 		// Check for ffffff delimiter (used in SP descriptors)
-		delimPos := bytes.Index(rest, []byte{0xFF, 0xFF, 0xFF})
+		delimPos := bytes.Index(rest, sqlDardDelimiter)
 		if delimPos != -1 {
 			nameChunk := rest[:delimPos]
 			rest = rest[delimPos+3:]
@@ -933,7 +934,7 @@ func ParseSQLCARD(obj []byte, endian binary.ByteOrder) (int32, string, string, i
 
 	sqlcode := int32(endian.Uint32(obj[1:5]))
 	var sqlstate string
-	if bytes.Equal(obj[5:10], []byte{'0', '0', '0', '0', '0'}) {
+	if len(obj) >= 10 && obj[5] == '0' && obj[6] == '0' && obj[7] == '0' && obj[8] == '0' && obj[9] == '0' {
 		sqlstate = "00000"
 	} else {
 		sqlstate = string(obj[5:10])

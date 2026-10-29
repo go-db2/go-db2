@@ -1092,7 +1092,7 @@ func (s *Session) fetchQuery(replies []ReplyPacket, columns []ColumnDescription)
 // the null indicator 0xFF unless the server attached a warning or an error to
 // the row, then the indicator of the row data (0x00 when present), then one
 // value per field.
-// Optimization: Decodes rows directly as driver.Value slices to eliminate redundant slice allocations during query execution.
+// Optimization: Pre-allocates a single contiguous backing slice for row buffers to eliminate per-row slice heap allocations during query result set decoding.
 func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) ([][]driver.Value, error) {
 	reader := bytes.NewReader(data)
 	numFields := len(fields)
@@ -1106,6 +1106,11 @@ func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) 
 		}
 	}
 	rows := make([][]driver.Value, 0, initCap)
+	var backing []driver.Value
+	if initCap > 0 && numFields > 0 {
+		backing = make([]driver.Value, initCap*numFields)
+	}
+
 	for reader.Len() >= 2 {
 		first, err := reader.ReadByte()
 		if err != nil {
@@ -1135,7 +1140,14 @@ func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) 
 			break
 		}
 
-		row := make([]driver.Value, numFields)
+		var row []driver.Value
+		if len(rows) < initCap {
+			idx := len(rows) * numFields
+			row = backing[idx : idx+numFields : idx+numFields]
+		} else {
+			row = make([]driver.Value, numFields)
+		}
+
 		for i := 0; i < numFields; i++ {
 			f := fields[i]
 			val, err := converters.DecodeField(f.Type, f.PS[:], reader, endian)

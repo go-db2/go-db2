@@ -127,3 +127,8 @@
 
 **Learning:** Validating SQL and user identifiers using `regexp.MustCompile(`^[a-zA-Z0-9_#$]{1,128}$`)` and `.MatchString()` introduces regex NFA engine setup and scanning overhead (~505ns/op). Replacing regex matching with a direct byte-scanning loop (`isValidSQLIdentifier`) checks string length and permitted ASCII character ranges (`a-z`, `A-Z`, `0-9`, `_`, `#`, `$`) directly. This accelerates identifier validation by ~22x (505ns -> 22.6ns/op) while maintaining 0 B/op and 0 allocs/op.
 **Action:** In Go, when validating string inputs against fixed ASCII character set rules (e.g. identifiers, keys), replace regular expressions with a direct byte-scanning loop.
+
+## 2026-10-11 - Single Backing Slice Pre-allocation for Row Decoding and Static Reflection Types
+
+**Learning:** During query result row decoding (`decodeRows`), allocating per-row slices (`make([]driver.Value, numFields)`) in a loop creates $N$ separate heap slice header allocations. Pre-allocating a single contiguous backing buffer (`backing := make([]driver.Value, initCap*numFields)`) and slicing row buffers with 3-index capacity bounding (`backing[idx : idx+numFields : idx+numFields]`) reduces row slice allocations from $N$ down to 1 (saving 99 heap allocations per 100 rows decoded). Additionally, caching package-level static `reflect.Type` variables for `ColumnTypeScanType` avoids repetitive reflection calls and interface boxing on every column introspection call.
+**Action:** When decoding matrix/tabular query responses or populating row slices, allocate a single contiguous backing slice and sub-slice row buffers using 3-index slicing, and pre-declare static `reflect.Type` variables for fixed primitive type reflections.

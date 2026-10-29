@@ -85,12 +85,9 @@ func (r *Rows) Next(dest []driver.Value) error {
 	row := cur.Data[r.cursor]
 	r.cursor++
 
-	for i := range dest {
-		if i < len(row) {
-			dest[i] = row[i]
-		} else {
-			dest[i] = nil
-		}
+	n := copy(dest, row)
+	for i := n; i < len(dest); i++ {
+		dest[i] = nil
 	}
 
 	return nil
@@ -114,31 +111,44 @@ func (r *Rows) NextResultSet() error {
 	return nil
 }
 
+// Optimization: Pre-allocated static reflect.Type values for ColumnTypeScanType to eliminate per-call reflection and interface boxing overhead.
+var (
+	scanTypeInt16   = reflect.TypeOf(int16(0))
+	scanTypeInt32   = reflect.TypeOf(int32(0))
+	scanTypeInt64   = reflect.TypeOf(int64(0))
+	scanTypeFloat64 = reflect.TypeOf(float64(0))
+	scanTypeTime    = reflect.TypeOf(time.Time{})
+	scanTypeBytes   = reflect.TypeOf([]byte{})
+	scanTypeBool    = reflect.TypeOf(true)
+	scanTypeString  = reflect.TypeOf("")
+	scanTypeAny     = reflect.TypeOf(new(any)).Elem()
+)
+
 // ColumnTypeScanType returns the Go type that can be used to scan types into.
 func (r *Rows) ColumnTypeScanType(index int) reflect.Type {
 	cur := r.currentSet()
 	if index < 0 || index >= len(cur.Columns) {
-		return reflect.TypeOf(new(any)).Elem()
+		return scanTypeAny
 	}
 
 	sqlType := types.SQLType(cur.Columns[index].SQLType).BaseType()
 	switch sqlType {
 	case types.SQLTypeSmall:
-		return reflect.TypeOf(int16(0))
+		return scanTypeInt16
 	case types.SQLTypeInteger:
-		return reflect.TypeOf(int32(0))
+		return scanTypeInt32
 	case types.SQLTypeBigInt:
-		return reflect.TypeOf(int64(0))
+		return scanTypeInt64
 	case types.SQLTypeFloat:
-		return reflect.TypeOf(float64(0))
+		return scanTypeFloat64
 	case types.SQLTypeDate, types.SQLTypeTimestamp:
-		return reflect.TypeOf(time.Time{})
+		return scanTypeTime
 	case types.SQLTypeBlob, types.SQLTypeBinary, types.SQLTypeVarBinary:
-		return reflect.TypeOf([]byte{})
+		return scanTypeBytes
 	case types.SQLTypeBoolean:
-		return reflect.TypeOf(true)
+		return scanTypeBool
 	default:
-		return reflect.TypeOf("")
+		return scanTypeString
 	}
 }
 
