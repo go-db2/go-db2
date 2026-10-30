@@ -164,6 +164,8 @@ func DropDb(dbname string, connStr string) (bool, error) {
 // ExecAdminCmd executes an administrative command via Db2's SYSPROC.ADMIN_CMD stored procedure.
 // It enforces parameterized procedure execution to prevent SQL injection vulnerabilities and statement syntax errors.
 func ExecAdminCmd(ctx context.Context, db *sql.DB, command string) (sql.Result, error) {
+	// Sanitize null bytes before trimming and validating command non-emptiness
+	command = strings.ReplaceAll(command, "\x00", "")
 	trimmed := strings.TrimSpace(command)
 	if trimmed == "" {
 		return nil, fmt.Errorf("db2: admin command cannot be empty")
@@ -171,7 +173,6 @@ func ExecAdminCmd(ctx context.Context, db *sql.DB, command string) (sql.Result, 
 	if db == nil {
 		return nil, fmt.Errorf("db2: db cannot be nil")
 	}
-	trimmed = strings.ReplaceAll(trimmed, "\x00", "")
 	// Enforce parameterized CALL SYSPROC.ADMIN_CMD(?) execution
 	return db.ExecContext(ctx, "CALL SYSPROC.ADMIN_CMD(?)", trimmed)
 }

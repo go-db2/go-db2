@@ -492,6 +492,16 @@ func TestSecurity_NullByteSanitization_AdminCmd(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error executing ExecAdminCmd on nil *sql.DB, got nil")
 	}
+
+	// Verify that a command consisting solely of null bytes and whitespace is rejected as empty
+	onlyNulls := "\x00\x00   \x00"
+	_, err = ExecAdminCmd(context.Background(), nil, onlyNulls)
+	if err == nil {
+		t.Fatal("expected error for command containing only null bytes, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot be empty") {
+		t.Fatalf("expected 'cannot be empty' error, got: %v", err)
+	}
 }
 
 // 16. SEC-16: Context Metadata (WithUser & WithClientInfo) Enforcement in Prepared Statements
