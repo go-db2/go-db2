@@ -48,3 +48,8 @@
 **Vulnerability:** Direct casting of `ps[1]` (uint8) to `int` in `DecodeField` treated negative DRDA decimal scale bytes (e.g. `0xFE` for `-2`) as `254`, causing corrupted decimal string formatting and potential denial-of-service via large memory allocations in `DecodePackedDecimal`.
 **Learning:** DRDA wire protocol scale descriptors (`ps[1]`) for `DRDATypeDecimal` carry signed two's complement 8-bit values (`int8`). Casting `uint8` directly to `int` skips sign extension for negative scale parameters.
 **Prevention:** Convert `ps[1]` to `int8` before casting to `int` (`scale := int(int8(ps[1]))`) in DRDA field decoders.
+
+## 2026-10-02 - Slice Bounds Panic in DECFLOAT Parameter Byte Alignment
+**Vulnerability:** `EncodeDFP` in `converters/decfloat.go` attempted `padded[nBytes-len(b):]` when `len(b) > nBytes` on special values (`Infinity`, `NaN`, `0`) and extreme exponent inputs, causing a runtime slice bounds out of range panic and application crash.
+**Learning:** `big.Int.Bytes()` length can exceed target fixed width `nBytes` depending on bit layout. Attempting `padded[nBytes-len(b):]` without checking if `len(b) > nBytes` leads to negative slice indices in Go.
+**Prevention:** Always use a dedicated alignment helper (`alignBytes`) to safely pad (`len(b) < nBytes`), slice (`len(b) > nBytes`), or pass through (`len(b) == nBytes`) fixed-width byte array representations of `big.Int`.
