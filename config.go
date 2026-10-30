@@ -68,13 +68,30 @@ type Config struct {
 	Params            map[string]string
 }
 
+// sanitizeLogString removes ASCII control characters (< 32 and 127) for log sanitization.
+// Optimization: Fast-path byte scan returns clean strings directly (0 B/op, 0 allocs/op) and uses a single pre-allocated strings.Builder pass for modified strings.
 func sanitizeLogString(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 32 || r == 127 {
-			return -1
+	idx := -1
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 32 || c == 127 {
+			idx = i
+			break
 		}
-		return r
-	}, s)
+	}
+	if idx == -1 {
+		return s
+	}
+	var sb strings.Builder
+	sb.Grow(len(s))
+	sb.WriteString(s[:idx])
+	for i := idx; i < len(s); i++ {
+		c := s[i]
+		if c >= 32 && c != 127 {
+			sb.WriteByte(c)
+		}
+	}
+	return sb.String()
 }
 
 // String implements fmt.Stringer to ensure sensitive credentials (Password) are redacted in logs.
