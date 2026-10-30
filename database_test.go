@@ -207,6 +207,16 @@ func TestExecAdminCmd_Validation(t *testing.T) {
 		t.Fatal("ExecAdminCmd() with empty command should return error")
 	}
 
+	_, err = ExecAdminCmd(context.Background(), nil, "\x00\x00")
+	if err == nil || !strings.Contains(err.Error(), "admin command cannot be empty") {
+		t.Fatalf("ExecAdminCmd() with null bytes only should return empty command error, got: %v", err)
+	}
+
+	_, err = ExecAdminCmd(context.Background(), nil, "  \x00  ")
+	if err == nil || !strings.Contains(err.Error(), "admin command cannot be empty") {
+		t.Fatalf("ExecAdminCmd() with null bytes and whitespace should return empty command error, got: %v", err)
+	}
+
 	_, err = ExecAdminCmd(context.Background(), nil, "RUNSTATS ON TABLE USERS")
 	if err == nil {
 		t.Fatal("ExecAdminCmd() with nil *sql.DB should return error")
