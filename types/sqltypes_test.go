@@ -38,6 +38,25 @@ func TestSQLType(t *testing.T) {
 	}
 }
 
+func BenchmarkSQLTypeString_Known(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_ = SQLTypeInteger.String()
+	}
+}
+
+func BenchmarkSQLTypeString_Nullable(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_ = SQLTypeNVarChar.String()
+	}
+}
+
+func BenchmarkSQLTypeString_Unknown(b *testing.B) {
+	unknown := SQLType(9999)
+	for i := 0; i < b.N; i++ {
+		_ = unknown.String()
+	}
+}
+
 func TestSQLType_IsNullable(t *testing.T) {
 	tests := []struct {
 		name       string
