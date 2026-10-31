@@ -240,6 +240,12 @@ func TestRowsColumnTypes(t *testing.T) {
 		{Name: "C_INT", SQLType: uint16(types.SQLTypeInteger), Length: 4, Nullable: false},
 		{Name: "C_VARCHAR", SQLType: uint16(types.SQLTypeVarChar), Length: 100, Nullable: true},
 		{Name: "C_DECIMAL", SQLType: uint16(types.SQLTypeDecimal), Precision: 10, Scale: 2, Nullable: true},
+		{Name: "C_SMALLINT", SQLType: uint16(types.SQLTypeSmall)},
+		{Name: "C_BIGINT", SQLType: uint16(types.SQLTypeBigInt)},
+		{Name: "C_FLOAT", SQLType: uint16(types.SQLTypeFloat)},
+		{Name: "C_DATE", SQLType: uint16(types.SQLTypeDate)},
+		{Name: "C_BLOB", SQLType: uint16(types.SQLTypeBlob)},
+		{Name: "C_BOOLEAN", SQLType: uint16(types.SQLTypeBoolean)},
 	}
 	rows := NewRows(cols, nil)
 
@@ -248,6 +254,25 @@ func TestRowsColumnTypes(t *testing.T) {
 	}
 	if rows.ColumnTypeDatabaseTypeName(0) != "INTEGER" {
 		t.Fatalf("expected INTEGER, got %s", rows.ColumnTypeDatabaseTypeName(0))
+	}
+
+	if rows.ColumnTypeScanType(3) != reflect.TypeOf(int16(0)) {
+		t.Fatalf("expected int16 scan type for C_SMALLINT, got %v", rows.ColumnTypeScanType(3))
+	}
+	if rows.ColumnTypeScanType(4) != reflect.TypeOf(int64(0)) {
+		t.Fatalf("expected int64 scan type for C_BIGINT, got %v", rows.ColumnTypeScanType(4))
+	}
+	if rows.ColumnTypeScanType(5) != reflect.TypeOf(float64(0)) {
+		t.Fatalf("expected float64 scan type for C_FLOAT, got %v", rows.ColumnTypeScanType(5))
+	}
+	if rows.ColumnTypeScanType(6) != scanTypeTime {
+		t.Fatalf("expected time.Time scan type for C_DATE, got %v", rows.ColumnTypeScanType(6))
+	}
+	if rows.ColumnTypeScanType(7) != scanTypeByteSlice {
+		t.Fatalf("expected []byte scan type for C_BLOB, got %v", rows.ColumnTypeScanType(7))
+	}
+	if rows.ColumnTypeScanType(8) != scanTypeBool {
+		t.Fatalf("expected bool scan type for C_BOOLEAN, got %v", rows.ColumnTypeScanType(8))
 	}
 
 	if nullable, ok := rows.ColumnTypeNullable(1); !ok || !nullable {
@@ -259,6 +284,40 @@ func TestRowsColumnTypes(t *testing.T) {
 
 	if prec, scale, ok := rows.ColumnTypePrecisionScale(2); !ok || prec != 10 || scale != 2 {
 		t.Fatalf("expected prec=10, scale=2, got prec=%d, scale=%d", prec, scale)
+	}
+}
+
+func BenchmarkRowsColumnTypeScanType(b *testing.B) {
+	cols := []network.ColumnDescription{
+		{Name: "C_INT", SQLType: uint16(types.SQLTypeInteger)},
+		{Name: "C_VARCHAR", SQLType: uint16(types.SQLTypeVarChar)},
+		{Name: "C_TIMESTAMP", SQLType: uint16(types.SQLTypeTimestamp)},
+		{Name: "C_DECIMAL", SQLType: uint16(types.SQLTypeDecimal)},
+	}
+	rows := NewRows(cols, nil)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = rows.ColumnTypeScanType(0)
+		_ = rows.ColumnTypeScanType(1)
+		_ = rows.ColumnTypeScanType(2)
+		_ = rows.ColumnTypeScanType(3)
+	}
+}
+
+func BenchmarkRowsColumnTypeDatabaseTypeName(b *testing.B) {
+	cols := []network.ColumnDescription{
+		{Name: "C_INT", SQLType: uint16(types.SQLTypeInteger)},
+		{Name: "C_VARCHAR", SQLType: uint16(types.SQLTypeVarChar)},
+		{Name: "C_TIMESTAMP", SQLType: uint16(types.SQLTypeTimestamp)},
+		{Name: "C_DECIMAL", SQLType: uint16(types.SQLTypeDecimal)},
+	}
+	rows := NewRows(cols, nil)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = rows.ColumnTypeDatabaseTypeName(0)
+		_ = rows.ColumnTypeDatabaseTypeName(1)
+		_ = rows.ColumnTypeDatabaseTypeName(2)
+		_ = rows.ColumnTypeDatabaseTypeName(3)
 	}
 }
 
