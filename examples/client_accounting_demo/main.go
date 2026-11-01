@@ -14,7 +14,7 @@ import (
 func main() {
 	fmt.Println("1. Conectando ao IBM Db2 com registradores de Client Workstation & Accounting via DSN...")
 
-	dsn := "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false" +
+	dsn := "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true" +
 		"&client_applname=orders-microservice" +
 		"&client_wrkstnname=k8s-node-worker-01" +
 		"&client_userid=user_app_77" +

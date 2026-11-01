@@ -14,7 +14,7 @@ import (
 func main() {
 	dsn := os.Getenv("DB2_DSN")
 	if dsn == "" {
-		dsn = "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false"
+		dsn = "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true"
 	}
 
 	fmt.Println("1. Conectando ao IBM Db2 para testes de Multi-Result Sets em Stored Procedures...")

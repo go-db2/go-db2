@@ -5,13 +5,17 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	_ "github.com/go-db2/go-db2"
 )
 
 func main() {
-	connStr := "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false"
+	connStr := os.Getenv("DB2_DSN")
+	if connStr == "" {
+		connStr = "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true"
+	}
 
 	fmt.Println("Conectando ao IBM Db2 via Pure Go driver...")
 	db, err := sql.Open("db2", connStr)

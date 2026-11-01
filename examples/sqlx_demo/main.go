@@ -25,7 +25,7 @@ type Product struct {
 func main() {
 	dsn := os.Getenv("DB2_DSN")
 	if dsn == "" {
-		dsn = "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&block_size=65535"
+		dsn = "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&block_size=65535&allow_plaintext_auth=true"
 	}
 
 	fmt.Println("1. Conectando ao IBM Db2 via Pure Go driver (go-db2)...")

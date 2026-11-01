@@ -63,7 +63,10 @@ func main() {
 	fmt.Printf("   ✅ Arquivo Keytab validado com sucesso! Token GSSAPI gerado (%d bytes, header=0x%02X)\n", len(keytabToken), keytabToken[0])
 
 	// 2. Testar conexão com o banco Db2 local via DSN
-	connStr := "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&security_mechanism=dh_encrypted_password"
+	connStr := os.Getenv("DB2_DSN")
+	if connStr == "" {
+		connStr = "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true"
+	}
 	fmt.Println("\n2. Conectando ao IBM Db2 local com mecanismo de autenticação negociado...")
 	db, err := sql.Open("db2", connStr)
 	if err != nil {

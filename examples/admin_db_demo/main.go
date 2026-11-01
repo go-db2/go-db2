@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -12,7 +13,10 @@ import (
 )
 
 func main() {
-	connStr := "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false"
+	connStr := os.Getenv("DB2_DSN")
+	if connStr == "" {
+		connStr = "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true"
+	}
 
 	fmt.Println("1. Conectando ao IBM Db2 para demonstração de Gerenciamento de Banco & ADMIN_CMD...")
 	db, err := sql.Open("db2", connStr)

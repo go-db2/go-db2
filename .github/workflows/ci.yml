@@ -74,7 +74,7 @@ jobs:
 
       - name: Run Live Examples & Integration Demos
         env:
-          DB2_DSN: "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false"
+          DB2_DSN: "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true"
         run: |
           go test -v -race -timeout 5m ./...
           go run examples/basic_connect/main.go
