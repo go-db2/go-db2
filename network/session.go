@@ -588,6 +588,42 @@ func (s *Session) Ping(ctx context.Context) error {
 	}
 	defer s.watch(ctx)()
 
+	s.correlationID = 1
+
+	// In auto-commit mode (outside an explicit transaction), use RDBCMM as a safe,
+	// lightweight ping that preserves RDB connection and package access state.
+	// Inside an explicit transaction (!s.autoCommit), issue EXCSAT so that uncommitted user
+	// transaction changes are never inadvertently committed (AC-8).
+	if s.autoCommit {
+		rdbcmm := PackRDBCMM()
+		var err error
+		s.correlationID, err = WriteRequestDSS(s.conn, rdbcmm, s.correlationID, false, true)
+		if err != nil {
+			s.closed = true
+			s.broken.Store(true)
+			if s.conn != nil {
+				_ = s.conn.Close()
+			}
+			return fmt.Errorf("failed to send ping RDBCMM: %w", err)
+		}
+
+		replies, err := s.readReplyChain()
+		if err != nil {
+			s.closed = true
+			s.broken.Store(true)
+			if s.conn != nil {
+				_ = s.conn.Close()
+			}
+			return fmt.Errorf("failed to read ping reply: %w", err)
+		}
+		for _, r := range replies {
+			if r.CodePoint == CodePointSQLERRRM {
+				return parseSQLERRRM(r.Data, s.endian)
+			}
+		}
+		return nil
+	}
+
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "go-db2-client"
@@ -598,7 +634,6 @@ func (s *Session) Ping(ctx context.Context) error {
 		return fmt.Errorf("failed to pack EXCSAT for ping: %w", err)
 	}
 
-	s.correlationID = 1
 	s.correlationID, err = WriteRequestDSS(s.conn, excsat, s.correlationID, false, true)
 	if err != nil {
 		s.closed = true
