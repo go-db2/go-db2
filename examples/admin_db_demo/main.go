@@ -45,7 +45,8 @@ func main() {
 		PRIMARY KEY (order_id)
 	)`
 	if _, err := db.ExecContext(ctx, createTableSQL); err != nil {
-		log.Fatalf("Erro ao criar tabela: %v", err)
+		log.Printf("Aviso ao criar tabela: %v", err)
+		return
 	}
 	fmt.Println("   ✅ Tabela criada com sucesso!")
 

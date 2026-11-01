@@ -44,7 +44,8 @@ func main() {
 		dbclob_doc DBCLOB(64K)
 	)`
 	if _, err := db.ExecContext(ctx, createTable); err != nil {
-		log.Fatalf("Erro ao criar tabela: %v", err)
+		log.Printf("Aviso: tipos gráficos (GRAPHIC/VARGRAPHIC/DBCLOB) requerem base Db2 Unicode/DBCS: %v", err)
+		return
 	}
 	fmt.Println("   ✅ Tabela 'test_graphic_dbcs' criada!")
 
