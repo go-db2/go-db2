@@ -109,7 +109,11 @@ jobs:
             echo "::group::Running $ex"
             echo "===> Running $ex..."
             go run "$ex" 2>&1 | tee /tmp/ex.log || {
-              echo "::error title=Failed Example $ex::$(cat /tmp/ex.log)"
+              err_msg=$(cat /tmp/ex.log)
+              err_msg="${err_msg//'%'/'%25'}"
+              err_msg="${err_msg//$'\n'/'%0A'}"
+              err_msg="${err_msg//$'\r'/'%0D'}"
+              echo "::error title=Failed Example $ex::$err_msg"
               echo "### ❌ Failed Example: $ex" >> $GITHUB_STEP_SUMMARY
               echo '```' >> $GITHUB_STEP_SUMMARY
               cat /tmp/ex.log >> $GITHUB_STEP_SUMMARY
