@@ -24,30 +24,30 @@ import (
 
 // SessionConfig holds configuration parameters for establishing a Db2 session.
 type SessionConfig struct {
-	Host              string
-	Port              int
-	Database          string
-	User              string
-	Password          string
-	UseSSL            bool
-	SSLRootCAPath     string
-	SSLClientCertPath string
-	SSLClientKeyPath  string
-	TLSConfig         *tls.Config
-	Timeout           time.Duration
-	BlockSize         int
-	SecurityMechanism uint16
+	Host               string
+	Port               int
+	Database           string
+	User               string
+	Password           string
+	UseSSL             bool
+	SSLRootCAPath      string
+	SSLClientCertPath  string
+	SSLClientKeyPath   string
+	TLSConfig          *tls.Config
+	Timeout            time.Duration
+	BlockSize          int
+	SecurityMechanism  uint16
 	AllowPlaintextAuth bool
-	KerberosSPN       string
-	KerberosRealm     string
-	Krb5ConfigFile    string
-	Krb5KeytabFile    string
-	Krb5CCacheFile    string
-	ClientApplName    string
-	ClientWrkstnName  string
-	ClientUserid      string
-	ClientAcctng      string
-	ClientCorrToken   string
+	KerberosSPN        string
+	KerberosRealm      string
+	Krb5ConfigFile     string
+	Krb5KeytabFile     string
+	Krb5CCacheFile     string
+	ClientApplName     string
+	ClientWrkstnName   string
+	ClientUserid       string
+	ClientAcctng       string
+	ClientCorrToken    string
 }
 
 // sanitizeLogString removes ASCII control characters (< 32 and 127) for log sanitization.

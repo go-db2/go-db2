@@ -53,23 +53,23 @@ type Config struct {
 	// files. It lets a caller that holds certificates in memory, not on disk,
 	// build the root CA pool or client certificate itself. It cannot be set
 	// from a DSN.
-	TLSConfig         *tls.Config
-	Timeout           time.Duration
-	BlockSize         int
-	SecurityMechanism uint16
+	TLSConfig          *tls.Config
+	Timeout            time.Duration
+	BlockSize          int
+	SecurityMechanism  uint16
 	AllowPlaintextAuth bool
-	KerberosSPN       string
-	KerberosRealm     string
-	Krb5ConfigFile    string
-	Krb5KeytabFile    string
-	Krb5CCacheFile    string
-	ClientApplName    string
-	ClientWrkstnName  string
-	ClientUserid      string
-	ClientAcctng      string
-	ClientCorrToken   string
-	Params            map[string]string
-	portExplicitlySet bool
+	KerberosSPN        string
+	KerberosRealm      string
+	Krb5ConfigFile     string
+	Krb5KeytabFile     string
+	Krb5CCacheFile     string
+	ClientApplName     string
+	ClientWrkstnName   string
+	ClientUserid       string
+	ClientAcctng       string
+	ClientCorrToken    string
+	Params             map[string]string
+	portExplicitlySet  bool
 }
 
 // sanitizeLogString removes ASCII control characters (< 32 and 127) for log sanitization.
