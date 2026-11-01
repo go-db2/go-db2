@@ -89,6 +89,7 @@ jobs:
         env:
           DB2_DSN: "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true"
         run: |
+          set -e -o pipefail
           for ex in \
             examples/basic_connect/main.go \
             examples/crud_demo/main.go \

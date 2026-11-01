@@ -469,7 +469,7 @@ func (s *Session) handshake(ctx context.Context) error {
 		}
 		if r.CodePoint == CodePointSQLERRRM {
 			sub, _ := ParseDDMReply(r.Data)
-			srvDgn := string(sub[CodePointSRVDGN])
+			srvDgn := decodeSRVDGN(sub[CodePointSRVDGN])
 			return fmt.Errorf("server error during handshake: %s", srvDgn)
 		}
 	}
@@ -741,7 +741,7 @@ func (s *Session) ExecDirect(ctx context.Context, sql string) (int64, error) {
 		}
 		if r.CodePoint == CodePointSQLERRRM {
 			sub, _ := ParseDDMReply(r.Data)
-			return 0, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+			return 0, fmt.Errorf("db2: %s", decodeSRVDGN(sub[CodePointSRVDGN]))
 		}
 	}
 
@@ -852,7 +852,7 @@ func (s *Session) PrepareAndDescribe(ctx context.Context, sql string) ([]ColumnD
 			}
 		} else if r.CodePoint == CodePointSQLERRRM {
 			sub, _ := ParseDDMReply(r.Data)
-			return nil, nil, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+			return nil, nil, fmt.Errorf("db2: %s", decodeSRVDGN(sub[CodePointSRVDGN]))
 		}
 	}
 
@@ -952,7 +952,7 @@ func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescript
 			affectedRows += rows
 		} else if r.CodePoint == CodePointSQLERRRM {
 			sub, _ := ParseDDMReply(r.Data)
-			return 0, nil, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+			return 0, nil, fmt.Errorf("db2: %s", decodeSRVDGN(sub[CodePointSRVDGN]))
 		}
 	}
 
@@ -1091,7 +1091,7 @@ func (q *queryResult) consume(replies []ReplyPacket, endian binary.ByteOrder) (b
 			q.ended = true
 		case CodePointSQLERRRM:
 			sub, _ := ParseDDMReply(r.Data)
-			return progress, fmt.Errorf("db2: %s", string(sub[CodePointSRVDGN]))
+			return progress, fmt.Errorf("db2: %s", decodeSRVDGN(sub[CodePointSRVDGN]))
 		case CodePointSQLCARD:
 			code, state, msg, _, err := ParseSQLCARD(r.Data, endian)
 			if err != nil {
@@ -1678,4 +1678,12 @@ func (s *Session) Close() error {
 		return err
 	}
 	return nil
+}
+
+// decodeSRVDGN decodes Server Diagnostic Information (SRVDGN) from EBCDIC CP500 to a UTF-8 string.
+func decodeSRVDGN(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(converters.DecodeCP500(data))
 }
