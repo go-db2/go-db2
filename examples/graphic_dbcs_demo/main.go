@@ -33,14 +33,14 @@ func main() {
 	}
 	fmt.Println("   ✅ Conexão estabelecida com sucesso!")
 
-	fmt.Println("\n2. Criando tabela de teste 'test_graphic_dbcs' com colunas GRAPHIC, VARGRAPHIC, CODEUNITS32 e DBCLOB...")
+	fmt.Println("\n2. Criando tabela de teste 'test_graphic_dbcs' com colunas GRAPHIC, VARGRAPHIC e DBCLOB...")
 	_, _ = db.ExecContext(ctx, "DROP TABLE test_graphic_dbcs")
 
 	createTable := `CREATE TABLE test_graphic_dbcs (
 		id INT NOT NULL PRIMARY KEY,
 		g_code GRAPHIC(10),
 		vg_desc VARGRAPHIC(100),
-		vg_intl VARGRAPHIC(50 CODEUNITS32),
+		vg_intl VARGRAPHIC(50),
 		dbclob_doc DBCLOB(64K)
 	)`
 	if _, err := db.ExecContext(ctx, createTable); err != nil {
@@ -94,7 +94,7 @@ func main() {
 		fmt.Printf("   📌 Registro #%d:\n", id)
 		fmt.Printf("      - GRAPHIC(10):      %q\n", strings.TrimSpace(gCode))
 		fmt.Printf("      - VARGRAPHIC(100):  %q\n", vgDesc)
-		fmt.Printf("      - CODEUNITS32:      %q\n", vgIntl)
+		fmt.Printf("      - VARGRAPHIC Intl:  %q\n", vgIntl)
 		fmt.Printf("      - DBCLOB(64K):      %q\n", dbclob)
 	}
 

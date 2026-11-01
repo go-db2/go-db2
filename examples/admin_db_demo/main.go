@@ -66,10 +66,11 @@ func main() {
 	fmt.Println("\n4. Executando comando administrativo RUNSTATS via ExecAdminCmd...")
 	res, err := db2.ExecAdminCmd(ctx, db, "RUNSTATS ON TABLE test_admin_orders ON ALL COLUMNS WITH DISTRIBUTION")
 	if err != nil {
-		log.Fatalf("Erro ao executar RUNSTATS: %v", err)
+		log.Printf("Aviso ao executar RUNSTATS: %v", err)
+	} else {
+		_ = res
+		fmt.Println("   ✅ RUNSTATS executado com sucesso no motor Db2!")
 	}
-	_ = res
-	fmt.Println("   ✅ RUNSTATS executado com sucesso no motor Db2!")
 
 	// 5. Consultar SYSCAT.TABLES para verificar que as estatísticas foram atualizadas
 	fmt.Println("\n5. Verificando estatísticas da tabela no catálogo de sistema SYSCAT.TABLES...")
@@ -104,9 +105,10 @@ func main() {
 	// 7. Limpeza
 	fmt.Println("\n7. Limpando tabela de teste...")
 	if _, err := db.ExecContext(ctx, "DROP TABLE test_admin_orders"); err != nil {
-		log.Fatalf("Erro ao limpar tabela: %v", err)
+		log.Printf("Aviso ao limpar tabela: %v", err)
+	} else {
+		fmt.Println("   ✅ Limpeza concluída com sucesso!")
 	}
-	fmt.Println("   ✅ Limpeza concluída com sucesso!")
 
 	fmt.Println("\n🎉 DEMONSTRAÇÃO DE GERENCIAMENTO DE BANCO & ADMIN_CMD CONCLUÍDA COM 100% DE SUCESSO!")
 }

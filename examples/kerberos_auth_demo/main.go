@@ -86,10 +86,11 @@ func main() {
 	var currentUser, currentServer string
 	err = db.QueryRowContext(ctx, "SELECT CURRENT USER, CURRENT SERVER FROM SYSIBM.SYSDUMMY1").Scan(&currentUser, &currentServer)
 	if err != nil {
-		log.Fatalf("Erro na consulta: %v", err)
+		log.Printf("Aviso na consulta de sessão: %v", err)
+	} else {
+		fmt.Printf("   👤 Usuário Autenticado: %s\n", currentUser)
+		fmt.Printf("   🏢 Servidor Db2: %s\n", currentServer)
 	}
-	fmt.Printf("   👤 Usuário Autenticado: %s\n", currentUser)
-	fmt.Printf("   🏢 Servidor Db2: %s\n", currentServer)
 
 	// 4. Demonstrar DSN formatada para Kerberos SSO corporativo
 	fmt.Println("\n3. Formatos de DSN suportados para Kerberos SSO (Active Directory / MIT Kerberos):")

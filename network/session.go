@@ -468,9 +468,7 @@ func (s *Session) handshake(ctx context.Context) error {
 			return errors.New("authorization failed connecting to relational database")
 		}
 		if r.CodePoint == CodePointSQLERRRM {
-			sub, _ := ParseDDMReply(r.Data)
-			srvDgn := decodeSRVDGN(sub[CodePointSRVDGN])
-			return fmt.Errorf("server error during handshake: %s", srvDgn)
+			return parseSQLERRRM(r.Data, s.endian)
 		}
 	}
 
@@ -740,8 +738,7 @@ func (s *Session) ExecDirect(ctx context.Context, sql string) (int64, error) {
 			affectedRows += rows
 		}
 		if r.CodePoint == CodePointSQLERRRM {
-			sub, _ := ParseDDMReply(r.Data)
-			return 0, fmt.Errorf("db2: %s", decodeSRVDGN(sub[CodePointSRVDGN]))
+			return 0, parseSQLERRRM(r.Data, s.endian)
 		}
 	}
 
@@ -851,8 +848,7 @@ func (s *Session) PrepareAndDescribe(ctx context.Context, sql string) ([]ColumnD
 				return nil, nil, fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
 			}
 		} else if r.CodePoint == CodePointSQLERRRM {
-			sub, _ := ParseDDMReply(r.Data)
-			return nil, nil, fmt.Errorf("db2: %s", decodeSRVDGN(sub[CodePointSRVDGN]))
+			return nil, nil, parseSQLERRRM(r.Data, s.endian)
 		}
 	}
 
@@ -951,8 +947,7 @@ func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescript
 			}
 			affectedRows += rows
 		} else if r.CodePoint == CodePointSQLERRRM {
-			sub, _ := ParseDDMReply(r.Data)
-			return 0, nil, fmt.Errorf("db2: %s", decodeSRVDGN(sub[CodePointSRVDGN]))
+			return 0, nil, parseSQLERRRM(r.Data, s.endian)
 		}
 	}
 
@@ -1090,8 +1085,7 @@ func (q *queryResult) consume(replies []ReplyPacket, endian binary.ByteOrder) (b
 		case CodePointENDQRYRM:
 			q.ended = true
 		case CodePointSQLERRRM:
-			sub, _ := ParseDDMReply(r.Data)
-			return progress, fmt.Errorf("db2: %s", decodeSRVDGN(sub[CodePointSRVDGN]))
+			return progress, parseSQLERRRM(r.Data, endian)
 		case CodePointSQLCARD:
 			code, state, msg, _, err := ParseSQLCARD(r.Data, endian)
 			if err != nil {
@@ -1686,4 +1680,24 @@ func decodeSRVDGN(data []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(converters.DecodeCP500(data))
+}
+
+// parseSQLERRRM extracts error information from an SQLERRRM reply packet.
+// It prioritizes parsing embedded SQLCARD structures (SQLCODE, SQLSTATE, message),
+// appending decoded SRVDGN diagnostic information if present.
+func parseSQLERRRM(data []byte, endian binary.ByteOrder) error {
+	sub, _ := ParseDDMReply(data)
+	if cardData, ok := sub[CodePointSQLCARD]; ok && len(cardData) > 0 {
+		code, state, msg, _, err := ParseSQLCARD(cardData, endian)
+		if err == nil && code < 0 {
+			if srvDgn := decodeSRVDGN(sub[CodePointSRVDGN]); srvDgn != "" {
+				return fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s (SRVDGN: %s)", code, state, msg, srvDgn)
+			}
+			return fmt.Errorf("db2: SQLCODE=%d SQLSTATE=%s %s", code, state, msg)
+		}
+	}
+	if srvDgn := decodeSRVDGN(sub[CodePointSRVDGN]); srvDgn != "" {
+		return fmt.Errorf("db2: %s", srvDgn)
+	}
+	return errors.New("db2: server error (SQLERRRM)")
 }

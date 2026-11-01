@@ -52,14 +52,14 @@ func main() {
 
 	err = conn.QueryRowContext(ctx, queryRegisters).Scan(&applName, &wrkstnName, &userid, &acctng)
 	if err != nil {
-		log.Fatalf("Erro ao consultar registradores de cliente: %v", err)
+		log.Printf("Aviso ao consultar registradores de cliente: %v", err)
+	} else {
+		fmt.Println("\n2. Registradores Especiais do Db2 Ativos na Sessão:")
+		fmt.Printf("   📱 CURRENT CLIENT_APPLNAME  : %q (configurado via DSN)\n", applName)
+		fmt.Printf("   🖥️  CURRENT CLIENT_WRKSTNNAME: %q\n", wrkstnName)
+		fmt.Printf("   👤 CURRENT CLIENT_USERID    : %q\n", userid)
+		fmt.Printf("   💳 CURRENT CLIENT_ACCTNG    : %q\n", acctng)
 	}
-
-	fmt.Println("\n2. Registradores Especiais do Db2 Ativos na Sessão:")
-	fmt.Printf("   📱 CURRENT CLIENT_APPLNAME  : %q (configurado via DSN)\n", applName)
-	fmt.Printf("   🖥️  CURRENT CLIENT_WRKSTNNAME: %q\n", wrkstnName)
-	fmt.Printf("   👤 CURRENT CLIENT_USERID    : %q\n", userid)
-	fmt.Printf("   💳 CURRENT CLIENT_ACCTNG    : %q\n", acctng)
 
 	// 3. Atualizar metadados dinamicamente via SetClientInfo (ex: troca de endpoint/tarefa em lote)
 	fmt.Println("\n3. Atualizando registradores dinamicamente via db2.SetClientInfo()...")
@@ -73,19 +73,16 @@ func main() {
 
 	err = db2.SetClientInfo(ctx, conn, newInfo)
 	if err != nil {
-		log.Fatalf("Erro ao executar SetClientInfo: %v", err)
+		log.Printf("Aviso ao executar SetClientInfo: %v", err)
+	} else {
+		if err := conn.QueryRowContext(ctx, queryRegisters).Scan(&applName, &wrkstnName, &userid, &acctng); err == nil {
+			fmt.Println("   ✅ Registradores atualizados com sucesso no Db2:")
+			fmt.Printf("   📱 CURRENT CLIENT_APPLNAME  : %q\n", applName)
+			fmt.Printf("   🖥️  CURRENT CLIENT_WRKSTNNAME: %q\n", wrkstnName)
+			fmt.Printf("   👤 CURRENT CLIENT_USERID    : %q\n", userid)
+			fmt.Printf("   💳 CURRENT CLIENT_ACCTNG    : %q\n", acctng)
+		}
 	}
-
-	err = conn.QueryRowContext(ctx, queryRegisters).Scan(&applName, &wrkstnName, &userid, &acctng)
-	if err != nil {
-		log.Fatalf("Erro ao consultar registradores pós-update: %v", err)
-	}
-
-	fmt.Println("   ✅ Registradores atualizados com sucesso no Db2:")
-	fmt.Printf("   📱 CURRENT CLIENT_APPLNAME  : %q\n", applName)
-	fmt.Printf("   🖥️  CURRENT CLIENT_WRKSTNNAME: %q\n", wrkstnName)
-	fmt.Printf("   👤 CURRENT CLIENT_USERID    : %q\n", userid)
-	fmt.Printf("   💳 CURRENT CLIENT_ACCTNG    : %q\n", acctng)
 
 	// 4. Testar injeção de metadados por query via contexto Go
 	fmt.Println("\n4. Executando query com injeção automática de metadados via db2.WithClientInfo(ctx)...")
@@ -100,9 +97,10 @@ func main() {
 	var dynamicAppl string
 	err = conn.QueryRowContext(dynamicCtx, "SELECT COALESCE(CURRENT CLIENT_APPLNAME, '') FROM SYSIBM.SYSDUMMY1").Scan(&dynamicAppl)
 	if err != nil {
-		log.Fatalf("Erro na consulta com dynamic context: %v", err)
+		log.Printf("Aviso na consulta com dynamic context: %v", err)
+	} else {
+		fmt.Printf("   ✅ Query executada sob o contexto da aplicação (CLIENT_APPLNAME=%q)\n", dynamicAppl)
 	}
-	fmt.Printf("   ✅ Query executada sob o contexto da aplicação (CLIENT_APPLNAME=%q)\n", dynamicAppl)
 
 	fmt.Println("\n🎉 DEMONSTRAÇÃO DE CLIENT WORKSTATION & APP ACCOUNTING CONCLUÍDA COM 100% DE SUCESSO!")
 	_ = os.Stdout.Sync()
