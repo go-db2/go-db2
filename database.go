@@ -24,22 +24,27 @@ func validateSQLIdentifier(val, fieldName string) error {
 }
 
 // quoteIdentifier safely quotes an SQL identifier with double quotes, escaping any embedded double quotes.
-// Optimization: Checks for double quotes with strings.IndexByte fast-path and pre-allocates exact capacity in strings.Builder to eliminate unnecessary allocations and string scanning overhead.
+// Optimization: Uses strings.IndexByte segment jumping and block sb.WriteString appends to eliminate character-by-character loops and strings.Count pre-scans when escaping embedded double quotes.
 func quoteIdentifier(name string) string {
-	if strings.IndexByte(name, '"') == -1 {
+	idx := strings.IndexByte(name, '"')
+	if idx == -1 {
 		return `"` + name + `"`
 	}
-	count := strings.Count(name, `"`)
 	var sb strings.Builder
-	sb.Grow(len(name) + 2 + count)
+	sb.Grow(len(name) + 6)
 	sb.WriteByte('"')
-	for i := 0; i < len(name); i++ {
-		ch := name[i]
-		if ch == '"' {
-			sb.WriteString(`""`)
-		} else {
-			sb.WriteByte(ch)
+	sb.WriteString(name[:idx])
+	sb.WriteString(`""`)
+	rest := name[idx+1:]
+	for {
+		nextIdx := strings.IndexByte(rest, '"')
+		if nextIdx == -1 {
+			sb.WriteString(rest)
+			break
 		}
+		sb.WriteString(rest[:nextIdx])
+		sb.WriteString(`""`)
+		rest = rest[nextIdx+1:]
 	}
 	sb.WriteByte('"')
 	return sb.String()

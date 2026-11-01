@@ -333,3 +333,21 @@ func TestConfig_SanitizeLogInjection(t *testing.T) {
 		t.Errorf("Config.String() contains unsanitized control characters!")
 	}
 }
+
+func BenchmarkSanitizeLogString_Clean(b *testing.B) {
+	s := "db2server.corp.internal"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = sanitizeLogString(s)
+	}
+}
+
+func BenchmarkSanitizeLogString_WithControlChars(b *testing.B) {
+	s := "db2server.corp.internal\r\n[SECURITY] Log injection"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = sanitizeLogString(s)
+	}
+}
