@@ -295,19 +295,9 @@ func AcquireKerberosToken(cfg KerberosConfig) ([]byte, error) {
 
 	spn := FormatServicePrincipal(cfg.ServicePrincipal, cfg.Host, cfg.Realm)
 
-	// Check if ticket cache exists
-	ccachePath := cfg.CCacheFile
-	if ccachePath == "" {
-		ccachePath = os.Getenv("KRB5CCNAME")
-	}
-	if strings.HasPrefix(ccachePath, "FILE:") {
-		ccachePath = strings.TrimPrefix(ccachePath, "FILE:")
-	}
-
-	if ccachePath != "" {
-		if data, err := os.ReadFile(ccachePath); err == nil && len(data) > 0 {
-			return BuildGSSAPIToken(data)
-		}
+	// Credential cache reading is disabled to prevent raw TGT credential leakage (FR-2 / S3).
+	if cfg.CCacheFile != "" {
+		return nil, fmt.Errorf("db2/kerberos: credential cache reading is disabled until a safe, compliant RFC 4120 AP-REQ subpackage is integrated")
 	}
 
 	// Check keytab binary file

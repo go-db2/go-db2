@@ -1,6 +1,7 @@
 package security
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -18,8 +19,8 @@ type TLSConfig struct {
 	ClientKeyPath      string
 }
 
-// WrapTLS upgrades an existing net.Conn to a secure TLS connection.
-func WrapTLS(conn net.Conn, cfg TLSConfig) (net.Conn, error) {
+// WrapTLSContext establishes a TLS connection using the given context and TLSConfig.
+func WrapTLSContext(ctx context.Context, conn net.Conn, cfg TLSConfig) (net.Conn, error) {
 	if !cfg.EnableTLS {
 		return conn, nil
 	}
@@ -51,9 +52,15 @@ func WrapTLS(conn net.Conn, cfg TLSConfig) (net.Conn, error) {
 	}
 
 	tlsConn := tls.Client(conn, tlsConf)
-	if err := tlsConn.Handshake(); err != nil {
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("TLS handshake failed: %w", err)
 	}
 
 	return tlsConn, nil
+}
+
+// WrapTLS delegates to WrapTLSContext with context.Background() for backwards compatibility.
+func WrapTLS(conn net.Conn, cfg TLSConfig) (net.Conn, error) {
+	return WrapTLSContext(context.Background(), conn, cfg)
 }

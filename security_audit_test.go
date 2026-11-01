@@ -508,13 +508,13 @@ func TestSecurity_NullByteSanitization_AdminCmd(t *testing.T) {
 func TestSecurity_PreparedStatement_ContextMetadata(t *testing.T) {
 	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
 		switch cp {
-		case network.CodePointEXCSQLSET, network.CodePointRDBCMM:
-			return writeSQLCARDOK(c)
+		case network.CodePointEXCSQLSET, network.CodePointRDBCMM, network.CodePointEXCSAT:
+			return writeEXCSATRDOrOK(c)
 		}
 		return false
 	})
 
-	db, err := sql.Open("db2", "db2://BASEUSER:password@"+srv.addr+"/TESTDB?ssl=false")
+	db, err := sql.Open("db2", "db2://BASEUSER:password@"+srv.addr+"/TESTDB?ssl=false&allow_plaintext_auth=true")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -603,7 +603,7 @@ func TestSecurity_ResetSession_OptimizationAndErrorHandling(t *testing.T) {
 		return false
 	})
 
-	db, err := sql.Open("db2", "db2://BASEUSER:password@"+srv.addr+"/TESTDB?ssl=false&client_applname=base_app")
+	db, err := sql.Open("db2", "db2://BASEUSER:password@"+srv.addr+"/TESTDB?ssl=false&client_applname=base_app&allow_plaintext_auth=true")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -709,13 +709,13 @@ func TestSecurity_ParseQRYDSC_MultiGroupOver84Columns(t *testing.T) {
 func TestSecurity_ClientInfo_CRLF_Sanitization(t *testing.T) {
 	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
 		switch cp {
-		case network.CodePointEXCSQLSET, network.CodePointRDBCMM:
-			return writeSQLCARDOK(c)
+		case network.CodePointEXCSQLSET, network.CodePointRDBCMM, network.CodePointEXCSAT:
+			return writeEXCSATRDOrOK(c)
 		}
 		return false
 	})
 
-	db, err := sql.Open("db2", "db2://BASEUSER:password@"+srv.addr+"/TESTDB?ssl=false")
+	db, err := sql.Open("db2", "db2://BASEUSER:password@"+srv.addr+"/TESTDB?ssl=false&allow_plaintext_auth=true")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}

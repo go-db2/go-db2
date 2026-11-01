@@ -22,13 +22,13 @@ func TestQueryReturnsWhenContextIsDone(t *testing.T) {
 		case network.CodePointPRPSQLSTT:
 			<-hang // never reply, like a long-running statement
 			return false
-		case network.CodePointRDBCMM:
-			return writeSQLCARDOK(c)
+		case network.CodePointEXCSAT, network.CodePointRDBCMM:
+			return writeEXCSATRDOrOK(c)
 		}
 		return false
 	})
 
-	db, err := sql.Open("db2", "db2://db2inst1:password@"+srv.addr+"/SAMPLE?ssl=false")
+	db, err := sql.Open("db2", "db2://db2inst1:password@"+srv.addr+"/SAMPLE?ssl=false&allow_plaintext_auth=true")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestConnectReturnsWhenContextIsDone(t *testing.T) {
 		}
 	}()
 
-	db, err := sql.Open("db2", "db2://db2inst1:password@"+listener.Addr().String()+"/SAMPLE?ssl=false")
+	db, err := sql.Open("db2", "db2://db2inst1:password@"+listener.Addr().String()+"/SAMPLE?ssl=false&allow_plaintext_auth=true")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}

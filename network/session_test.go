@@ -110,13 +110,20 @@ func TestSessionMockHandshake(t *testing.T) {
 			return
 		}
 
-		// 6. Handle Ping request (RDBCMM)
+		// 6. Handle Ping request (EXCSAT / RDBCMM)
 		_, cp, _, _, err := ReadDSS(conn)
 		if err != nil {
 			serverErrChan <- err
 			return
 		}
-		if cp == CodePointRDBCMM {
+		if cp == CodePointEXCSAT {
+			excsatRdObj := PackDDMObject(CodePointEXCSATRD, nil)
+			excsatRdHdr := BuildDSSHeader(len(excsatRdObj), DSSTypeReply, false, false, false, 1)
+			if _, err := conn.Write(append(excsatRdHdr, excsatRdObj...)); err != nil {
+				serverErrChan <- err
+				return
+			}
+		} else if cp == CodePointRDBCMM {
 			if _, err := conn.Write(append(sqlcardHdr, sqlcardObj...)); err != nil {
 				serverErrChan <- err
 				return
@@ -128,12 +135,13 @@ func TestSessionMockHandshake(t *testing.T) {
 
 	// Run client session
 	session := NewSession(SessionConfig{
-		Host:     "127.0.0.1",
-		Port:     port,
-		Database: "SAMPLE",
-		User:     "db2inst1",
-		Password: "password",
-		Timeout:  2 * time.Second,
+		Host:               "127.0.0.1",
+		Port:               port,
+		Database:           "SAMPLE",
+		User:               "db2inst1",
+		Password:           "password",
+		AllowPlaintextAuth: true,
+		Timeout:            2 * time.Second,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -242,13 +250,14 @@ func TestSession_Connect_SetClientInfoError(t *testing.T) {
 	}()
 
 	session := NewSession(SessionConfig{
-		Host:           "127.0.0.1",
-		Port:           port,
-		Database:       "SAMPLE",
-		User:           "db2inst1",
-		Password:       "password",
-		ClientApplName: "failing_appl_name",
-		Timeout:        2 * time.Second,
+		Host:               "127.0.0.1",
+		Port:               port,
+		Database:           "SAMPLE",
+		User:               "db2inst1",
+		Password:           "password",
+		AllowPlaintextAuth: true,
+		ClientApplName:     "failing_appl_name",
+		Timeout:            2 * time.Second,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -443,12 +452,13 @@ func TestSwitchUser_QuotedIdentifierSQL(t *testing.T) {
 	}()
 
 	session := NewSession(SessionConfig{
-		Host:     "127.0.0.1",
-		Port:     port,
-		Database: "SAMPLE",
-		User:     "db2inst1",
-		Password: "password",
-		Timeout:  2 * time.Second,
+		Host:               "127.0.0.1",
+		Port:               port,
+		Database:           "SAMPLE",
+		User:               "db2inst1",
+		Password:           "password",
+		AllowPlaintextAuth: true,
+		Timeout:            2 * time.Second,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

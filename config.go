@@ -2,7 +2,9 @@ package db2
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -55,6 +57,7 @@ type Config struct {
 	Timeout           time.Duration
 	BlockSize         int
 	SecurityMechanism uint16
+	AllowPlaintextAuth bool
 	KerberosSPN       string
 	KerberosRealm     string
 	Krb5ConfigFile    string
@@ -66,6 +69,7 @@ type Config struct {
 	ClientAcctng      string
 	ClientCorrToken   string
 	Params            map[string]string
+	portExplicitlySet bool
 }
 
 // sanitizeLogString removes ASCII control characters (< 32 and 127) for log sanitization.
@@ -140,6 +144,18 @@ func ParseDSN(dsn string) (*Config, error) {
 		return nil, &redactedError{err: err}
 	}
 
+	if !cfg.portExplicitlySet {
+		if cfg.UseSSL {
+			cfg.Port = 50001
+		} else {
+			cfg.Port = 50000
+		}
+	}
+
+	if cfg.SecurityMechanism == 3 && !cfg.UseSSL && !cfg.AllowPlaintextAuth {
+		return nil, &redactedError{err: errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")}
+	}
+
 	return cfg, nil
 }
 
@@ -168,6 +184,7 @@ func parseURL(dsn string) (*Config, error) {
 			return nil, fmt.Errorf("%w: invalid port %s", ErrInvalidConnectionStr, u.Port())
 		}
 		cfg.Port = port
+		cfg.portExplicitlySet = true
 	}
 
 	// Database name (Path)
@@ -189,7 +206,9 @@ func parseURL(dsn string) (*Config, error) {
 	query := u.Query()
 	for key, values := range query {
 		if len(values) > 0 {
-			applyParam(cfg, key, values[0])
+			if err := applyParam(cfg, key, values[0]); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -208,37 +227,62 @@ func parseKeyValue(dsn string) (*Config, error) {
 
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) != 2 {
-			continue
+			return nil, fmt.Errorf("db2: malformed DSN parameter: %q", pair)
 		}
 
 		key := strings.TrimSpace(parts[0])
 		val := strings.TrimSpace(parts[1])
-		applyParam(cfg, key, val)
+		if err := applyParam(cfg, key, val); err != nil {
+			return nil, err
+		}
 	}
 
 	return cfg, nil
 }
 
-func applyParam(cfg *Config, key, val string) {
+func parseBoolValue(key, val string) (bool, error) {
+	switch strings.ToLower(val) {
+	case "true", "1", "yes":
+		return true, nil
+	case "false", "0", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("db2: invalid boolean value for %s: %q", key, val)
+	}
+}
+
+func applyParam(cfg *Config, key, val string) error {
 	lowerKey := strings.ToLower(key)
 	switch lowerKey {
 	case "host", "server", "hostname":
-		cfg.Host = val
-	case "port":
-		if port, err := strconv.Atoi(val); err == nil && port > 0 && port <= 65535 {
-			cfg.Port = port
+		if h, p, err := net.SplitHostPort(val); err == nil {
+			cfg.Host = h
+			if port, err := strconv.Atoi(p); err == nil && port > 0 && port <= 65535 {
+				cfg.Port = port
+				cfg.portExplicitlySet = true
+			}
+		} else {
+			cfg.Host = val
 		}
+	case "port":
+		port, err := strconv.Atoi(val)
+		if err != nil || port <= 0 || port > 65535 {
+			return fmt.Errorf("db2: invalid port: %q", val)
+		}
+		cfg.Port = port
+		cfg.portExplicitlySet = true
 	case "database", "dbname", "db":
 		cfg.Database = val
 	case "user", "uid", "username":
 		cfg.User = val
 	case "password", "pwd":
 		cfg.Password = val
-	case "ssl", "use_ssl", "usessl":
-		cfg.UseSSL = (strings.ToLower(val) == "true" || val == "1" || strings.ToLower(val) == "yes")
-		if cfg.UseSSL && cfg.Port == 50000 {
-			cfg.Port = 50001
+	case "ssl", "use_ssl", "usessl", "tls":
+		b, err := parseBoolValue(key, val)
+		if err != nil {
+			return err
 		}
+		cfg.UseSSL = b
 	case "ssl_root_ca", "ssl_ca", "sslrootcapath", "ssl_ca_path":
 		cfg.SSLRootCAPath = val
 		cfg.UseSSL = true
@@ -250,32 +294,47 @@ func applyParam(cfg *Config, key, val string) {
 		cfg.UseSSL = true
 	case "timeout", "connect_timeout":
 		if d, err := time.ParseDuration(val); err == nil {
+			if d < 0 {
+				return fmt.Errorf("db2: invalid timeout value: %q", val)
+			}
 			cfg.Timeout = d
-		} else if sec, err := strconv.Atoi(val); err == nil {
+		} else if sec, err := strconv.Atoi(val); err == nil && sec >= 0 {
 			cfg.Timeout = time.Duration(sec) * time.Second
+		} else {
+			return fmt.Errorf("db2: invalid timeout value: %q", val)
 		}
 	case "block_size", "blocksize", "qryblksz":
-		if sz, err := strconv.Atoi(val); err == nil && sz >= 1024 && sz <= 1048576 {
-			cfg.BlockSize = sz
+		sz, err := strconv.Atoi(val)
+		if err != nil || sz < 1024 || sz > 1048576 {
+			return fmt.Errorf("db2: invalid block_size value: %q", val)
 		}
+		cfg.BlockSize = sz
+	case "allow_plaintext_auth":
+		b, err := parseBoolValue(key, val)
+		if err != nil {
+			return err
+		}
+		cfg.AllowPlaintextAuth = b
 	case "security_mechanism", "secmec", "auth_mechanism", "auth":
 		lowerVal := strings.ToLower(val)
 		switch lowerVal {
+		case "dh_encrypted_password", "encrypted_password", "encrypted-password", "secmec9", "9":
+			cfg.SecurityMechanism = 9
+		case "plain", "plaintext", "secmec3", "3":
+			cfg.SecurityMechanism = 3
 		case "kerberos", "gssapi", "7":
 			cfg.SecurityMechanism = 7
 		case "encrypted_kerberos", "11":
 			cfg.SecurityMechanism = 11
-		case "dh_encrypted_password", "secmec9", "9":
-			cfg.SecurityMechanism = 9
-		case "encrypted_password", "secmec6", "6":
-			cfg.SecurityMechanism = 6
-		case "plaintext", "secmec3", "3":
-			cfg.SecurityMechanism = 3
 		case "user_only", "secmec4", "4":
 			cfg.SecurityMechanism = 4
+		case "secmec6", "6":
+			cfg.SecurityMechanism = 6
 		default:
 			if code, err := strconv.Atoi(val); err == nil && code > 0 {
 				cfg.SecurityMechanism = uint16(code)
+			} else {
+				return fmt.Errorf("db2: invalid security mechanism: %q", val)
 			}
 		}
 	case "spn", "service_principal", "server_principal":
@@ -299,35 +358,37 @@ func applyParam(cfg *Config, key, val string) {
 	case "client_corr_token", "corr_token", "correlation_token":
 		cfg.ClientCorrToken = val
 	default:
-		cfg.Params[key] = val
+		return fmt.Errorf("db2: unknown DSN parameter: %q", key)
 	}
+	return nil
 }
 
 // ToSessionConfig converts Config to the network.SessionConfig structure.
 func (c *Config) ToSessionConfig() network.SessionConfig {
 	return network.SessionConfig{
-		Host:              c.Host,
-		Port:              c.Port,
-		Database:          c.Database,
-		User:              c.User,
-		Password:          c.Password,
-		UseSSL:            c.UseSSL,
-		SSLRootCAPath:     c.SSLRootCAPath,
-		SSLClientCertPath: c.SSLClientCertPath,
-		SSLClientKeyPath:  c.SSLClientKeyPath,
-		TLSConfig:         c.TLSConfig,
-		Timeout:           c.Timeout,
-		BlockSize:         c.BlockSize,
-		SecurityMechanism: c.SecurityMechanism,
-		KerberosSPN:       c.KerberosSPN,
-		KerberosRealm:     c.KerberosRealm,
-		Krb5ConfigFile:    c.Krb5ConfigFile,
-		Krb5KeytabFile:    c.Krb5KeytabFile,
-		Krb5CCacheFile:    c.Krb5CCacheFile,
-		ClientApplName:    c.ClientApplName,
-		ClientWrkstnName:  c.ClientWrkstnName,
-		ClientUserid:      c.ClientUserid,
-		ClientAcctng:      c.ClientAcctng,
-		ClientCorrToken:   c.ClientCorrToken,
+		Host:               c.Host,
+		Port:               c.Port,
+		Database:           c.Database,
+		User:               c.User,
+		Password:           c.Password,
+		UseSSL:             c.UseSSL,
+		SSLRootCAPath:      c.SSLRootCAPath,
+		SSLClientCertPath:  c.SSLClientCertPath,
+		SSLClientKeyPath:   c.SSLClientKeyPath,
+		TLSConfig:          c.TLSConfig,
+		Timeout:            c.Timeout,
+		BlockSize:          c.BlockSize,
+		SecurityMechanism:  c.SecurityMechanism,
+		AllowPlaintextAuth: c.AllowPlaintextAuth,
+		KerberosSPN:        c.KerberosSPN,
+		KerberosRealm:      c.KerberosRealm,
+		Krb5ConfigFile:     c.Krb5ConfigFile,
+		Krb5KeytabFile:     c.Krb5KeytabFile,
+		Krb5CCacheFile:     c.Krb5CCacheFile,
+		ClientApplName:     c.ClientApplName,
+		ClientWrkstnName:   c.ClientWrkstnName,
+		ClientUserid:       c.ClientUserid,
+		ClientAcctng:       c.ClientAcctng,
+		ClientCorrToken:    c.ClientCorrToken,
 	}
 }

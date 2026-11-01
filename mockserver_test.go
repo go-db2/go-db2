@@ -109,3 +109,14 @@ func writeSQLCARDOK(c net.Conn) bool {
 	_, err := c.Write(append(network.BuildDSSHeader(len(obj), network.DSSTypeReply, false, false, false, 1), obj...))
 	return err == nil
 }
+
+// writeEXCSATRD replies with an EXCSATRD reply object.
+func writeEXCSATRD(c net.Conn) bool {
+	obj := network.PackDDMObject(network.CodePointEXCSATRD, nil)
+	_, err := c.Write(append(network.BuildDSSHeader(len(obj), network.DSSTypeReply, false, false, false, 1), obj...))
+	return err == nil
+}
+
+func writeEXCSATRDOrOK(c net.Conn) bool {
+	return writeEXCSATRD(c)
+}

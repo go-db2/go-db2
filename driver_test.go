@@ -109,7 +109,13 @@ func TestDatabaseSqlOpenAndPing(t *testing.T) {
 					if err != nil {
 						return
 					}
-					if cp == network.CodePointRDBCMM {
+					if cp == network.CodePointEXCSAT {
+						excsatRdObj := network.PackDDMObject(network.CodePointEXCSATRD, nil)
+						excsatRdHdr := network.BuildDSSHeader(len(excsatRdObj), network.DSSTypeReply, false, false, false, 1)
+						if _, err := c.Write(append(excsatRdHdr, excsatRdObj...)); err != nil {
+							return
+						}
+					} else if cp == network.CodePointRDBCMM {
 						if _, err := c.Write(append(sqlcardHdr, sqlcardObj...)); err != nil {
 							return
 						}
@@ -120,7 +126,7 @@ func TestDatabaseSqlOpenAndPing(t *testing.T) {
 	}()
 
 	// Open standard database/sql connection
-	connStr := fmt.Sprintf("db2://db2inst1:password@127.0.0.1:%d/SAMPLE?ssl=false", port)
+	connStr := fmt.Sprintf("db2://db2inst1:password@127.0.0.1:%d/SAMPLE?ssl=false&allow_plaintext_auth=true", port)
 	db, err := sql.Open("db2", connStr)
 	if err != nil {
 		t.Fatalf("sql.Open('db2') failed: %v", err)

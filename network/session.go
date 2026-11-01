@@ -37,6 +37,7 @@ type SessionConfig struct {
 	Timeout           time.Duration
 	BlockSize         int
 	SecurityMechanism uint16
+	AllowPlaintextAuth bool
 	KerberosSPN       string
 	KerberosRealm     string
 	Krb5ConfigFile    string
@@ -274,6 +275,10 @@ func (s *Session) connectRaw(ctx context.Context) error {
 		return errors.New("db2: session already connected")
 	}
 
+	if (s.secmec == SecMecUSRIDPWD || s.secmec == 3) && !s.cfg.UseSSL && !s.cfg.AllowPlaintextAuth {
+		return errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")
+	}
+
 	address := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	dialer := &net.Dialer{
 		Timeout: s.cfg.Timeout,
@@ -295,7 +300,7 @@ func (s *Session) connectRaw(ctx context.Context) error {
 				tlsConfig.MinVersion = tls.VersionTLS12
 			}
 			tlsConn := tls.Client(rawConn, tlsConfig)
-			if err := tlsConn.Handshake(); err != nil {
+			if err := tlsConn.HandshakeContext(ctx); err != nil {
 				_ = rawConn.Close()
 				return fmt.Errorf("TLS handshake failed: %w", err)
 			}
@@ -313,7 +318,7 @@ func (s *Session) connectRaw(ctx context.Context) error {
 				ClientCertPath:     s.cfg.SSLClientCertPath,
 				ClientKeyPath:      s.cfg.SSLClientKeyPath,
 			}
-			tlsConn, tlsErr := security.WrapTLS(rawConn, secTLSConfig)
+			tlsConn, tlsErr := security.WrapTLSContext(ctx, rawConn, secTLSConfig)
 			if tlsErr != nil {
 				_ = rawConn.Close()
 				return fmt.Errorf("failed to establish TLS connection: %w", tlsErr)
@@ -377,6 +382,16 @@ func (s *Session) handshake(ctx context.Context) error {
 		return fmt.Errorf("ACCSEC negotiation failed: %w", err)
 	}
 
+	// S1 / FR-1: Refuse downgrade if SECMEC 9 requested
+	if (s.secmec == SecMecEUSRIDPWD || s.secmec == 9) && negotiatedSecMec != 0 && negotiatedSecMec != s.secmec {
+		return fmt.Errorf("db2: server rejected security mechanism %d and offered %d; refusing downgrade", s.secmec, negotiatedSecMec)
+	}
+
+	// S2 / FR-1: Validate server security token for SECMEC 9
+	if (s.secmec == SecMecEUSRIDPWD || s.secmec == 9) && len(secTkn) < 20 {
+		return errors.New("db2: ACCSEC negotiation failed: invalid server security token")
+	}
+
 	// If server wants another SECMEC, update and resend ACCSEC
 	s.correlationID = 1
 	if negotiatedSecMec != 0 && negotiatedSecMec != s.secmec {
@@ -394,21 +409,7 @@ func (s *Session) handshake(ctx context.Context) error {
 	// 3. Pack SECCHK (supporting Kerberos SECMEC 7/11, and SECMEC 9 with DH key exchange & DES encryption)
 	var secchk []byte
 	if s.secmec == security.SecMecKERBEROS || s.secmec == security.SecMecEUSERIDKERBEROS || s.secmec == 7 || s.secmec == 11 {
-		krbCfg := security.KerberosConfig{
-			ServicePrincipal: s.cfg.KerberosSPN,
-			Host:             s.cfg.Host,
-			Realm:            s.cfg.KerberosRealm,
-			ConfigFile:       s.cfg.Krb5ConfigFile,
-			KeytabFile:       s.cfg.Krb5KeytabFile,
-			CCacheFile:       s.cfg.Krb5CCacheFile,
-			Username:         s.cfg.User,
-			Password:         s.cfg.Password,
-		}
-		krbToken, krbErr := security.AcquireKerberosToken(krbCfg)
-		if krbErr != nil {
-			return fmt.Errorf("failed to acquire Kerberos token: %w", krbErr)
-		}
-		secchk, err = PackSECCHKWithBytes(s.secmec, krbToken, s.cfg.Database, s.cfg.User, nil, false, s.encoding)
+		return errors.New("db2: Kerberos security mechanism (SECMEC 7/11) is disabled until a safe, compliant RFC 4120 AP-REQ subpackage is integrated")
 	} else if (s.secmec == SecMecEUSRIDPWD || s.secmec == 9) && len(secTkn) >= 20 {
 		clientPriv, privErr := security.GenerateDHPrivateKey()
 		if privErr != nil {
@@ -579,7 +580,7 @@ func (s *Session) readReplyChain() ([]ReplyPacket, error) {
 	return packets, nil
 }
 
-// Ping checks if the database session is responsive.
+// Ping checks if the database session is responsive without affecting active transactions.
 func (s *Session) Ping(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -589,13 +590,51 @@ func (s *Session) Ping(ctx context.Context) error {
 	}
 	defer s.watch(ctx)()
 
-	// RDBCMM as a lightweight ping
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "go-db2-client"
+	}
+
+	excsat, err := PackEXCSAT("go-db2", hostname, "SQL12010", "go-db2", DefaultManagerLevels())
+	if err != nil {
+		return fmt.Errorf("failed to pack EXCSAT for ping: %w", err)
+	}
+
 	s.correlationID = 1
-	rdbcmm := PackRDBCMM()
-	var err error
-	s.correlationID, err = WriteRequestDSS(s.conn, rdbcmm, s.correlationID, false, true)
-	_, err = s.readReplyChain()
-	return err
+	s.correlationID, err = WriteRequestDSS(s.conn, excsat, s.correlationID, false, true)
+	if err != nil {
+		s.closed = true
+		s.broken.Store(true)
+		if s.conn != nil {
+			_ = s.conn.Close()
+		}
+		return fmt.Errorf("failed to send ping EXCSAT: %w", err)
+	}
+
+	// Read and validate EXCSATRD consuming entire chain
+	replies, err := s.readReplyChain()
+	if err != nil {
+		s.closed = true
+		s.broken.Store(true)
+		if s.conn != nil {
+			_ = s.conn.Close()
+		}
+		return fmt.Errorf("failed to read ping reply: %w", err)
+	}
+	if len(replies) == 0 || replies[0].CodePoint != CodePointEXCSATRD {
+		s.closed = true
+		s.broken.Store(true)
+		if s.conn != nil {
+			_ = s.conn.Close()
+		}
+		var cp CodePoint
+		if len(replies) > 0 {
+			cp = replies[0].CodePoint
+		}
+		return fmt.Errorf("unexpected ping reply codepoint: 0x%04X", cp)
+	}
+
+	return nil
 }
 
 // Commit commits the active transaction.

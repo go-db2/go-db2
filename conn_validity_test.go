@@ -29,13 +29,13 @@ func TestConnectionIsDiscardedAfterUnreadableReply(t *testing.T) {
 			binary.BigEndian.PutUint16(frame[8:10], uint16(network.CodePointQRYDTA))
 			_, err := c.Write(frame)
 			return err == nil
-		case network.CodePointRDBCMM:
-			return writeSQLCARDOK(c)
+		case network.CodePointEXCSAT, network.CodePointRDBCMM:
+			return writeEXCSATRDOrOK(c)
 		}
 		return false
 	})
 
-	db, err := sql.Open("db2", "db2://db2inst1:password@"+srv.addr+"/SAMPLE?ssl=false")
+	db, err := sql.Open("db2", "db2://db2inst1:password@"+srv.addr+"/SAMPLE?ssl=false&allow_plaintext_auth=true")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}

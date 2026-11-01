@@ -351,3 +351,144 @@ func BenchmarkSanitizeLogString_WithControlChars(b *testing.B) {
 		_ = sanitizeLogString(s)
 	}
 }
+
+func TestParseDSN_StrictValidation(t *testing.T) {
+	// Unknown parameter error
+	_, err := ParseDSN("db2://user:pwd@localhost:50000/DB?sll=true")
+	if err == nil || !strings.Contains(err.Error(), `unknown DSN parameter: "sll"`) {
+		t.Fatalf("expected unknown parameter error for 'sll', got: %v", err)
+	}
+
+	// Invalid boolean value error
+	_, err = ParseDSN("db2://user:pwd@localhost:50000/DB?ssl=ture")
+	if err == nil || !strings.Contains(err.Error(), `invalid boolean value for ssl: "ture"`) {
+		t.Fatalf("expected invalid boolean error for 'ssl=ture', got: %v", err)
+	}
+
+	// Malformed key-value parameter error
+	_, err = ParseDSN("host=localhost;invalid_token;port=50000")
+	if err == nil || !strings.Contains(err.Error(), `malformed DSN parameter: "invalid_token"`) {
+		t.Fatalf("expected malformed DSN parameter error, got: %v", err)
+	}
+
+	// Invalid port
+	_, err = ParseDSN("host=localhost;port=abc;database=SAMPLE")
+	if err == nil || !strings.Contains(err.Error(), `invalid port`) {
+		t.Fatalf("expected invalid port error, got: %v", err)
+	}
+
+	// Invalid timeout
+	_, err = ParseDSN("host=localhost;timeout=badtimeout;database=SAMPLE")
+	if err == nil || !strings.Contains(err.Error(), `invalid timeout value`) {
+		t.Fatalf("expected invalid timeout error, got: %v", err)
+	}
+
+	// Valid aliases parse successfully
+	aliasesDSN := "host=localhost;port=50000;database=SAMPLE;user=db2inst1;password=secret;" +
+		"tls=true;ssl_ca=/path/to/ca.pem;sslcert=/path/to/cert.pem;sslkey=/path/to/key.pem;" +
+		"blocksize=131072;auth=encrypted-password;client_applname=my_app"
+	cfg, err := ParseDSN(aliasesDSN)
+	if err != nil {
+		t.Fatalf("failed to parse valid aliases: %v", err)
+	}
+	if !cfg.UseSSL {
+		t.Errorf("expected UseSSL=true from tls=true")
+	}
+	if cfg.SSLRootCAPath != "/path/to/ca.pem" {
+		t.Errorf("expected SSLRootCAPath to be set, got %q", cfg.SSLRootCAPath)
+	}
+	if cfg.BlockSize != 131072 {
+		t.Errorf("expected BlockSize=131072, got %d", cfg.BlockSize)
+	}
+	if cfg.SecurityMechanism != 9 {
+		t.Errorf("expected SecurityMechanism=9 from auth=encrypted-password, got %d", cfg.SecurityMechanism)
+	}
+	if cfg.ClientApplName != "my_app" {
+		t.Errorf("expected ClientApplName=my_app, got %q", cfg.ClientApplName)
+	}
+}
+
+func TestParseDSN_PortPreservation(t *testing.T) {
+	// AC-6: Explicit port in host=host:50000 with ssl=true preserves 50000
+	cfg1, err := ParseDSN("host=mydb.local:50000;ssl=true;database=SAMPLE;user=u;pwd=p")
+	if err != nil {
+		t.Fatalf("ParseDSN failed: %v", err)
+	}
+	if cfg1.Port != 50000 {
+		t.Errorf("expected Port=50000, got %d", cfg1.Port)
+	}
+
+	// Explicit port in port=50000 with ssl=true preserves 50000
+	cfg2, err := ParseDSN("host=mydb.local;port=50000;ssl=true;database=SAMPLE;user=u;pwd=p")
+	if err != nil {
+		t.Fatalf("ParseDSN failed: %v", err)
+	}
+	if cfg2.Port != 50000 {
+		t.Errorf("expected Port=50000, got %d", cfg2.Port)
+	}
+
+	// URL with explicit port and ssl=true preserves 50000
+	cfg3, err := ParseDSN("db2://u:p@mydb.local:50000/SAMPLE?ssl=true")
+	if err != nil {
+		t.Fatalf("ParseDSN failed: %v", err)
+	}
+	if cfg3.Port != 50000 {
+		t.Errorf("expected Port=50000, got %d", cfg3.Port)
+	}
+
+	// DSN without port specified and ssl=true defaults to 50001
+	cfg4, err := ParseDSN("host=mydb.local;ssl=true;database=SAMPLE;user=u;pwd=p")
+	if err != nil {
+		t.Fatalf("ParseDSN failed: %v", err)
+	}
+	if cfg4.Port != 50001 {
+		t.Errorf("expected Port=50001, got %d", cfg4.Port)
+	}
+
+	// db2s URL without port defaults to 50001
+	cfg5, err := ParseDSN("db2s://u:p@mydb.local/SAMPLE")
+	if err != nil {
+		t.Fatalf("ParseDSN failed: %v", err)
+	}
+	if cfg5.Port != 50001 {
+		t.Errorf("expected Port=50001, got %d", cfg5.Port)
+	}
+
+	// DSN without port specified and ssl=false defaults to 50000
+	cfg6, err := ParseDSN("host=mydb.local;ssl=false;database=SAMPLE;user=u;pwd=p")
+	if err != nil {
+		t.Fatalf("ParseDSN failed: %v", err)
+	}
+	if cfg6.Port != 50000 {
+		t.Errorf("expected Port=50000, got %d", cfg6.Port)
+	}
+}
+
+func TestParseDSN_PlaintextAuthPolicy(t *testing.T) {
+	// SECMEC 3 without TLS and without allow_plaintext_auth fails
+	_, err := ParseDSN("host=localhost;port=50000;database=SAMPLE;user=u;password=p;ssl=false;security_mechanism=plain")
+	if err == nil || !strings.Contains(err.Error(), "plaintext authentication over unencrypted connection is disabled by default") {
+		t.Fatalf("expected plaintext auth error, got: %v", err)
+	}
+
+	// SECMEC 3 without TLS but with allow_plaintext_auth=true succeeds
+	cfg, err := ParseDSN("host=localhost;port=50000;database=SAMPLE;user=u;password=p;ssl=false;security_mechanism=plain;allow_plaintext_auth=true")
+	if err != nil {
+		t.Fatalf("expected success with allow_plaintext_auth=true, got: %v", err)
+	}
+	if !cfg.AllowPlaintextAuth {
+		t.Errorf("expected AllowPlaintextAuth=true")
+	}
+}
+
+func BenchmarkParseDSN(b *testing.B) {
+	dsn := "db2://myuser:secretpassword@db2host.corp.internal:50000/PRODUCTION?timeout=30s&block_size=65535"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := ParseDSN(dsn)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
