@@ -114,31 +114,45 @@ func (r *Rows) NextResultSet() error {
 	return nil
 }
 
+// Pre-allocated static reflect.Type instances to eliminate reflect.TypeOf and interface boxing on every call.
+var (
+	scanTypeAny       = reflect.TypeOf(new(any)).Elem()
+	scanTypeInt16     = reflect.TypeOf(int16(0))
+	scanTypeInt32     = reflect.TypeOf(int32(0))
+	scanTypeInt64     = reflect.TypeOf(int64(0))
+	scanTypeFloat64   = reflect.TypeOf(float64(0))
+	scanTypeTime      = reflect.TypeOf(time.Time{})
+	scanTypeByteSlice = reflect.TypeOf([]byte{})
+	scanTypeBool      = reflect.TypeOf(true)
+	scanTypeString    = reflect.TypeOf("")
+)
+
 // ColumnTypeScanType returns the Go type that can be used to scan types into.
+// Optimization: Returns pre-allocated package-level reflect.Type variables instead of evaluating reflect.TypeOf on every column introspection call.
 func (r *Rows) ColumnTypeScanType(index int) reflect.Type {
 	cur := r.currentSet()
 	if index < 0 || index >= len(cur.Columns) {
-		return reflect.TypeOf(new(any)).Elem()
+		return scanTypeAny
 	}
 
 	sqlType := types.SQLType(cur.Columns[index].SQLType).BaseType()
 	switch sqlType {
 	case types.SQLTypeSmall:
-		return reflect.TypeOf(int16(0))
+		return scanTypeInt16
 	case types.SQLTypeInteger:
-		return reflect.TypeOf(int32(0))
+		return scanTypeInt32
 	case types.SQLTypeBigInt:
-		return reflect.TypeOf(int64(0))
+		return scanTypeInt64
 	case types.SQLTypeFloat:
-		return reflect.TypeOf(float64(0))
+		return scanTypeFloat64
 	case types.SQLTypeDate, types.SQLTypeTimestamp:
-		return reflect.TypeOf(time.Time{})
+		return scanTypeTime
 	case types.SQLTypeBlob, types.SQLTypeBinary, types.SQLTypeVarBinary:
-		return reflect.TypeOf([]byte{})
+		return scanTypeByteSlice
 	case types.SQLTypeBoolean:
-		return reflect.TypeOf(true)
+		return scanTypeBool
 	default:
-		return reflect.TypeOf("")
+		return scanTypeString
 	}
 }
 
