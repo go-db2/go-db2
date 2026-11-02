@@ -1,7 +1,6 @@
 package db2
 
 import (
-	"context"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -13,10 +12,8 @@ import (
 // Result implements the database/sql/driver.Result interface.
 type Result struct {
 	mu           sync.Mutex
-	conn         *Conn
 	affectedRows int64
 	lastInsertId int64
-	isInsert     bool
 }
 
 // NewResult creates a new driver.Result with affected rows count and preset lastInsertId.
@@ -27,16 +24,14 @@ func NewResult(affectedRows, lastInsertId int64) *Result {
 	}
 }
 
-// NewResultWithConn creates a new driver.Result attached to a connection for on-demand identity retrieval.
+// NewResultWithConn creates a new driver.Result without retaining connection pointer.
 func NewResultWithConn(conn *Conn, affectedRows int64, isInsert bool) *Result {
 	return &Result{
-		conn:         conn,
 		affectedRows: affectedRows,
-		isInsert:     isInsert,
 	}
 }
 
-// LastInsertId returns the database's auto-generated ID for the inserted row via IDENTITY_VAL_LOCAL().
+// LastInsertId returns the database's auto-generated ID or an explicit error directing to DB2 idiomatic syntax.
 func (r *Result) LastInsertId() (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -44,32 +39,7 @@ func (r *Result) LastInsertId() (int64, error) {
 	if r.lastInsertId != 0 {
 		return r.lastInsertId, nil
 	}
-
-	if !r.isInsert || r.conn == nil || r.conn.session == nil {
-		return 0, errors.New("db2: LastInsertId is only available after an INSERT statement")
-	}
-
-	r.conn.mu.Lock()
-	defer r.conn.mu.Unlock()
-
-	// Query IDENTITY_VAL_LOCAL() from SYSIBM.SYSDUMMY1
-	_, rawRows, err := r.conn.session.QueryDirect(context.Background(), "SELECT IDENTITY_VAL_LOCAL() AS LAST_ID FROM SYSIBM.SYSDUMMY1")
-	if err != nil {
-		return 0, fmt.Errorf("db2: failed to query IDENTITY_VAL_LOCAL(): %w", err)
-	}
-
-	if len(rawRows) == 0 || len(rawRows[0]) == 0 || rawRows[0][0] == nil {
-		return 0, errors.New("db2: no identity value returned")
-	}
-
-	val := rawRows[0][0]
-	id, err := parseIdentityValue(val)
-	if err != nil {
-		return 0, fmt.Errorf("db2: invalid identity value %v: %w", val, err)
-	}
-
-	r.lastInsertId = id
-	return id, nil
+	return 0, errors.New("db2: LastInsertId is not supported by Db2 DRDA protocol; use 'SELECT ... FROM FINAL TABLE (INSERT ...)' to retrieve generated identity keys")
 }
 
 // RowsAffected returns the number of rows affected by the query.

@@ -137,21 +137,36 @@ func appendFDODTA(dst []byte, sqlType types.SQLType, sqllen int64, prec, scale i
 		return append(dst, padded...), nil
 
 	case types.SQLTypeSmall, types.SQLTypeNSmall:
-		n := toInt64(val)
+		n, err := toInt64Strict(val)
+		if err != nil {
+			return nil, err
+		}
+		if n < math.MinInt16 || n > math.MaxInt16 {
+			return nil, fmt.Errorf("db2: value %d out of range for SMALLINT [-32768, 32767]", n)
+		}
 		origLen := len(dst)
 		dst = append(dst, 0x00, 0, 0)
 		endian.PutUint16(dst[origLen+1:origLen+3], uint16(int16(n)))
 		return dst, nil
 
 	case types.SQLTypeInteger, types.SQLTypeNInteger:
-		n := toInt64(val)
+		n, err := toInt64Strict(val)
+		if err != nil {
+			return nil, err
+		}
+		if n < math.MinInt32 || n > math.MaxInt32 {
+			return nil, fmt.Errorf("db2: value %d out of range for INTEGER [-2147483648, 2147483647]", n)
+		}
 		origLen := len(dst)
 		dst = append(dst, 0x00, 0, 0, 0, 0)
 		endian.PutUint32(dst[origLen+1:origLen+5], uint32(int32(n)))
 		return dst, nil
 
 	case types.SQLTypeBigInt, types.SQLTypeNBigInt:
-		n := toInt64(val)
+		n, err := toInt64Strict(val)
+		if err != nil {
+			return nil, err
+		}
 		origLen := len(dst)
 		dst = append(dst, 0x00, 0, 0, 0, 0, 0, 0, 0, 0)
 		endian.PutUint64(dst[origLen+1:origLen+9], uint64(n))
@@ -475,6 +490,44 @@ func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, err
 	}
 
 	return dst, nil
+}
+
+// ToInt64Strict converts an integer or unsigned integer to int64 with bounds and overflow checks, without reflection.
+func ToInt64Strict(v any) (int64, error) {
+	return toInt64Strict(v)
+}
+
+func toInt64Strict(v any) (int64, error) {
+	switch val := v.(type) {
+	case int:
+		return int64(val), nil
+	case int8:
+		return int64(val), nil
+	case int16:
+		return int64(val), nil
+	case int32:
+		return int64(val), nil
+	case int64:
+		return val, nil
+	case uint:
+		if uint64(val) > math.MaxInt64 {
+			return 0, fmt.Errorf("db2: uint value %d overflows int64", val)
+		}
+		return int64(val), nil
+	case uint8:
+		return int64(val), nil
+	case uint16:
+		return int64(val), nil
+	case uint32:
+		return int64(val), nil
+	case uint64:
+		if val > math.MaxInt64 {
+			return 0, fmt.Errorf("db2: uint64 value %d overflows int64", val)
+		}
+		return int64(val), nil
+	default:
+		return 0, fmt.Errorf("db2: cannot convert %T to integer (unsupported type)", v)
+	}
 }
 
 func toInt64(val any) int64 {

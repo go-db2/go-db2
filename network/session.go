@@ -95,6 +95,9 @@ type ReplyPacket struct {
 	MoreData  bool
 }
 
+// ReservedDirectSec is the reserved DRDA package section number for direct/immediate statements.
+const ReservedDirectSec uint16 = 1
+
 // Session manages the underlying network socket and DRDA protocol state with the Db2 server.
 type Session struct {
 	cfg           SessionConfig
@@ -214,7 +217,7 @@ func NewSession(cfg SessionConfig) *Session {
 		prdid:         "SQL12010",
 		pkgid:         "SYSSH200",
 		pkgcnstkn:     "SYSLVL01",
-		pkgsn:         65,
+		pkgsn:         ReservedDirectSec,
 		qryblksz:      blksz,
 		autoCommit:    true,
 	}
@@ -728,7 +731,7 @@ func (s *Session) ExecDirect(ctx context.Context, sql string) (int64, error) {
 	var err error
 
 	// 1. EXCSQLIMM (Execute Immediate)
-	imm := PackEXCSQLIMM(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	imm := PackEXCSQLIMM(s.pkgid, s.pkgcnstkn, ReservedDirectSec, s.cfg.Database)
 	s.correlationID, err = WriteRequestDSS(s.conn, imm, s.correlationID, true, false)
 	if err != nil {
 		return 0, fmt.Errorf("failed to write EXCSQLIMM: %w", err)
@@ -795,7 +798,7 @@ func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescript
 	var err error
 
 	// 1. PRPSQLSTT
-	prp := PackPRPSQLSTT(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	prp := PackPRPSQLSTT(s.pkgid, s.pkgcnstkn, ReservedDirectSec, s.cfg.Database)
 	s.correlationID, err = WriteRequestDSS(s.conn, prp, s.correlationID, true, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to write PRPSQLSTT: %w", err)
@@ -809,7 +812,7 @@ func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescript
 	}
 
 	// 3. OPNQRY
-	opn := PackOPNQRY(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database, s.qryblksz)
+	opn := PackOPNQRY(s.pkgid, s.pkgcnstkn, ReservedDirectSec, s.cfg.Database, s.qryblksz)
 	s.correlationID, err = WriteRequestDSS(s.conn, opn, s.correlationID, false, true)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to write OPNQRY: %w", err)
@@ -820,11 +823,11 @@ func (s *Session) QueryDirect(ctx context.Context, sql string) ([]ColumnDescript
 		return nil, nil, fmt.Errorf("failed to read query response: %w", err)
 	}
 
-	return s.fetchQuery(replies, nil)
+	return s.fetchQuery(replies, nil, ReservedDirectSec)
 }
 
 // PrepareAndDescribe prepares a query/statement and retrieves its output columns and input parameter descriptors.
-func (s *Session) PrepareAndDescribe(ctx context.Context, sql string) ([]ColumnDescription, []ColumnDescription, error) {
+func (s *Session) PrepareAndDescribe(ctx context.Context, sql string, pkgsn uint16) ([]ColumnDescription, []ColumnDescription, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -837,7 +840,7 @@ func (s *Session) PrepareAndDescribe(ctx context.Context, sql string) ([]ColumnD
 	var err error
 
 	// 1. PRPSQLSTT
-	prp := PackPRPSQLSTT(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	prp := PackPRPSQLSTT(s.pkgid, s.pkgcnstkn, pkgsn, s.cfg.Database)
 	s.correlationID, err = WriteRequestDSS(s.conn, prp, s.correlationID, true, false)
 	if err != nil {
 		return nil, nil, err
@@ -851,7 +854,7 @@ func (s *Session) PrepareAndDescribe(ctx context.Context, sql string) ([]ColumnD
 	}
 
 	// 3. DSCSQLSTT
-	dsc := PackDSCSQLSTT(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	dsc := PackDSCSQLSTT(s.pkgid, s.pkgcnstkn, pkgsn, s.cfg.Database)
 	s.correlationID, err = WriteRequestDSS(s.conn, dsc, s.correlationID, false, true)
 	if err != nil {
 		return nil, nil, err
@@ -891,7 +894,7 @@ func (s *Session) PrepareAndDescribe(ctx context.Context, sql string) ([]ColumnD
 }
 
 // ExecWithParams executes a prepared statement with parameter arguments and returns affected rows and any output parameters.
-func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescription, args []any) (int64, []any, error) {
+func (s *Session) ExecWithParams(ctx context.Context, pkgsn uint16, paramCols []ColumnDescription, args []any) (int64, []any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -918,7 +921,7 @@ func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescript
 	}
 
 	// 1. EXCSQLSTT
-	exc := PackEXCSQLSTT(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database)
+	exc := PackEXCSQLSTT(s.pkgid, s.pkgcnstkn, pkgsn, s.cfg.Database)
 	curID, err := WriteRequestDSS(s.conn, exc, 1, true, false)
 	if err != nil {
 		return 0, nil, err
@@ -990,14 +993,14 @@ func (s *Session) ExecWithParams(ctx context.Context, paramCols []ColumnDescript
 }
 
 // ExecBatchWithParams executes a batch of parameter sets against the currently prepared statement.
-func (s *Session) ExecBatchWithParams(ctx context.Context, paramCols []ColumnDescription, batchRows [][]any) (int64, error) {
+func (s *Session) ExecBatchWithParams(ctx context.Context, pkgsn uint16, paramCols []ColumnDescription, batchRows [][]any) (int64, error) {
 	if len(batchRows) == 0 {
 		return 0, nil
 	}
 
 	var totalAffected int64
 	for _, rowArgs := range batchRows {
-		affected, _, err := s.ExecWithParams(ctx, paramCols, rowArgs)
+		affected, _, err := s.ExecWithParams(ctx, pkgsn, paramCols, rowArgs)
 		if err != nil {
 			return totalAffected, err
 		}
@@ -1008,7 +1011,7 @@ func (s *Session) ExecBatchWithParams(ctx context.Context, paramCols []ColumnDes
 
 // QueryWithParams opens a query on a prepared statement with parameter arguments.
 // Optimization: Returns decoded rows directly as [][]driver.Value to avoid per-row slice re-allocation and copying in Conn/Stmt wrappers.
-func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []ColumnDescription, args []any) ([]ColumnDescription, [][]driver.Value, error) {
+func (s *Session) QueryWithParams(ctx context.Context, pkgsn uint16, outputCols, paramCols []ColumnDescription, args []any) ([]ColumnDescription, [][]driver.Value, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1035,7 +1038,7 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 	}
 
 	// 1. OPNQRY with QRYBLKSZ
-	opnqry := PackOPNQRY(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database, s.qryblksz)
+	opnqry := PackOPNQRY(s.pkgid, s.pkgcnstkn, pkgsn, s.cfg.Database, s.qryblksz)
 	curID, err := WriteRequestDSS(s.conn, opnqry, 1, true, false)
 	if err != nil {
 		return nil, nil, err
@@ -1052,7 +1055,7 @@ func (s *Session) QueryWithParams(ctx context.Context, outputCols, paramCols []C
 		return nil, nil, err
 	}
 
-	columns, rows, err := s.fetchQuery(replies, outputCols)
+	columns, rows, err := s.fetchQuery(replies, outputCols, pkgsn)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1139,14 +1142,14 @@ func (q *queryResult) consume(replies []ReplyPacket, endian binary.ByteOrder) (b
 
 // fetchQuery reads a query's result from the replies to OPNQRY, continuing
 // the query with CNTQRY, one query block at a time, until the server ends it.
-func (s *Session) fetchQuery(replies []ReplyPacket, columns []ColumnDescription) ([]ColumnDescription, [][]driver.Value, error) {
+func (s *Session) fetchQuery(replies []ReplyPacket, columns []ColumnDescription, pkgsn uint16) ([]ColumnDescription, [][]driver.Value, error) {
 	q := &queryResult{columns: columns, cntqryID: 1}
 	if _, err := q.consume(replies, s.endian); err != nil {
 		return nil, nil, err
 	}
 
 	for q.open && !q.ended {
-		cntqry := PackCNTQRY(s.pkgid, s.pkgcnstkn, s.pkgsn, s.cfg.Database, s.qryblksz, q.qryinsid)
+		cntqry := PackCNTQRY(s.pkgid, s.pkgcnstkn, pkgsn, s.cfg.Database, s.qryblksz, q.qryinsid)
 		if _, err := WriteRequestDSS(s.conn, cntqry, q.cntqryID, false, true); err != nil {
 			return nil, nil, fmt.Errorf("failed to write CNTQRY: %w", err)
 		}

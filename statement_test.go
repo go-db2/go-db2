@@ -333,3 +333,16 @@ func TestRewriteBinaryParams(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkSectionManager_AcquireRelease(b *testing.B) {
+	sm := newSectionManager(500)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sec, err := sm.Acquire()
+		if err != nil {
+			b.Fatal(err)
+		}
+		sm.Release(sec)
+	}
+}

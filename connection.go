@@ -2,28 +2,41 @@ package db2
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-db2/go-db2/network"
 )
 
 // Conn implements the database/sql/driver.Conn interface for IBM Db2.
 type Conn struct {
-	session *network.Session
-	cfg     *Config
-	mu      sync.Mutex
-	closed  bool
+	session      *network.Session
+	cfg          *Config
+	sections     *sectionManager
+	hasCustomIso bool
+	mu           sync.Mutex
+	closed       bool
 }
 
 // NewConn wraps a connected network session into a database/sql driver.Conn.
 func NewConn(session *network.Session, cfg *Config) *Conn {
 	return &Conn{
-		session: session,
-		cfg:     cfg,
+		session:  session,
+		cfg:      cfg,
+		sections: newSectionManager(maxDrdaSections),
 	}
+}
+
+func (c *Conn) getSections() *sectionManager {
+	if c.sections == nil {
+		c.sections = newSectionManager(maxDrdaSections)
+	}
+	return c.sections
 }
 
 // Prepare returns a prepared statement, bound to this connection.
@@ -67,12 +80,18 @@ func (c *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, e
 		return nil, err
 	}
 
-	outCols, paramCols, err := c.session.PrepareAndDescribe(ctx, query)
+	sec, err := c.getSections().Acquire()
 	if err != nil {
 		return nil, err
 	}
 
-	return NewStmt(c, query, outCols, paramCols), nil
+	outCols, paramCols, err := c.session.PrepareAndDescribe(ctx, query, sec)
+	if err != nil {
+		c.sections.Release(sec) // Invariante: liberação imediata em caso de falha
+		return nil, err
+	}
+
+	return NewStmt(c, query, outCols, paramCols, sec), nil
 }
 
 // Exec executes a query that doesn't return rows (legacy interface).
@@ -102,16 +121,23 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		if err != nil {
 			return nil, err
 		}
-		return NewResultWithConn(c, affected, isInsertQuery(query)), nil
+		return NewResult(affected, 0), nil
 	}
 
 	// Prepare and execute with parameters
-	outCols, paramCols, err := c.session.PrepareAndDescribe(ctx, query)
+	sec, err := c.getSections().Acquire()
 	if err != nil {
 		return nil, err
 	}
 
-	stmt := NewStmt(c, query, outCols, paramCols)
+	outCols, paramCols, err := c.session.PrepareAndDescribe(ctx, query, sec)
+	if err != nil {
+		c.sections.Release(sec)
+		return nil, err
+	}
+
+	stmt := NewStmt(c, query, outCols, paramCols, sec)
+	defer stmt.Close()
 	return stmt.execContextLocked(ctx, args)
 }
 
@@ -155,12 +181,19 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	}
 
 	// Prepare and query with parameters
-	outCols, paramCols, err := c.session.PrepareAndDescribe(ctx, query)
+	sec, err := c.getSections().Acquire()
 	if err != nil {
 		return nil, err
 	}
 
-	stmt := NewStmt(c, query, outCols, paramCols)
+	outCols, paramCols, err := c.session.PrepareAndDescribe(ctx, query, sec)
+	if err != nil {
+		c.sections.Release(sec)
+		return nil, err
+	}
+
+	stmt := NewStmt(c, query, outCols, paramCols, sec)
+	defer stmt.Close()
 	return stmt.queryContextLocked(ctx, args)
 }
 
@@ -288,12 +321,34 @@ func (c *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 		return nil, errors.New("db2: read-only transactions are not supported")
 	}
 
-	// Disable auto-commit for explicit transaction scope
+	var isoClause string
+	switch opts.Isolation {
+	case driver.IsolationLevel(sql.LevelDefault), driver.IsolationLevel(sql.LevelReadCommitted):
+		isoClause = "CS"
+	case driver.IsolationLevel(sql.LevelReadUncommitted):
+		isoClause = "UR"
+	case driver.IsolationLevel(sql.LevelRepeatableRead):
+		isoClause = "RS"
+	case driver.IsolationLevel(sql.LevelSerializable):
+		isoClause = "RR"
+	default:
+		return nil, fmt.Errorf("db2: unsupported isolation level: %v", opts.Isolation)
+	}
+
+	// Executa comando para configurar isolamento se diferente do padrão CS
+	if isoClause != "CS" {
+		if _, err := c.session.ExecDirect(ctx, "SET CURRENT ISOLATION = "+isoClause); err != nil {
+			return nil, fmt.Errorf("db2: failed to set transaction isolation %s: %w", isoClause, err)
+		}
+		c.hasCustomIso = true
+	}
+
 	c.session.SetAutoCommit(false)
 
 	return &Tx{
-		conn: c,
-		ctx:  ctx,
+		conn:      c,
+		ctx:       ctx,
+		customIso: isoClause != "CS",
 	}, nil
 }
 
@@ -327,6 +382,14 @@ func (c *Conn) ResetSession(ctx context.Context) error {
 		return driver.ErrBadConn
 	}
 
+	// Garante que o isolamento foi restaurado ao padrão (CS) caso tenha permanecido alterado
+	if c.hasCustomIso {
+		if _, err := c.session.ExecDirect(ctx, "SET CURRENT ISOLATION = CS"); err != nil {
+			return driver.ErrBadConn
+		}
+		c.hasCustomIso = false
+	}
+
 	if c.cfg != nil && c.cfg.User != "" && c.session.CurrentUser() != c.cfg.User {
 		if err := c.session.SwitchUser(ctx, c.cfg.User); err != nil {
 			return driver.ErrBadConn
@@ -346,7 +409,59 @@ func (c *Conn) ResetSession(ctx context.Context) error {
 // Interface assertions
 // CheckNamedValue implements driver.NamedValueChecker interface.
 func (c *Conn) CheckNamedValue(nv *driver.NamedValue) error {
-	return nil
+	return checkNamedValueCommon(nv)
+}
+
+func checkNamedValueCommon(nv *driver.NamedValue) error {
+	if nv == nil {
+		return nil
+	}
+
+	// 1. Desreferenciação de driver.Valuer
+	if vr, ok := nv.Value.(driver.Valuer); ok {
+		val, err := vr.Value()
+		if err != nil {
+			return err
+		}
+		nv.Value = val
+		if nv.Value == nil {
+			return nil
+		}
+	}
+
+	// 2. Normalização de arrays de bytes fixos (ex: [16]byte / uuid.UUID) para []byte escalar
+	switch v := nv.Value.(type) {
+	case [16]byte:
+		b := make([]byte, 16)
+		copy(b, v[:])
+		nv.Value = b
+		return nil
+	case *[16]byte:
+		if v == nil {
+			nv.Value = nil
+			return nil
+		}
+		b := make([]byte, 16)
+		copy(b, v[:])
+		nv.Value = b
+		return nil
+	case sql.Out, *sql.Out:
+		return nil
+	}
+
+	// 3. Preservação de fatias homogêneas para modo Batch
+	// Retornar nil para que o database/sql não invoque DefaultParameterConverter
+	// (que rejeitaria slices como []int, []string com "unsupported type, a slice").
+	switch nv.Value.(type) {
+	case []int, []int64, []int32, []int16, []int8,
+		[]uint, []uint64, []uint32, []uint16, []uint8,
+		[]string, []float64, []float32, []bool, []time.Time,
+		[]any, []driver.Value:
+		return nil
+	}
+
+	// 4. Delegar conversão de tipos escalares básicos e ponteiros para o database/sql
+	return driver.ErrSkip
 }
 
 var (

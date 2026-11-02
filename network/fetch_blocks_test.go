@@ -120,7 +120,7 @@ func queryPaths() map[string]func(s *Session) ([][]driver.Value, error) {
 			return rows, err
 		},
 		"QueryWithParams": func(s *Session) ([][]driver.Value, error) {
-			_, rows, err := s.QueryWithParams(context.Background(), nil, nil, nil)
+			_, rows, err := s.QueryWithParams(context.Background(), ReservedDirectSec, nil, nil, nil)
 			return rows, err
 		},
 	}

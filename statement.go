@@ -8,6 +8,7 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-db2/go-db2/network"
@@ -20,28 +21,47 @@ type Stmt struct {
 	query             string
 	outputCols        []network.ColumnDescription
 	paramCols         []network.ColumnDescription
+	pkgsn             uint16
 	rewrittenOnServer bool
 	closed            bool
+	mu                sync.Mutex
 }
 
 // NewStmt creates a prepared statement wrapper.
-func NewStmt(conn *Conn, query string, outputCols, paramCols []network.ColumnDescription) *Stmt {
+func NewStmt(conn *Conn, query string, outputCols, paramCols []network.ColumnDescription, pkgsn ...uint16) *Stmt {
+	var sec uint16 = 1
+	if len(pkgsn) > 0 {
+		sec = pkgsn[0]
+	}
 	return &Stmt{
 		conn:       conn,
 		query:      query,
 		outputCols: outputCols,
 		paramCols:  paramCols,
+		pkgsn:      sec,
 	}
 }
 
 // Close closes the prepared statement.
 func (s *Stmt) Close() error {
-	if s.conn != nil {
-		s.conn.mu.Lock()
-		defer s.conn.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil
 	}
 	s.closed = true
+
+	if s.conn != nil && s.conn.sections != nil {
+		s.conn.sections.Release(s.pkgsn)
+	}
 	return nil
+}
+
+func (s *Stmt) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
 }
 
 // NumInput returns the number of placeholder parameters.
@@ -60,7 +80,7 @@ func (s *Stmt) Exec(args []driver.Value) (driver.Result, error) {
 
 // ExecContext executes a prepared statement with context and arguments.
 func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	if s.closed || s.conn == nil || s.conn.session == nil {
+	if s.isClosed() || s.conn == nil || s.conn.session == nil {
 		return nil, ErrConnectionClosed
 	}
 
@@ -71,7 +91,7 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 }
 
 func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	if s.closed || s.conn == nil || s.conn.session == nil {
+	if s.isClosed() || s.conn == nil || s.conn.session == nil {
 		return nil, ErrConnectionClosed
 	}
 
@@ -131,11 +151,11 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 	}
 
 	if isBatch {
-		totalAffected, err := s.conn.session.ExecBatchWithParams(ctx, s.paramCols, batchRows)
+		totalAffected, err := s.conn.session.ExecBatchWithParams(ctx, s.pkgsn, s.paramCols, batchRows)
 		if err != nil {
 			return nil, err
 		}
-		return NewResultWithConn(s.conn, totalAffected, isInsertQuery(s.query)), nil
+		return NewResult(totalAffected, 0), nil
 	}
 
 	if hasBlobParams(s.paramCols, rawArgs) {
@@ -148,11 +168,11 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 			}
 			return NewResult(affected, 0), nil
 		}
-		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, newQuery)
+		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, newQuery, s.pkgsn)
 		if err != nil {
 			return nil, err
 		}
-		affected, outValues, err := s.conn.session.ExecWithParams(ctx, newParamCols, newArgs)
+		affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.pkgsn, newParamCols, newArgs)
 		if err != nil {
 			return nil, err
 		}
@@ -165,11 +185,11 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 				}
 			}
 		}
-		return NewResultWithConn(s.conn, affected, isInsertQuery(s.query)), nil
+		return NewResult(affected, 0), nil
 	}
 
 	if s.rewrittenOnServer {
-		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query)
+		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query, s.pkgsn)
 		if err != nil {
 			return nil, err
 		}
@@ -177,7 +197,7 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		s.rewrittenOnServer = false
 	}
 
-	affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.paramCols, rawArgs)
+	affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.pkgsn, s.paramCols, rawArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +212,7 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		}
 	}
 
-	return NewResultWithConn(s.conn, affected, isInsertQuery(s.query)), nil
+	return NewResult(affected, 0), nil
 }
 
 // Query executes a prepared query statement with positional arguments (legacy interface).
@@ -206,7 +226,7 @@ func (s *Stmt) Query(args []driver.Value) (driver.Rows, error) {
 
 // QueryContext executes a prepared query statement with context and arguments.
 func (s *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	if s.closed || s.conn == nil || s.conn.session == nil {
+	if s.isClosed() || s.conn == nil || s.conn.session == nil {
 		return nil, ErrConnectionClosed
 	}
 
@@ -217,7 +237,7 @@ func (s *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driv
 }
 
 func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	if s.closed || s.conn == nil || s.conn.session == nil {
+	if s.isClosed() || s.conn == nil || s.conn.session == nil {
 		return nil, ErrConnectionClosed
 	}
 
@@ -243,7 +263,7 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		rawArgs[i] = arg.Value
 	}
 
-	cols, rowsData, err := s.conn.session.QueryWithParams(ctx, s.outputCols, s.paramCols, rawArgs)
+	cols, rowsData, err := s.conn.session.QueryWithParams(ctx, s.pkgsn, s.outputCols, s.paramCols, rawArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -411,12 +431,12 @@ func assignOutParam(dest any, val any) error {
 
 // CheckNamedValue implements driver.NamedValueChecker interface.
 func (s *Stmt) CheckNamedValue(nv *driver.NamedValue) error {
-	return nil
+	return checkNamedValueCommon(nv)
 }
 
 func getSliceLen(arg any) (int, bool) {
 	switch v := arg.(type) {
-	case nil, int, int64, int32, int16, int8, uint, uint64, uint32, uint16, string, float64, float32, bool, time.Time, []byte:
+	case nil, int, int64, int32, int16, int8, uint, uint64, uint32, uint16, string, float64, float32, bool, time.Time, []byte, [16]byte:
 		return 0, false
 
 	case []int:
@@ -453,6 +473,10 @@ func getSliceLen(arg any) (int, bool) {
 		return len(v), true
 	default:
 		val := reflect.ValueOf(arg)
+		// Arrays fixos de uint8 (ex: UUID) são escalares, não batches
+		if val.Kind() == reflect.Array && val.Type().Elem().Kind() == reflect.Uint8 {
+			return 0, false
+		}
 		if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
 			return val.Len(), true
 		}
