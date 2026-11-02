@@ -103,18 +103,24 @@ func TestQueryStream_RowSpanningAndDemandPaging(t *testing.T) {
 }
 
 // TestQueryStream_EarlyClose_EmitsCLSQRY tests that closing an open query stream before ENDQRYRM
-// emits a CLSQRY command on the socket.
+// emits an unchained CLSQRY command (including QRYINSID) followed by an unchained RDBCMM.
 func TestQueryStream_EarlyClose_EmitsCLSQRY(t *testing.T) {
 	all := integerRows(1, 2, 3, 4, 5)
 
 	s, server := pipeSession(t)
 	clsqrySeen := make(chan bool, 1)
+	rdbcmmSeen := make(chan bool, 1)
 
 	go func() {
 		defer close(clsqrySeen)
+		defer close(rdbcmmSeen)
 		for {
-			hdr, cp, _, _, err := ReadDSS(server)
+			hdr, cp, payload, _, err := ReadDSS(server)
 			if err != nil {
+				return
+			}
+			if cp == CodePointCLSQRY && hdr.Chained {
+				// CLSQRY must not be chained with duplicate correlation IDs
 				return
 			}
 			for hdr.Chained {
@@ -132,9 +138,14 @@ func TestQueryStream_EarlyClose_EmitsCLSQRY(t *testing.T) {
 					return
 				}
 			case CodePointCLSQRY:
+				sub, _ := ParseDDMReply(payload)
+				if _, hasInsid := sub[CodePointQRYINSID]; !hasInsid {
+					return
+				}
 				clsqrySeen <- true
-				_, _ = server.Write(replyChain(sqlcard(0, "00000")))
+				_, _ = server.Write(replyChain(endqryrm(), sqlcard(0, "00000")))
 			case CodePointRDBCMM:
+				rdbcmmSeen <- true
 				_, _ = server.Write(replyChain(sqlcard(0, "00000")))
 				return
 			}
@@ -157,10 +168,19 @@ func TestQueryStream_EarlyClose_EmitsCLSQRY(t *testing.T) {
 	select {
 	case seen := <-clsqrySeen:
 		if !seen {
-			t.Fatal("expected CLSQRY codepoint from client on early close")
+			t.Fatal("expected unchained CLSQRY with QRYINSID from client on early close")
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout waiting for CLSQRY on mock server")
+	}
+
+	select {
+	case seen := <-rdbcmmSeen:
+		if !seen {
+			t.Fatal("expected RDBCMM after CLSQRY on early close")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for RDBCMM on mock server")
 	}
 }
 

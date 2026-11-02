@@ -78,9 +78,13 @@ jobs:
         run: |
           set -o pipefail
           go test -v -race -timeout 5m ./... 2>&1 | tee test_output.log || {
+            echo ""
+            echo "================ FAILED TESTS SUMMARY ================"
+            grep -E "(--- FAIL:|FAIL[[:space:]]+github\.com|panic:)" -B 5 -A 20 test_output.log || true
+            echo "======================================================"
             echo "### ❌ Live Tests Failed" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 120 test_output.log >> $GITHUB_STEP_SUMMARY
+            grep -E "(--- FAIL:|FAIL[[:space:]]+github\.com|panic:)" -B 5 -A 25 test_output.log >> $GITHUB_STEP_SUMMARY || tail -n 120 test_output.log >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit 1
           }

@@ -1672,25 +1672,18 @@ func (qs *QueryStream) Close(ctx context.Context) error {
 	if qs.open && !qs.ended && !qs.session.Broken() {
 		qs.session.mu.Lock()
 		clsqry := PackCLSQRY(qs.session.pkgid, qs.session.pkgcnstkn, qs.pkgsn, qs.session.cfg.Database, qs.qryinsid)
-		if qs.session.autoCommit && !qs.committed {
-			_, err := WriteRequestDSS(qs.session.conn, clsqry, qs.cntqryID, false, false)
-			if err == nil {
-				cmm := PackRDBCMM()
-				_, err = WriteRequestDSS(qs.session.conn, cmm, qs.cntqryID, false, true)
-			}
-			if err != nil {
-				closeErr = err
-			} else {
-				_, _ = qs.session.readReplyChain()
-				qs.committed = true
-			}
+		_, err := WriteRequestDSS(qs.session.conn, clsqry, qs.cntqryID, false, true)
+		if err != nil {
+			closeErr = err
 		} else {
-			_, err := WriteRequestDSS(qs.session.conn, clsqry, qs.cntqryID, false, true)
-			if err != nil {
+			_, _ = qs.session.readReplyChain()
+			qs.ended = true
+		}
+		if qs.session.autoCommit && !qs.committed && !qs.session.Broken() {
+			if err := qs.session.commitLocked(); err != nil && closeErr == nil {
 				closeErr = err
-			} else {
-				_, _ = qs.session.readReplyChain()
 			}
+			qs.committed = true
 		}
 		qs.session.mu.Unlock()
 	} else if qs.session.AutoCommit() && !qs.committed && !qs.session.Broken() {

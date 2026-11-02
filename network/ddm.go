@@ -628,22 +628,17 @@ func PackCNTQRY(pkgid, pkgcnstkn string, pkgsn uint16, database string, qryblksz
 // PackCLSQRY builds a CLSQRY (Close Query) DDM command to explicitly close an open server cursor.
 func PackCLSQRY(pkgid, pkgcnstkn string, pkgsn uint16, database string, qryinsid uint64) []byte {
 	pkgLen := pkgnamcsnSize(database, pkgid, pkgcnstkn)
-	insidLen := 0
-	if qryinsid != 0 {
-		insidLen = 12
-	}
-	totalLen := 4 + pkgLen + insidLen
+	totalLen := 4 + pkgLen + 12
 	buf := make([]byte, totalLen)
 	binary.BigEndian.PutUint16(buf[0:2], uint16(totalLen))
 	binary.BigEndian.PutUint16(buf[2:4], uint16(CodePointCLSQRY))
 	offset := 4
 	writePKGNAMCSN(buf[offset:offset+pkgLen], database, pkgid, pkgcnstkn, pkgsn)
 	offset += pkgLen
-	if qryinsid != 0 {
-		binary.BigEndian.PutUint16(buf[offset:offset+2], 12)
-		binary.BigEndian.PutUint16(buf[offset+2:offset+4], uint16(CodePointQRYINSID))
-		binary.BigEndian.PutUint64(buf[offset+4:offset+12], qryinsid)
-	}
+	// QRYINSID: 12 bytes (required at SQLAM Level 11)
+	binary.BigEndian.PutUint16(buf[offset:offset+2], 12)
+	binary.BigEndian.PutUint16(buf[offset+2:offset+4], uint16(CodePointQRYINSID))
+	binary.BigEndian.PutUint64(buf[offset+4:offset+12], qryinsid)
 	return buf
 }
 
