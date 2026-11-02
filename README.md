@@ -48,7 +48,7 @@
 | **Extended Data Types** | Supported | `DECFLOAT(16/34)` (IEEE 754-2008 DPD), `XML` documents, `TIMESTAMP WITH TIME ZONE` |
 | **Graphic & DBCS Types** | Supported | `GRAPHIC`, `VARGRAPHIC`, `LONG VARGRAPHIC`, `DBCLOB`, `CODEUNITS32` |
 | **Batch / Array Parameter DML** | Supported | High-throughput bulk operations with primitive slices (`[]int`, `[]string`, `[]float64`) |
-| **Admin DB Management & APIs** | Supported | `CreateDb()`, `DropDb()`, and `ExecAdminCmd()` (`SYSPROC.ADMIN_CMD`) |
+| **Admin DB Management & APIs** | Supported | `CreateDB()`, `DropDB()`, and `ExecAdminCmd()` (`SYSPROC.ADMIN_CMD`) |
 | **Kerberos SSO & GSSAPI Auth** | Supported | Network directory authentication (`SECMEC 7/11`) via `ccache`, `keytab`, or domain credentials |
 | **Trusted Context & User Switching** | Supported | Microsecond user/tenant identity transition (`SwitchUser`, `WithUser`) on pooled connections |
 | **Client Workstation & Accounting** | Supported | Workload identification & APM registers (`CLIENT APPLNAME`, `WRKSTNNAME`, `USERID`, `ACCTNG`) |
@@ -232,6 +232,19 @@ result, err := db.ExecContext(ctx,
     "INSERT INTO products (id, sku, price) VALUES (?, ?, ?)", 
     productIDs, skus, prices,
 )
+```
+
+### 6. Structured Error Inspection (`*db2.Error`)
+```go
+var dbErr *db2.Error
+if errors.As(err, &dbErr) {
+    fmt.Printf("Db2 SQLCODE: %d, SQLSTATE: %s: %s\n", dbErr.SQLCode, dbErr.SQLState, dbErr.Message)
+}
+
+// Or test standard driver sentinels:
+if errors.Is(err, db2.ErrAuthenticationFailed) {
+    log.Println("Invalid username/password or SECMEC failure")
+}
 ```
 
 ---

@@ -90,17 +90,17 @@ func main() {
 		fmt.Printf("   📊 SYSCAT.TABLES: Linhas estimadas (CARD) = %d, STATS_TIME = %s\n", card, strings.TrimSpace(statsStr))
 	}
 
-	// 6. Validar funções de gerenciamento CreateDb e DropDb
-	fmt.Println("\n6. Demonstrando APIs de alto nível CreateDb e DropDb...")
+	// 6. Validar funções de gerenciamento CreateDB e DropDB
+	fmt.Println("\n6. Demonstrando APIs de alto nível CreateDB e DropDB...")
 	fmt.Println("   🧪 Testando validação defensiva de parâmetros inválidos...")
-	if _, err := db2.CreateDb("", connStr); err != nil {
-		fmt.Printf("   ✅ CreateDb com nome vazio rejeitado corretamente: %v\n", err)
+	if err := db2.CreateDB(ctx, "", connStr); err != nil {
+		fmt.Printf("   ✅ CreateDB com nome vazio rejeitado corretamente: %v\n", err)
 	}
-	if _, err := db2.CreateDb("NEWDB", connStr, "invalidOption"); err != nil {
+	if err := db2.CreateDB(ctx, "NEWDB", connStr, "invalidOption"); err != nil {
 		fmt.Printf("   ✅ Opção mal formatada rejeitada corretamente: %v\n", err)
 	}
-	if _, err := db2.DropDb("", connStr); err != nil {
-		fmt.Printf("   ✅ DropDb com nome vazio rejeitado corretamente: %v\n", err)
+	if err := db2.DropDB(ctx, "", connStr); err != nil {
+		fmt.Printf("   ✅ DropDB com nome vazio rejeitado corretamente: %v\n", err)
 	}
 
 	// 7. Limpeza

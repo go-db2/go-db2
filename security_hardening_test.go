@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 // AC-1: Downgrade protection (SECMEC 9 -> 3)
@@ -36,13 +36,13 @@ func TestSecurity_DowngradeRefusal(t *testing.T) {
 		_, _ = readRequestChain(conn)
 
 		// Respond ACCSECRD offering downgraded SECMEC 3
-		accsecRdObj := network.PackDDMObject(network.CodePointACCSECRD, network.PackUint16(network.CodePointSECMEC, network.SecMecUSRIDPWD))
-		hdr := network.BuildDSSHeader(len(accsecRdObj), network.DSSTypeReply, false, false, false, 1)
+		accsecRdObj := drda.PackDDMObject(drda.CodePointACCSECRD, drda.PackUint16(drda.CodePointSECMEC, drda.SecMecUSRIDPWD))
+		hdr := drda.BuildDSSHeader(len(accsecRdObj), drda.DSSTypeReply, false, false, false, 1)
 		_, _ = conn.Write(append(hdr, accsecRdObj...))
 
 		// Check if client sends SECCHK (it must NOT)
 		cp, ok := readRequestChain(conn)
-		if ok && cp == network.CodePointSECCHK {
+		if ok && cp == drda.CodePointSECCHK {
 			secchkReceived.Store(true)
 		}
 	}()
@@ -53,7 +53,7 @@ func TestSecurity_DowngradeRefusal(t *testing.T) {
 		t.Fatalf("ParseDSN failed: %v", err)
 	}
 
-	session := network.NewSession(cfg.ToSessionConfig())
+	session := drda.NewSession(cfg.toSessionConfig())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -90,10 +90,10 @@ func TestSecurity_SECTKNValidation(t *testing.T) {
 		_, _ = readRequestChain(conn)
 
 		// Respond ACCSECRD with SECMEC 9 but empty/short SECTKN (e.g. 5 bytes instead of >= 20)
-		body := network.PackUint16(network.CodePointSECMEC, network.SecMecEUSRIDPWD)
-		body = append(body, network.PackBytes(network.CodePointSECTKN, []byte{0x01, 0x02, 0x03, 0x04, 0x05})...)
-		accsecRdObj := network.PackDDMObject(network.CodePointACCSECRD, body)
-		hdr := network.BuildDSSHeader(len(accsecRdObj), network.DSSTypeReply, false, false, false, 1)
+		body := drda.PackUint16(drda.CodePointSECMEC, drda.SecMecEUSRIDPWD)
+		body = append(body, drda.PackBytes(drda.CodePointSECTKN, []byte{0x01, 0x02, 0x03, 0x04, 0x05})...)
+		accsecRdObj := drda.PackDDMObject(drda.CodePointACCSECRD, body)
+		hdr := drda.BuildDSSHeader(len(accsecRdObj), drda.DSSTypeReply, false, false, false, 1)
 		_, _ = conn.Write(append(hdr, accsecRdObj...))
 	}()
 
@@ -103,7 +103,7 @@ func TestSecurity_SECTKNValidation(t *testing.T) {
 		t.Fatalf("ParseDSN failed: %v", err)
 	}
 
-	session := network.NewSession(cfg.ToSessionConfig())
+	session := drda.NewSession(cfg.toSessionConfig())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -120,7 +120,7 @@ func TestSecurity_SECTKNValidation(t *testing.T) {
 // AC-3: Plaintext without TLS block
 func TestSecurity_PlaintextWithoutTLS_Blocked(t *testing.T) {
 	// 1. Blocked via Session.Connect directly
-	session := network.NewSession(network.SessionConfig{
+	session := drda.NewSession(drda.SessionConfig{
 		Host:               "127.0.0.1",
 		Port:               50000,
 		Database:           "SAMPLE",
@@ -139,7 +139,7 @@ func TestSecurity_PlaintextWithoutTLS_Blocked(t *testing.T) {
 	}
 
 	// 2. Allowed when AllowPlaintextAuth is true
-	sessionAllowed := network.NewSession(network.SessionConfig{
+	sessionAllowed := drda.NewSession(drda.SessionConfig{
 		Host:               "127.0.0.1",
 		Port:               1, // Non-listening port, just to verify it passes auth check and fails on dial
 		Database:           "SAMPLE",
@@ -174,12 +174,12 @@ func TestSecurity_KerberosDisabled(t *testing.T) {
 		_, _ = readRequestChain(conn)
 
 		// Respond ACCSECRD with SECMEC 7
-		accsecRdObj := network.PackDDMObject(network.CodePointACCSECRD, network.PackUint16(network.CodePointSECMEC, 7))
-		hdr := network.BuildDSSHeader(len(accsecRdObj), network.DSSTypeReply, false, false, false, 1)
+		accsecRdObj := drda.PackDDMObject(drda.CodePointACCSECRD, drda.PackUint16(drda.CodePointSECMEC, 7))
+		hdr := drda.BuildDSSHeader(len(accsecRdObj), drda.DSSTypeReply, false, false, false, 1)
 		_, _ = conn.Write(append(hdr, accsecRdObj...))
 	}()
 
-	cfg := network.SessionConfig{
+	cfg := drda.SessionConfig{
 		Host:               "127.0.0.1",
 		Port:               listener.Addr().(*net.TCPAddr).Port,
 		Database:           "SAMPLE",
@@ -189,7 +189,7 @@ func TestSecurity_KerberosDisabled(t *testing.T) {
 		Timeout:            2 * time.Second,
 	}
 
-	session := network.NewSession(cfg)
+	session := drda.NewSession(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -221,7 +221,7 @@ func TestSecurity_TLSHandshakeContextCancellation(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}()
 
-	cfg := network.SessionConfig{
+	cfg := drda.SessionConfig{
 		Host:      "127.0.0.1",
 		Port:      listener.Addr().(*net.TCPAddr).Port,
 		Database:  "SAMPLE",
@@ -232,7 +232,7 @@ func TestSecurity_TLSHandshakeContextCancellation(t *testing.T) {
 		Timeout:   10 * time.Second,
 	}
 
-	session := network.NewSession(cfg)
+	session := drda.NewSession(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -252,7 +252,7 @@ func TestSecurity_TLSHandshakeContextCancellation(t *testing.T) {
 // AC-8: Ping idempotency in transaction (no COMMIT issued, EXCSAT used)
 func TestSecurity_PingIdempotenceInTransaction(t *testing.T) {
 	var mu sync.Mutex
-	var receivedCodepoints []network.CodePoint
+	var receivedCodepoints []drda.CodePoint
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -281,9 +281,9 @@ func TestSecurity_PingIdempotenceInTransaction(t *testing.T) {
 			mu.Unlock()
 
 			switch cp {
-			case network.CodePointEXCSAT:
+			case drda.CodePointEXCSAT:
 				_ = writeEXCSATRD(conn)
-			case network.CodePointRDBCMM:
+			case drda.CodePointRDBCMM:
 				_ = writeSQLCARDOK(conn)
 			default:
 				_ = writeSQLCARDOK(conn)
@@ -323,10 +323,10 @@ func TestSecurity_PingIdempotenceInTransaction(t *testing.T) {
 	mu.Lock()
 	var hasPingEXCSAT bool
 	for _, cp := range receivedCodepoints {
-		if cp == network.CodePointEXCSAT {
+		if cp == drda.CodePointEXCSAT {
 			hasPingEXCSAT = true
 		}
-		if cp == network.CodePointRDBCMM {
+		if cp == drda.CodePointRDBCMM {
 			mu.Unlock()
 			t.Fatalf("Ping inside transaction issued RDBCMM (COMMIT)! Received: 0x%04X", cp)
 		}
@@ -346,7 +346,7 @@ func TestSecurity_PingIdempotenceInTransaction(t *testing.T) {
 	mu.Lock()
 	var hasCommit bool
 	for _, cp := range receivedCodepoints {
-		if cp == network.CodePointRDBCMM {
+		if cp == drda.CodePointRDBCMM {
 			hasCommit = true
 		}
 	}

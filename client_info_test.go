@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 func TestClientInfoContext(t *testing.T) {
@@ -135,8 +135,8 @@ func TestSetClientInfo_Validation(t *testing.T) {
 
 func TestSetClientInfo_CorrelationToken(t *testing.T) {
 	ctx := context.Background()
-	sess := network.NewSession(network.SessionConfig{Database: "TESTDB"})
-	conn := NewConn(sess, &Config{Database: "TESTDB"})
+	sess := drda.NewSession(drda.SessionConfig{Database: "TESTDB"})
+	conn := newConn(sess, &Config{Database: "TESTDB"})
 
 	info := ClientInfo{
 		ApplicationName:  "audit-service",
@@ -155,8 +155,8 @@ func TestSetClientInfo_CorrelationToken(t *testing.T) {
 }
 
 func TestApplyContextMetadata_SetClientInfoError(t *testing.T) {
-	sess := network.NewSession(network.SessionConfig{Database: "TESTDB"})
-	conn := NewConn(sess, &Config{Database: "TESTDB"})
+	sess := drda.NewSession(drda.SessionConfig{Database: "TESTDB"})
+	conn := newConn(sess, &Config{Database: "TESTDB"})
 
 	// Close connection so SetClientInfo will fail
 	_ = conn.Close()

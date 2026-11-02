@@ -75,95 +75,121 @@ func buildDropDbSQL(dbname string) string {
 	return "DROP DATABASE " + quoteIdentifier(dbname)
 }
 
-// CreateDb creates a new database on the IBM Db2 server specified in connStr.
+// CreateDB creates a new database on the IBM Db2 server specified in connStr.
 // Optional options can be provided in "key=value" format (e.g. "codeset=UTF-8", "territory=US", "mode=...").
-func CreateDb(dbname string, connStr string, options ...string) (bool, error) {
+func CreateDB(ctx context.Context, dbname string, connStr string, options ...string) error {
 	if err := validateSQLIdentifier(dbname, "database name"); err != nil {
-		return false, err
+		return err
 	}
 	if strings.TrimSpace(connStr) == "" {
-		return false, fmt.Errorf("db2: connection string cannot be empty")
+		return fmt.Errorf("db2: connection string cannot be empty")
 	}
 
 	var codeset, territory, mode string
 	for _, opt := range options {
 		parts := strings.SplitN(opt, "=", 2)
 		if len(parts) != 2 {
-			return false, fmt.Errorf("db2: invalid option format %q (expected key=value)", opt)
+			return fmt.Errorf("db2: invalid option format %q (expected key=value)", opt)
 		}
 		key := strings.ToLower(strings.TrimSpace(parts[0]))
 		val := strings.TrimSpace(parts[1])
 		switch key {
 		case "codeset":
 			if err := validateSQLIdentifier(val, "codeset"); err != nil {
-				return false, err
+				return err
 			}
 			codeset = val
 		case "territory":
 			if err := validateSQLIdentifier(val, "territory"); err != nil {
-				return false, err
+				return err
 			}
 			territory = val
 		case "mode":
 			if err := validateSQLIdentifier(val, "mode"); err != nil {
-				return false, err
+				return err
 			}
 			mode = val
 		default:
-			return false, fmt.Errorf("db2: unsupported option %q", key)
+			return fmt.Errorf("db2: unsupported option %q", key)
 		}
 	}
 
 	db, err := sql.Open("db2", connStr)
 	if err != nil {
-		return false, fmt.Errorf("db2: failed to open connection: %w", err)
+		return fmt.Errorf("db2: failed to open connection: %w", err)
 	}
 	defer db.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultAdminTimeout)
-	defer cancel()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultAdminTimeout)
+		defer cancel()
+	}
 
 	createSQL := buildCreateDbSQL(dbname, codeset, territory, mode)
 	_, err = db.ExecContext(ctx, createSQL)
 	if err != nil {
 		// Also try via SYSPROC.ADMIN_CMD if direct DDL requires administrative routing
 		if _, adminErr := ExecAdminCmd(ctx, db, createSQL); adminErr == nil {
-			return true, nil
+			return nil
 		}
-		return false, fmt.Errorf("db2: failed to create database %q: %w", dbname, err)
+		return fmt.Errorf("db2: failed to create database %q: %w", dbname, err)
 	}
 
-	return true, nil
+	return nil
 }
 
-// DropDb drops the specified database from the IBM Db2 server.
-func DropDb(dbname string, connStr string) (bool, error) {
+// CreateDb is a backwards-compatible alias for CreateDB.
+// Deprecated: Use CreateDB with context.Context.
+func CreateDb(dbname string, connStr string, options ...string) (bool, error) {
+	err := CreateDB(context.Background(), dbname, connStr, options...)
+	return err == nil, err
+}
+
+// DropDB drops the specified database from the IBM Db2 server.
+func DropDB(ctx context.Context, dbname string, connStr string) error {
 	if err := validateSQLIdentifier(dbname, "database name"); err != nil {
-		return false, err
+		return err
 	}
 	if strings.TrimSpace(connStr) == "" {
-		return false, fmt.Errorf("db2: connection string cannot be empty")
+		return fmt.Errorf("db2: connection string cannot be empty")
 	}
 
 	db, err := sql.Open("db2", connStr)
 	if err != nil {
-		return false, fmt.Errorf("db2: failed to open connection: %w", err)
+		return fmt.Errorf("db2: failed to open connection: %w", err)
 	}
 	defer db.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultAdminTimeout)
-	defer cancel()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultAdminTimeout)
+		defer cancel()
+	}
 
 	dropSQL := buildDropDbSQL(dbname)
 	_, err = db.ExecContext(ctx, dropSQL)
 	if err != nil {
 		if _, adminErr := ExecAdminCmd(ctx, db, dropSQL); adminErr == nil {
-			return true, nil
+			return nil
 		}
-		return false, fmt.Errorf("db2: failed to drop database %q: %w", dbname, err)
+		return fmt.Errorf("db2: failed to drop database %q: %w", dbname, err)
 	}
 
-	return true, nil
+	return nil
+}
+
+// DropDb is a backwards-compatible alias for DropDB.
+// Deprecated: Use DropDB with context.Context.
+func DropDb(dbname string, connStr string) (bool, error) {
+	err := DropDB(context.Background(), dbname, connStr)
+	return err == nil, err
 }
 
 // ExecAdminCmd executes an administrative command via Db2's SYSPROC.ADMIN_CMD stored procedure.

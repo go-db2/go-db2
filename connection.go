@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 // Conn implements the database/sql/driver.Conn interface for IBM Db2.
 type Conn struct {
-	session      *network.Session
+	session      *drda.Session
 	cfg          *Config
 	sections     *sectionManager
 	hasCustomIso bool
@@ -24,8 +24,8 @@ type Conn struct {
 	closed       bool
 }
 
-// NewConn wraps a connected network session into a database/sql driver.Conn.
-func NewConn(session *network.Session, cfg *Config) *Conn {
+// newConn wraps a connected network session into a database/sql driver.Conn.
+func newConn(session *drda.Session, cfg *Config) *Conn {
 	return &Conn{
 		session:  session,
 		cfg:      cfg,
@@ -92,7 +92,7 @@ func (c *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, e
 		return nil, err
 	}
 
-	return NewStmt(c, query, outCols, paramCols, sec), nil
+	return newStmt(c, query, outCols, paramCols, sec), nil
 }
 
 // Exec executes a query that doesn't return rows (legacy interface).
@@ -122,7 +122,7 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		if err != nil {
 			return nil, err
 		}
-		return NewResult(affected, 0), nil
+		return newResult(affected, 0), nil
 	}
 
 	// Prepare and execute with parameters
@@ -137,7 +137,7 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		return nil, err
 	}
 
-	stmt := NewStmt(c, query, outCols, paramCols, sec)
+	stmt := newStmt(c, query, outCols, paramCols, sec)
 	defer stmt.Close()
 	return stmt.execContextLocked(ctx, args)
 }
@@ -172,13 +172,13 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 				return nil, err
 			}
 			if len(sets) == 0 {
-				return NewRows(nil, nil), nil
+				return newRows(nil, nil), nil
 			}
-			resultSets := make([]ResultSet, len(sets))
+			resultSets := make([]resultSet, len(sets))
 			for i, s := range sets {
-				resultSets[i] = ResultSet{Columns: s.Columns, Data: s.Data}
+				resultSets[i] = resultSet{columns: s.Columns, data: s.Data}
 			}
-			return NewMultiRows(resultSets), nil
+			return newMultiRows(resultSets), nil
 		}
 
 		if !isQueryStatement(query) {
@@ -186,7 +186,7 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			if err != nil {
 				return nil, err
 			}
-			return NewRows(nil, nil), nil
+			return newRows(nil, nil), nil
 		}
 
 		cols, rowsData, stream, err := c.session.QueryStreamDirect(ctx, query)
@@ -194,7 +194,7 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			return nil, err
 		}
 
-		return NewStreamingRows(cols, rowsData, stream, nil), nil
+		return newStreamingRows(cols, rowsData, stream, nil), nil
 	}
 
 	// Prepare and query with parameters
@@ -209,7 +209,7 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		return nil, err
 	}
 
-	stmt := NewStmt(c, query, outCols, paramCols, sec)
+	stmt := newStmt(c, query, outCols, paramCols, sec)
 	stmt.isTemp = true
 	return stmt.queryContextLocked(ctx, args)
 }

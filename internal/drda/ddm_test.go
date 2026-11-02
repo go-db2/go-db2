@@ -1,0 +1,1059 @@
+package drda
+
+import (
+	"bytes"
+	"encoding/binary"
+	"testing"
+
+	"github.com/go-db2/go-db2/internal/codec"
+)
+
+func TestPackEXCSAT(t *testing.T) {
+	mgrLevels := DefaultManagerLevels()
+	excsatBytes, err := PackEXCSAT("go-db2", "myhost", "go-db2-v0.1", "go-db2", mgrLevels)
+	if err != nil {
+		t.Fatalf("PackEXCSAT failed: %v", err)
+	}
+
+	if len(excsatBytes) < 4 {
+		t.Fatalf("PackEXCSAT output too short: %d", len(excsatBytes))
+	}
+
+	totalLen := binary.BigEndian.Uint16(excsatBytes[0:2])
+	if int(totalLen) != len(excsatBytes) {
+		t.Errorf("EXCSAT length mismatch: header says %d, actual is %d", totalLen, len(excsatBytes))
+	}
+
+	cp := CodePoint(binary.BigEndian.Uint16(excsatBytes[2:4]))
+	if cp != CodePointEXCSAT {
+		t.Errorf("expected Codepoint EXCSAT (0x1041), got %v", cp)
+	}
+
+	// Parse sub-objects
+	subObjects, err := ParseDDMReply(excsatBytes[4:])
+	if err != nil {
+		t.Fatalf("ParseDDMReply failed on EXCSAT payload: %v", err)
+	}
+
+	// Verify EXTNAM
+	if extNameBytes, ok := subObjects[CodePointEXTNAM]; !ok {
+		t.Errorf("missing EXTNAM in EXCSAT")
+	} else if decoded := codec.DecodeCP500(extNameBytes); decoded != "go-db2" {
+		t.Errorf("EXTNAM = %q, want 'go-db2'", decoded)
+	}
+
+	// Verify SRVNAM
+	if srvNameBytes, ok := subObjects[CodePointSRVNAM]; !ok {
+		t.Errorf("missing SRVNAM in EXCSAT")
+	} else if decoded := codec.DecodeCP500(srvNameBytes); decoded != "myhost" {
+		t.Errorf("SRVNAM = %q, want 'myhost'", decoded)
+	}
+
+	// Verify MGRLVLLS
+	if mgrBytes, ok := subObjects[CodePointMGRLVLLS]; !ok {
+		t.Errorf("missing MGRLVLLS in EXCSAT")
+	} else {
+		if len(mgrBytes) != len(mgrLevels)*4 {
+			t.Errorf("MGRLVLLS length = %d, want %d", len(mgrBytes), len(mgrLevels)*4)
+		}
+	}
+}
+
+func TestPackACCSEC(t *testing.T) {
+	secToken := []byte{0x01, 0x02, 0x03, 0x04}
+	accsecBytes, err := PackACCSEC("TESTDB", SecMecUSRIDPWD, secToken)
+	if err != nil {
+		t.Fatalf("PackACCSEC failed: %v", err)
+	}
+
+	cp := CodePoint(binary.BigEndian.Uint16(accsecBytes[2:4]))
+	if cp != CodePointACCSEC {
+		t.Errorf("expected Codepoint ACCSEC (0x106D), got %v", cp)
+	}
+
+	subObjects, err := ParseDDMReply(accsecBytes[4:])
+	if err != nil {
+		t.Fatalf("ParseDDMReply failed on ACCSEC: %v", err)
+	}
+
+	// Verify SECMEC
+	if secmecBytes, ok := subObjects[CodePointSECMEC]; !ok {
+		t.Errorf("missing SECMEC in ACCSEC")
+	} else {
+		secmecVal := binary.BigEndian.Uint16(secmecBytes)
+		if secmecVal != SecMecUSRIDPWD {
+			t.Errorf("SECMEC = %d, want %d", secmecVal, SecMecUSRIDPWD)
+		}
+	}
+
+	// Verify RDBNAM
+	if rdbBytes, ok := subObjects[CodePointRDBNAM]; !ok {
+		t.Errorf("missing RDBNAM in ACCSEC")
+	} else if decoded := codec.DecodeCP500(rdbBytes); decoded != "TESTDB" {
+		t.Errorf("RDBNAM = %q, want 'TESTDB'", decoded)
+	}
+
+	// Verify SECTKN
+	if sectknBytes, ok := subObjects[CodePointSECTKN]; !ok {
+		t.Errorf("missing SECTKN in ACCSEC")
+	} else if !bytes.Equal(sectknBytes, secToken) {
+		t.Errorf("SECTKN mismatch: got %X, want %X", sectknBytes, secToken)
+	}
+}
+
+func makeQRYDSCPayload(numFields int) []byte {
+	var buf []byte
+	for i := 0; i < numFields; {
+		chunkSize := numFields - i
+		if chunkSize > 84 {
+			chunkSize = 84
+		}
+		groupLen := (1 + chunkSize) * 3
+		buf = append(buf, byte(groupLen), 0x76, 0xD0)
+		for j := 0; j < chunkSize; j++ {
+			fieldIdx := i + j
+			buf = append(buf, byte(fieldIdx%256), 0x01, 0x02)
+		}
+		i += chunkSize
+	}
+	return buf
+}
+
+func TestParseQRYDSC(t *testing.T) {
+	t.Run("SingleGroup_5Fields", func(t *testing.T) {
+		payload := makeQRYDSCPayload(5)
+		fields, err := ParseQRYDSC(payload)
+		if err != nil {
+			t.Fatalf("ParseQRYDSC failed: %v", err)
+		}
+		if len(fields) != 5 {
+			t.Fatalf("expected 5 fields, got %d", len(fields))
+		}
+		for i, f := range fields {
+			if f.Type != byte(i%256) {
+				t.Errorf("field %d: expected type %d, got %d", i, i%256, f.Type)
+			}
+			if len(f.PS) != 2 || f.PS[0] != 0x01 || f.PS[1] != 0x02 {
+				t.Errorf("field %d: unexpected PS %v", i, f.PS)
+			}
+		}
+	})
+
+	t.Run("MultiGroup_100Fields", func(t *testing.T) {
+		payload := makeQRYDSCPayload(100)
+		fields, err := ParseQRYDSC(payload)
+		if err != nil {
+			t.Fatalf("ParseQRYDSC failed for 100 fields: %v", err)
+		}
+		if len(fields) != 100 {
+			t.Fatalf("expected 100 fields, got %d", len(fields))
+		}
+		for i, f := range fields {
+			if f.Type != byte(i%256) {
+				t.Errorf("field %d: expected type %d, got %d", i, i%256, f.Type)
+			}
+		}
+	})
+}
+
+func BenchmarkIsPrintableUTF8(b *testing.B) {
+	benchmarks := []struct {
+		name  string
+		input []byte
+	}{
+		{"ASCII_Printable", []byte("CUSTOMER_ID_123456789_COLUMN_NAME")},
+		{"ASCII_Control", []byte("CUSTOMER_ID\n123456789_COLUMN_NAME")},
+		{"NonASCII_UTF8", []byte("München_København_日本語_🚀")},
+		{"Mixed_NonASCII_Control", []byte("München\x01World")},
+		{"Invalid_UTF8", []byte{0xFF, 0xFE, 0xFD, 0xFC}},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = isPrintableUTF8(bm.input)
+			}
+		})
+	}
+}
+
+func packDDMString(s string) []byte {
+	buf := make([]byte, 2+len(s))
+	binary.BigEndian.PutUint16(buf[0:2], uint16(len(s)))
+	copy(buf[2:], s)
+	return buf
+}
+
+func TestParseStringBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		wantRet  []byte
+		wantRest []byte
+	}{
+		{
+			name:     "NonEmptyString",
+			input:    append(packDDMString("FOO"), []byte("REMAINDER")...),
+			wantRet:  []byte("FOO"),
+			wantRest: []byte("REMAINDER"),
+		},
+		{
+			name:     "EmptyString",
+			input:    append(packDDMString(""), []byte("REMAINDER")...),
+			wantRet:  nil,
+			wantRest: []byte("REMAINDER"),
+		},
+		{
+			name:     "TruncatedHeader_LessThan2Bytes",
+			input:    []byte{0x00},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "TruncatedPayload_DeclaredLenExceedsSlice",
+			input:    []byte{0x00, 0x0A, 'A', 'B'},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "NilInput",
+			input:    nil,
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "EmptySliceInput",
+			input:    []byte{},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRet, gotRest := parseStringBytes(tt.input)
+			if !bytes.Equal(gotRet, tt.wantRet) {
+				t.Errorf("parseStringBytes() gotRet = %v (%q), want %v (%q)", gotRet, gotRet, tt.wantRet, tt.wantRet)
+			}
+			if !bytes.Equal(gotRest, tt.wantRest) {
+				t.Errorf("parseStringBytes() gotRest = %v (%q), want %v (%q)", gotRest, gotRest, tt.wantRest, tt.wantRest)
+			}
+		})
+	}
+}
+
+func TestSkipString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		wantRest []byte
+	}{
+		{
+			name:     "NonEmptyString",
+			input:    append(packDDMString("SKIP_ME"), []byte("REST")...),
+			wantRest: []byte("REST"),
+		},
+		{
+			name:     "EmptyString",
+			input:    append(packDDMString(""), []byte("REST")...),
+			wantRest: []byte("REST"),
+		},
+		{
+			name:     "TruncatedHeader",
+			input:    []byte{0x00},
+			wantRest: nil,
+		},
+		{
+			name:     "TruncatedPayload",
+			input:    []byte{0x00, 0x08, 'X'},
+			wantRest: nil,
+		},
+		{
+			name:     "NilInput",
+			input:    nil,
+			wantRest: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRest := skipString(tt.input)
+			if !bytes.Equal(gotRest, tt.wantRest) {
+				t.Errorf("skipString() = %v (%q), want %v (%q)", gotRest, gotRest, tt.wantRest, tt.wantRest)
+			}
+		})
+	}
+}
+
+func TestParseNameBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		wantRet  []byte
+		wantRest []byte
+	}{
+		{
+			name:     "FirstStringNonEmpty_SecondStringNonEmpty",
+			input:    append(append(packDDMString("PRIMARY"), packDDMString("SECONDARY")...), []byte("EXTRA")...),
+			wantRet:  []byte("PRIMARY"),
+			wantRest: []byte("EXTRA"),
+		},
+		{
+			name:     "FirstStringNonEmpty_SecondStringEmpty",
+			input:    append(append(packDDMString("PRIMARY"), packDDMString("")...), []byte("EXTRA")...),
+			wantRet:  []byte("PRIMARY"),
+			wantRest: []byte("EXTRA"),
+		},
+		{
+			name:     "FirstStringEmpty_SecondStringNonEmpty",
+			input:    append(append(packDDMString(""), packDDMString("FALLBACK")...), []byte("EXTRA")...),
+			wantRet:  []byte("FALLBACK"),
+			wantRest: []byte("EXTRA"),
+		},
+		{
+			name:     "BothStringsEmpty",
+			input:    append(append(packDDMString(""), packDDMString("")...), []byte("EXTRA")...),
+			wantRet:  nil,
+			wantRest: []byte("EXTRA"),
+		},
+		{
+			name:     "TruncatedFirstStringHeader",
+			input:    []byte{0x00},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "TruncatedFirstStringPayload",
+			input:    []byte{0x00, 0x05, 'A'},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "FirstStringEmpty_TruncatedSecondStringHeader",
+			input:    append(packDDMString(""), []byte{0x00}...),
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "FirstStringEmpty_TruncatedSecondStringPayload",
+			input:    append(packDDMString(""), []byte{0x00, 0x0A, 'B'}...),
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "NilInput",
+			input:    nil,
+			wantRet:  nil,
+			wantRest: nil,
+		},
+		{
+			name:     "EmptySliceInput",
+			input:    []byte{},
+			wantRet:  nil,
+			wantRest: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRet, gotRest := parseNameBytes(tt.input)
+			if !bytes.Equal(gotRet, tt.wantRet) {
+				t.Errorf("parseNameBytes() gotRet = %v (%q), want %v (%q)", gotRet, gotRet, tt.wantRet, tt.wantRet)
+			}
+			if !bytes.Equal(gotRest, tt.wantRest) {
+				t.Errorf("parseNameBytes() gotRest = %v (%q), want %v (%q)", gotRest, gotRest, tt.wantRest, tt.wantRest)
+			}
+		})
+	}
+}
+
+func TestSkipName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		wantRest []byte
+	}{
+		{
+			name:     "TwoValidStrings",
+			input:    append(append(packDDMString("FIRST"), packDDMString("SECOND")...), []byte("REMAINDER")...),
+			wantRest: []byte("REMAINDER"),
+		},
+		{
+			name:     "FirstEmpty_SecondValid",
+			input:    append(append(packDDMString(""), packDDMString("SECOND")...), []byte("REMAINDER")...),
+			wantRest: []byte("REMAINDER"),
+		},
+		{
+			name:     "BothEmptyStrings",
+			input:    append(append(packDDMString(""), packDDMString("")...), []byte("REMAINDER")...),
+			wantRest: []byte("REMAINDER"),
+		},
+		{
+			name:     "TruncatedFirstHeader",
+			input:    []byte{0x00},
+			wantRest: nil,
+		},
+		{
+			name:     "TruncatedSecondHeader",
+			input:    append(packDDMString("FIRST"), []byte{0x00}...),
+			wantRest: nil,
+		},
+		{
+			name:     "NilInput",
+			input:    nil,
+			wantRest: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRest := skipName(tt.input)
+			if !bytes.Equal(gotRest, tt.wantRest) {
+				t.Errorf("skipName() = %v (%q), want %v (%q)", gotRest, gotRest, tt.wantRest, tt.wantRest)
+			}
+		})
+	}
+}
+
+func TestIsPrintableUTF8(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		expected bool
+	}{
+		{
+			name:     "Nil slice",
+			input:    nil,
+			expected: true,
+		},
+		{
+			name:     "Empty slice",
+			input:    []byte{},
+			expected: true,
+		},
+		{
+			name:     "Printable ASCII string",
+			input:    []byte("Hello World! 123 #$%"),
+			expected: true,
+		},
+		{
+			name:     "ASCII control character NUL",
+			input:    []byte("Hello\x00World"),
+			expected: false,
+		},
+		{
+			name:     "ASCII control character BEL",
+			input:    []byte("Hello\x07World"),
+			expected: false,
+		},
+		{
+			name:     "ASCII control character ESC",
+			input:    []byte("Hello\x1bWorld"),
+			expected: false,
+		},
+		{
+			name:     "ASCII control character DEL",
+			input:    []byte("Hello\x7fWorld"),
+			expected: false,
+		},
+		{
+			name:     "ASCII whitespace newline",
+			input:    []byte("Hello\nWorld"),
+			expected: false,
+		},
+		{
+			name:     "ASCII whitespace tab",
+			input:    []byte("Hello\tWorld"),
+			expected: false,
+		},
+		{
+			name:     "ASCII whitespace carriage return",
+			input:    []byte("Hello\rWorld"),
+			expected: false,
+		},
+		{
+			name:     "C1 Unicode control character NEL (U+0085)",
+			input:    []byte("Hello\u0085World"),
+			expected: false,
+		},
+		{
+			name:     "C1 Unicode control character (U+0090)",
+			input:    []byte("Hello\u0090World"),
+			expected: false,
+		},
+		{
+			name:     "Non-ASCII printable UTF-8 Latin/Umlauts",
+			input:    []byte("München / København / Côte d'Ivoire"),
+			expected: true,
+		},
+		{
+			name:     "Non-ASCII printable UTF-8 CJK",
+			input:    []byte("日本語 / 中文 / 한국어"),
+			expected: true,
+		},
+		{
+			name:     "Non-ASCII printable UTF-8 Emojis and Symbols",
+			input:    []byte("🚀 Db2 Go Driver ✨ 🗄️"),
+			expected: true,
+		},
+		{
+			name:     "Mixed non-ASCII printable with ASCII control char",
+			input:    []byte("München\x01World"),
+			expected: false,
+		},
+		{
+			name:     "Non-ASCII printable with trailing ASCII control char",
+			input:    []byte("é\x01"),
+			expected: false,
+		},
+		{
+			name:     "Invalid UTF-8 truncated multibyte sequence",
+			input:    []byte{0xC3},
+			expected: false,
+		},
+		{
+			name:     "Invalid UTF-8 start byte 0xFF",
+			input:    []byte{0xFF, 0xFE},
+			expected: false,
+		},
+		{
+			name:     "Invalid UTF-8 unexpected continuation byte",
+			input:    []byte{0x80, 0x81},
+			expected: false,
+		},
+		{
+			name:     "Invalid UTF-8 overlong sequence",
+			input:    []byte{0xE0, 0x80, 0x80},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isPrintableUTF8(tt.input)
+			if got != tt.expected {
+				t.Errorf("isPrintableUTF8(%q) = %v, want %v", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestPackPKGNAMCSN(t *testing.T) {
+	pkgBytes := PackPKGNAMCSN("SAMPLE", "SYSH200", "TOKEN12", 1)
+	if len(pkgBytes) < 4 {
+		t.Fatalf("PackPKGNAMCSN output too short: %d", len(pkgBytes))
+	}
+
+	totalLen := binary.BigEndian.Uint16(pkgBytes[0:2])
+	if int(totalLen) != len(pkgBytes) {
+		t.Errorf("PKGNAMCSN length mismatch: header says %d, actual is %d", totalLen, len(pkgBytes))
+	}
+
+	cp := CodePoint(binary.BigEndian.Uint16(pkgBytes[2:4]))
+	if cp != CodePointPKGNAMCSN {
+		t.Errorf("expected Codepoint PKGNAMCSN (0x2113), got %v", cp)
+	}
+
+	payload := pkgBytes[4:]
+	expectedPayload := []byte("SAMPLE            " + "NULLID            " + "SYSH200           " + " TOKEN12")
+	expectedPayload = append(expectedPayload, 0x00, 0x01) // uint16(1)
+
+	if !bytes.Equal(payload, expectedPayload) {
+		t.Errorf("payload mismatch:\ngot:  %q\nwant: %q", payload, expectedPayload)
+	}
+
+	// Test with empty consistency token
+	pkgBytesEmptyToken := PackPKGNAMCSN("SAMPLE", "SYSH200", "", 1)
+	payloadEmptyToken := pkgBytesEmptyToken[4:]
+	expectedEmptyTokenPayload := []byte("SAMPLE            " + "NULLID            " + "SYSH200           ")
+	expectedEmptyTokenPayload = append(expectedEmptyTokenPayload, []byte{0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01}...)
+	expectedEmptyTokenPayload = append(expectedEmptyTokenPayload, 0x00, 0x01)
+
+	if !bytes.Equal(payloadEmptyToken, expectedEmptyTokenPayload) {
+		t.Errorf("payload mismatch for empty token:\ngot:  %v\nwant: %v", payloadEmptyToken, expectedEmptyTokenPayload)
+	}
+}
+
+func TestPackCommands(t *testing.T) {
+	// 1. PackPRPSQLSTT
+	prpBytes := PackPRPSQLSTT("SYSH200", "TOKEN12", 1, "SAMPLE")
+	if int(binary.BigEndian.Uint16(prpBytes[0:2])) != len(prpBytes) {
+		t.Errorf("PackPRPSQLSTT length mismatch: %d vs %d", binary.BigEndian.Uint16(prpBytes[0:2]), len(prpBytes))
+	}
+	if CodePoint(binary.BigEndian.Uint16(prpBytes[2:4])) != CodePointPRPSQLSTT {
+		t.Errorf("PackPRPSQLSTT codepoint mismatch: %v", binary.BigEndian.Uint16(prpBytes[2:4]))
+	}
+	subObjs, err := ParseDDMReply(prpBytes[4:])
+	if err != nil {
+		t.Fatalf("ParseDDMReply failed on PRPSQLSTT: %v", err)
+	}
+	if _, ok := subObjs[CodePointPKGNAMCSN]; !ok {
+		t.Errorf("missing PKGNAMCSN in PRPSQLSTT")
+	}
+	if rtn, ok := subObjs[CodePointRTNSQLDA]; !ok || !bytes.Equal(rtn, []byte{241}) {
+		t.Errorf("unexpected RTNSQLDA in PRPSQLSTT: %v", rtn)
+	}
+
+	// 2. PackEXCSQLIMM
+	immBytes := PackEXCSQLIMM("SYSH200", "TOKEN12", 1, "SAMPLE")
+	if int(binary.BigEndian.Uint16(immBytes[0:2])) != len(immBytes) {
+		t.Errorf("PackEXCSQLIMM length mismatch")
+	}
+	if CodePoint(binary.BigEndian.Uint16(immBytes[2:4])) != CodePointEXCSQLIMM {
+		t.Errorf("PackEXCSQLIMM codepoint mismatch")
+	}
+	subObjs, err = ParseDDMReply(immBytes[4:])
+	if err != nil {
+		t.Fatalf("ParseDDMReply failed on EXCSQLIMM: %v", err)
+	}
+	if cmt, ok := subObjs[CodePointRDBCMTOK]; !ok || !bytes.Equal(cmt, []byte{241}) {
+		t.Errorf("unexpected RDBCMTOK in EXCSQLIMM: %v", cmt)
+	}
+
+	// 3. PackDSCSQLSTT
+	dscBytes := PackDSCSQLSTT("SYSH200", "TOKEN12", 1, "SAMPLE")
+	if CodePoint(binary.BigEndian.Uint16(dscBytes[2:4])) != CodePointDSCSQLSTT {
+		t.Errorf("PackDSCSQLSTT codepoint mismatch")
+	}
+	subObjs, err = ParseDDMReply(dscBytes[4:])
+	if err != nil {
+		t.Fatalf("ParseDDMReply failed on DSCSQLSTT: %v", err)
+	}
+	if typ, ok := subObjs[CodePointTYPSQLDA]; !ok || !bytes.Equal(typ, []byte{1}) {
+		t.Errorf("unexpected TYPSQLDA in DSCSQLSTT: %v", typ)
+	}
+
+	// 4. PackEXCSQLSTT
+	excBytes := PackEXCSQLSTT("SYSH200", "TOKEN12", 1, "SAMPLE")
+	if CodePoint(binary.BigEndian.Uint16(excBytes[2:4])) != CodePointEXCSQLSTT {
+		t.Errorf("PackEXCSQLSTT codepoint mismatch")
+	}
+	subObjs, err = ParseDDMReply(excBytes[4:])
+	if err != nil {
+		t.Fatalf("ParseDDMReply failed on EXCSQLSTT: %v", err)
+	}
+	if cmt, ok := subObjs[CodePointRDBCMTOK]; !ok || !bytes.Equal(cmt, []byte{241}) {
+		t.Errorf("unexpected RDBCMTOK in EXCSQLSTT: %v", cmt)
+	}
+
+	// 5. PackOPNQRY
+	opnBytes := PackOPNQRY("SYSH200", "TOKEN12", 1, "SAMPLE", 32767)
+	if int(binary.BigEndian.Uint16(opnBytes[0:2])) != len(opnBytes) {
+		t.Errorf("PackOPNQRY length mismatch")
+	}
+	if CodePoint(binary.BigEndian.Uint16(opnBytes[2:4])) != CodePointOPNQRY {
+		t.Errorf("PackOPNQRY codepoint mismatch")
+	}
+	subObjs, err = ParseDDMReply(opnBytes[4:])
+	if err != nil {
+		t.Fatalf("ParseDDMReply failed on OPNQRY: %v", err)
+	}
+	if _, ok := subObjs[CodePointPKGNAMCSN]; !ok {
+		t.Errorf("missing PKGNAMCSN in OPNQRY")
+	}
+	if blk, ok := subObjs[CodePointQRYBLKSZ]; !ok || binary.BigEndian.Uint32(blk) != 32767 {
+		t.Errorf("unexpected QRYBLKSZ in OPNQRY: %v", blk)
+	}
+	if maxBlk, ok := subObjs[CodePointMAXBLKEXT]; !ok || binary.BigEndian.Uint16(maxBlk) != 32767 {
+		t.Errorf("unexpected MAXBLKEXT in OPNQRY: %v", maxBlk)
+	}
+	if cls, ok := subObjs[CodePointQRYCLSIMP]; !ok || !bytes.Equal(cls, []byte{0x01}) {
+		t.Errorf("unexpected QRYCLSIMP in OPNQRY: %v", cls)
+	}
+
+	// 6. PackEXCSQLSET and PackSQLINTR
+	setBytes := PackEXCSQLSET("SYSH200", "TOKEN12", 1, "SAMPLE")
+	if CodePoint(binary.BigEndian.Uint16(setBytes[2:4])) != CodePointEXCSQLSET {
+		t.Errorf("PackEXCSQLSET codepoint mismatch")
+	}
+	intrBytes := PackSQLINTR("SYSH200", "TOKEN12", 1, "SAMPLE")
+	if CodePoint(binary.BigEndian.Uint16(intrBytes[2:4])) != CodePointSQLINTR {
+		t.Errorf("PackSQLINTR codepoint mismatch")
+	}
+}
+
+func BenchmarkPackPKGNAMCSN(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackPKGNAMCSN("SAMPLE", "SYSH200", "TOKEN12", 1)
+	}
+}
+
+func BenchmarkPackPRPSQLSTT(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackPRPSQLSTT("SYSH200", "TOKEN12", 1, "SAMPLE")
+	}
+}
+
+func BenchmarkPackEXCSQLIMM(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackEXCSQLIMM("SYSH200", "TOKEN12", 1, "SAMPLE")
+	}
+}
+
+func BenchmarkPackOPNQRY(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackOPNQRY("SYSH200", "TOKEN12", 1, "SAMPLE", 32767)
+	}
+}
+
+func TestPackStringAndPackNullString_Regression(t *testing.T) {
+	t.Run("PackString_SmallUTF8", func(t *testing.T) {
+		str := "SELECT * FROM DUMMY"
+		cp := CodePointSQLSTT
+		got, err := PackString(cp, str, EncodingUTF8)
+		if err != nil {
+			t.Fatalf("PackString failed: %v", err)
+		}
+		want := PackDDMObject(cp, []byte(str))
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackString UTF8 mismatch:\ngot  %X\nwant %X", got, want)
+		}
+	})
+
+	t.Run("PackString_LargeUTF8_ExtendedLength", func(t *testing.T) {
+		str := bytes.Repeat([]byte("A"), 33000)
+		cp := CodePointSQLSTT
+		got, err := PackString(cp, string(str), EncodingUTF8)
+		if err != nil {
+			t.Fatalf("PackString large failed: %v", err)
+		}
+		want := PackDDMObject(cp, str)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackString large UTF8 mismatch: len(got)=%d, len(want)=%d", len(got), len(want))
+		}
+	})
+
+	t.Run("PackString_CP500", func(t *testing.T) {
+		str := "TESTDB"
+		cp := CodePointRDBNAM
+		got, err := PackString(cp, str, EncodingCP500)
+		if err != nil {
+			t.Fatalf("PackString CP500 failed: %v", err)
+		}
+		enc, _ := codec.EncodeCP500(str)
+		want := PackDDMObject(cp, enc)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackString CP500 mismatch:\ngot  %X\nwant %X", got, want)
+		}
+	})
+
+	t.Run("PackString_LargeCP500_ExtendedLength", func(t *testing.T) {
+		str := bytes.Repeat([]byte("A"), 33000)
+		cp := CodePointSQLSTT
+		got, err := PackString(cp, string(str), EncodingCP500)
+		if err != nil {
+			t.Fatalf("PackString large CP500 failed: %v", err)
+		}
+		enc, _ := codec.EncodeCP500(string(str))
+		want := PackDDMObject(cp, enc)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackString large CP500 mismatch: len(got)=%d, len(want)=%d", len(got), len(want))
+		}
+	})
+
+	t.Run("PackNullString_Nil", func(t *testing.T) {
+		got := PackNullString(nil, EncodingUTF8)
+		want := []byte{0xFF}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackNullString nil mismatch: got %X, want %X", got, want)
+		}
+	})
+
+	t.Run("PackNullString_UTF8", func(t *testing.T) {
+		str := "HELLO WORLD"
+		got := PackNullString(&str, EncodingUTF8)
+		var want []byte
+		want = append(want, 0x00)
+		lenBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(lenBytes, uint32(len(str)))
+		want = append(want, lenBytes...)
+		want = append(want, []byte(str)...)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackNullString UTF8 mismatch:\ngot  %X\nwant %X", got, want)
+		}
+	})
+
+	t.Run("PackNullString_CP500", func(t *testing.T) {
+		str := "HELLO WORLD"
+		got := PackNullString(&str, EncodingCP500)
+		enc, _ := codec.EncodeCP500(str)
+		var want []byte
+		want = append(want, 0x00)
+		lenBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(lenBytes, uint32(len(enc)))
+		want = append(want, lenBytes...)
+		want = append(want, enc...)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackNullString CP500 mismatch:\ngot  %X\nwant %X", got, want)
+		}
+	})
+
+	t.Run("PackNullString_CP500_UnmappableFallback", func(t *testing.T) {
+		str := "Emoji ⚡ Test"
+		got := PackNullString(&str, EncodingCP500)
+		var want []byte
+		want = append(want, 0x00)
+		lenBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(lenBytes, uint32(len(str)))
+		want = append(want, lenBytes...)
+		want = append(want, []byte(str)...)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("PackNullString CP500 unmappable fallback mismatch:\ngot  %X\nwant %X", got, want)
+		}
+	})
+
+	t.Run("PackString_CP500_UnmappableError", func(t *testing.T) {
+		str := "Emoji ⚡ Test"
+		_, err := PackString(CodePointRDBNAM, str, EncodingCP500)
+		if err == nil {
+			t.Fatalf("expected error for unmappable string in PackString CP500, got nil")
+		}
+	})
+
+	t.Run("PackString_CP500_Boundary_0x7FFF", func(t *testing.T) {
+		// Test lengths spanning standard 15-bit DDM header (<=0x7FFF) and 0x8008 extended length (>0x7FFF)
+		for payloadLen := 0x7FFA; payloadLen <= 0x8000; payloadLen++ {
+			str := string(bytes.Repeat([]byte("A"), payloadLen-4))
+			cp := CodePointSQLSTT
+			got, err := PackString(cp, str, EncodingCP500)
+			if err != nil {
+				t.Fatalf("PackString CP500 boundary test failed at len %d: %v", payloadLen, err)
+			}
+			enc, _ := codec.EncodeCP500(str)
+			want := PackDDMObject(cp, enc)
+			if !bytes.Equal(got, want) {
+				t.Fatalf("PackString CP500 boundary mismatch at payload len %d:\ngot  len=%d %X\nwant len=%d %X", payloadLen, len(got), got[:16], len(want), want[:16])
+			}
+		}
+	})
+}
+
+func BenchmarkPackString(b *testing.B) {
+	b.Run("UTF8", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = PackString(CodePointSQLSTT, str, EncodingUTF8)
+		}
+	})
+
+	b.Run("CP500", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = PackString(CodePointSQLSTT, str, EncodingCP500)
+		}
+	})
+}
+
+func BenchmarkPackNullString(b *testing.B) {
+	b.Run("UTF8", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = PackNullString(&str, EncodingUTF8)
+		}
+	})
+
+	b.Run("CP500", func(b *testing.B) {
+		str := "SELECT col1, col2 FROM syscat.tables WHERE tabschema = 'SYSCAT'"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = PackNullString(&str, EncodingCP500)
+		}
+	})
+}
+
+func BenchmarkPackSQLSTT(b *testing.B) {
+	sql := "SELECT ID, NAME, SALARY FROM EMPLOYEE WHERE DEPT = ?"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackSQLSTT(sql)
+	}
+}
+
+func BenchmarkPackCNTQRY(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackCNTQRY("SYSH200", "TOKEN12", 1, "SAMPLE", 32767, 12345678)
+	}
+}
+
+func BenchmarkPackOPNQRYWithParams(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = PackOPNQRYWithParams("SYSH200", "TOKEN12", 1, "SAMPLE", 32767)
+	}
+}
+
+func BenchmarkParseQRYDSC(b *testing.B) {
+	benchmarks := []struct {
+		name      string
+		numFields int
+	}{
+		{"Small_5Cols", 5},
+		{"Medium_20Cols", 20},
+		{"Large_60Cols", 60},
+	}
+
+	for _, bm := range benchmarks {
+		payload := makeQRYDSCPayload(bm.numFields)
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, _ = ParseQRYDSC(payload)
+			}
+		})
+	}
+}
+
+func TestParseSQLDARD_TruncatedPayloadBounds(t *testing.T) {
+	// Truncated SQLDARD payload claiming 2 columns, but only enough bytes for 1 column + partial trailing metadata
+	var buf []byte
+	buf = append(buf, 0x01)       // Indicator (no SQLCARD, no name)
+	buf = append(buf, 0x00, 0x02) // numCols = 2
+
+	// Column 1 (16 bytes)
+	buf = append(buf, 0x00, 0x0A)                                     // prec = 10
+	buf = append(buf, 0x00, 0x02)                                     // scale = 2
+	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04) // length = 4
+	buf = append(buf, 0x01, 0xF4)                                     // sqltype = 500
+
+	// Trailing metadata for Column 1 truncated to 20 bytes (< 29 bytes required)
+	buf = append(buf, make([]byte, 20)...)
+
+	cols, err := ParseSQLDARD(buf, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("unexpected error parsing truncated SQLDARD: %v", err)
+	}
+
+	// Should safely parse 1 column and not attempt to parse column 2 from truncated trailing bytes
+	if len(cols) != 1 {
+		t.Fatalf("expected 1 column parsed, got %d", len(cols))
+	}
+}
+
+func TestParseSQLDARD_ExcessiveNumColsCap(t *testing.T) {
+	// Construct payload claiming 65535 columns, but providing payload for only 1 column
+	var buf []byte
+	buf = append(buf, 0xFF)       // Indicator 0xFF: no leading SQLCARD
+	buf = append(buf, 0x01)       // Indicator (hasName = false)
+	buf = append(buf, 0xFF, 0xFF) // numCols = 65535
+
+	// Column 1 (16 bytes)
+	buf = append(buf, 0x00, 0x0A)                                     // prec = 10
+	buf = append(buf, 0x00, 0x02)                                     // scale = 2
+	buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04) // length = 4
+	buf = append(buf, 0x01, 0xF4)                                     // sqltype = 500
+	buf = append(buf, make([]byte, 29)...)                            // Trailing metadata
+
+	cols, err := ParseSQLDARD(buf, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("unexpected error parsing excessive numCols SQLDARD: %v", err)
+	}
+
+	if len(cols) != 1 {
+		t.Fatalf("expected 1 column parsed, got %d", len(cols))
+	}
+}
+
+func TestParseSQLCARD_TruncatedPayloadBounds(t *testing.T) {
+	// Construct SQLCARD payload with truncated RDB name length
+	var buf []byte
+	buf = append(buf, 0x00)                   // Non-null indicator
+	buf = append(buf, 0x00, 0x00, 0x00, 0x00) // SQLCODE = 0
+	buf = append(buf, []byte("00000")...)     // SQLSTATE
+	buf = append(buf, make([]byte, 45)...)    // Header padding to exceed 36+18 threshold
+
+	// RDB name length says 100 bytes, but payload ends immediately
+	buf = append(buf, 0x00, 100)
+
+	code, state, msg, _, err := ParseSQLCARD(buf, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if code != 0 || state != "00000" {
+		t.Fatalf("unexpected code/state: %d / %s", code, state)
+	}
+	if msg != "" {
+		t.Fatalf("expected empty message for truncated RDB name, got %q", msg)
+	}
+}
+
+func TestParseDDMReply_ExtendedLengthObjects(t *testing.T) {
+	t.Run("FourByteExtendedLength_0x8008", func(t *testing.T) {
+		payloadSize := 40000
+		largePayload := make([]byte, payloadSize)
+		for i := range largePayload {
+			largePayload[i] = byte(i % 256)
+		}
+
+		// 0x8008 header: length = 0x8008, codepoint = CodePointSRVDGN (0x1153)
+		// 4-byte extended length = 40000
+		var buf []byte
+		buf = append(buf, 0x80, 0x08) // 0x8008
+		buf = append(buf, 0x11, 0x53) // CodePointSRVDGN
+		extLenBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(extLenBytes, uint32(payloadSize))
+		buf = append(buf, extLenBytes...)
+		buf = append(buf, largePayload...)
+
+		parsed, err := ParseDDMReply(buf)
+		if err != nil {
+			t.Fatalf("ParseDDMReply failed for 4-byte extended length object: %v", err)
+		}
+		res, ok := parsed[CodePointSRVDGN]
+		if !ok {
+			t.Fatalf("missing CodePointSRVDGN in parsed output")
+		}
+		if !bytes.Equal(res, largePayload) {
+			t.Fatalf("payload mismatch: got len %d, want len %d", len(res), len(largePayload))
+		}
+	})
+
+	t.Run("ToEndOfPayload_0x8004", func(t *testing.T) {
+		payload := []byte("End-of-payload extended data")
+		var buf []byte
+		buf = append(buf, 0x80, 0x04) // 0x8004: runs to end of payload
+		buf = append(buf, 0x11, 0x53) // CodePointSRVDGN
+		buf = append(buf, payload...)
+
+		parsed, err := ParseDDMReply(buf)
+		if err != nil {
+			t.Fatalf("ParseDDMReply failed for 0x8004 payload: %v", err)
+		}
+		res, ok := parsed[CodePointSRVDGN]
+		if !ok || !bytes.Equal(res, payload) {
+			t.Fatalf("payload mismatch for 0x8004: got %q, want %q", res, payload)
+		}
+	})
+
+	t.Run("TruncatedExtendedLengthBounds", func(t *testing.T) {
+		// Claims 4-byte extended length field (0x8008), but total buffer ends before 4-byte ext length is supplied
+		var buf []byte
+		buf = append(buf, 0x80, 0x08, 0x11, 0x53, 0x00, 0x00) // Truncated
+
+		_, err := ParseDDMReply(buf)
+		if err == nil {
+			t.Fatalf("expected error for truncated extended length DDM parameter header, got nil")
+		}
+	})
+}

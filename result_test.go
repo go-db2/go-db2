@@ -33,9 +33,9 @@ func TestNewResult(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res := NewResult(tt.affectedRows, tt.lastInsertId)
+			res := newResult(tt.affectedRows, tt.lastInsertId)
 			if res == nil {
-				t.Fatalf("NewResult(%d, %d) returned nil", tt.affectedRows, tt.lastInsertId)
+				t.Fatalf("newResult(%d, %d) returned nil", tt.affectedRows, tt.lastInsertId)
 			}
 
 			if res.affectedRows != tt.affectedRows {
@@ -71,7 +71,7 @@ func TestNewResult(t *testing.T) {
 }
 
 func TestResultRowsAffected(t *testing.T) {
-	res := NewResult(42, 0)
+	res := newResult(42, 0)
 	affected, err := res.RowsAffected()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -82,7 +82,7 @@ func TestResultRowsAffected(t *testing.T) {
 }
 
 func TestResultLastInsertId_Cached(t *testing.T) {
-	res := NewResult(1, 999)
+	res := newResult(1, 999)
 	id, err := res.LastInsertId()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -93,7 +93,7 @@ func TestResultLastInsertId_Cached(t *testing.T) {
 }
 
 func TestResultLastInsertId_NonInsert(t *testing.T) {
-	res := NewResultWithConn(nil, 5, false)
+	res := newResultWithConn(nil, 5, false)
 	_, err := res.LastInsertId()
 	if err == nil {
 		t.Fatalf("expected error for non-insert LastInsertId call, got nil")

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 // Helper to encode reply chain for mockServer
@@ -20,7 +20,7 @@ func buildReplyChain(objs ...[]byte) []byte {
 	var out bytes.Buffer
 	for i, obj := range objs {
 		isChained := i < len(objs)-1
-		hdr := network.BuildDSSHeader(len(obj), network.DSSTypeReply, isChained, false, false, 1)
+		hdr := drda.BuildDSSHeader(len(obj), drda.DSSTypeReply, isChained, false, false, 1)
 		out.Write(hdr)
 		out.Write(obj)
 	}
@@ -37,32 +37,32 @@ func mockIntegerRows(values ...int32) []byte {
 }
 
 func mockQrydscInteger() []byte {
-	return network.PackDDMObject(network.CodePointQRYDSC, []byte{0x06, 0x76, 0xD0, 0x02, 0x00, 0x04, 0x06, 0x71, 0xF0, 0xE0, 0x00, 0x00})
+	return drda.PackDDMObject(drda.CodePointQRYDSC, []byte{0x06, 0x76, 0xD0, 0x02, 0x00, 0x04, 0x06, 0x71, 0xF0, 0xE0, 0x00, 0x00})
 }
 
 func mockOpnqryrm() []byte {
-	body := network.PackUint16(network.CodePointSVRCOD, 0)
-	body = append(body, network.PackBytes(network.CodePointQRYINSID, []byte{0, 0, 0, 0, 0, 0, 0, 1})...)
-	return network.PackDDMObject(network.CodePointOPNQRYRM, body)
+	body := drda.PackUint16(drda.CodePointSVRCOD, 0)
+	body = append(body, drda.PackBytes(drda.CodePointQRYINSID, []byte{0, 0, 0, 0, 0, 0, 0, 1})...)
+	return drda.PackDDMObject(drda.CodePointOPNQRYRM, body)
 }
 
 func mockSqlcard(code int32, state string) []byte {
 	payload := make([]byte, 20)
 	binary.LittleEndian.PutUint32(payload[1:5], uint32(code))
 	copy(payload[5:10], state)
-	return network.PackDDMObject(network.CodePointSQLCARD, payload)
+	return drda.PackDDMObject(drda.CodePointSQLCARD, payload)
 }
 
 func mockQrydta(data []byte) []byte {
-	return network.PackDDMObject(network.CodePointQRYDTA, data)
+	return drda.PackDDMObject(drda.CodePointQRYDTA, data)
 }
 
 // TestDriver_CALL_MultiResultSets tests that CALL statements returning multiple result sets
 // can be fully traversed using database/sql's rows.NextResultSet().
 func TestDriver_CALL_MultiResultSets(t *testing.T) {
-	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case network.CodePointEXCSQLIMM:
+		case drda.CodePointEXCSQLIMM:
 			// Respond with 2 result sets in the reply chain
 			reply := buildReplyChain(
 				mockOpnqryrm(),
@@ -134,9 +134,9 @@ func TestDriver_CALL_MultiResultSets(t *testing.T) {
 func TestDriver_Streaming_EarlyCloseCLSQRY(t *testing.T) {
 	clsqryReceived := make(chan bool, 1)
 
-	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case network.CodePointPRPSQLSTT, network.CodePointOPNQRY:
+		case drda.CodePointPRPSQLSTT, drda.CodePointOPNQRY:
 			reply := buildReplyChain(
 				mockOpnqryrm(),
 				mockQrydscInteger(),
@@ -144,11 +144,11 @@ func TestDriver_Streaming_EarlyCloseCLSQRY(t *testing.T) {
 			)
 			_, _ = c.Write(reply)
 			return true
-		case network.CodePointCLSQRY:
+		case drda.CodePointCLSQRY:
 			clsqryReceived <- true
 			_, _ = c.Write(buildReplyChain(mockSqlcard(0, "00000")))
 			return true
-		case network.CodePointRDBCMM:
+		case drda.CodePointRDBCMM:
 			_, _ = c.Write(buildReplyChain(mockSqlcard(0, "00000")))
 			return true
 		default:
@@ -199,25 +199,25 @@ func TestDriver_Streaming_EarlyCloseCLSQRY(t *testing.T) {
 func TestDriver_LOB_IoReaderParameter(t *testing.T) {
 	extdtaSeen := make(chan bool, 1)
 
-	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case network.CodePointPRPSQLSTT:
+		case drda.CodePointPRPSQLSTT:
 			// PRPSQLSTT + SQLDARD describing 1 BLOB param
 			sqlcardDard := make([]byte, 20)
 			sqlcardDard[0] = 0xFF
 			reply := buildReplyChain(
-				network.PackDDMObject(network.CodePointSQLCARD, sqlcardDard),
+				drda.PackDDMObject(drda.CodePointSQLCARD, sqlcardDard),
 			)
 			_, _ = c.Write(reply)
 			return true
-		case network.CodePointEXCSQLSTT:
+		case drda.CodePointEXCSQLSTT:
 			// Read the chain to see if EXTDTA was sent
 			for {
-				hdr, innerCP, _, _, err := network.ReadDSS(c)
+				hdr, innerCP, _, _, err := drda.ReadDSS(c)
 				if err != nil {
 					return false
 				}
-				if innerCP == network.CodePointEXTDTA {
+				if innerCP == drda.CodePointEXTDTA {
 					extdtaSeen <- true
 				}
 				if !hdr.Chained {

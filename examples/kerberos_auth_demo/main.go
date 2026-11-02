@@ -9,14 +9,14 @@ import (
 	"time"
 
 	_ "github.com/go-db2/go-db2"
-	"github.com/go-db2/go-db2/network/security"
+	"github.com/go-db2/go-db2/internal/auth"
 )
 
 func main() {
 	fmt.Println("1. Demonstração de Autenticação Kerberos / GSSAPI (SECMEC 7/11) no go-db2...")
 
 	// 1. Validar módulo de geração de tokens GSSAPI/Kerberos
-	spn := security.FormatServicePrincipal("", "db2server.corp.local", "CORP.LOCAL")
+	spn := auth.FormatServicePrincipal("", "db2server.corp.local", "CORP.LOCAL")
 	fmt.Printf("   📌 SPN de Serviço Resolvido: %s\n", spn)
 
 	// 1.1 Demonstração de Keytab Binário (.keytab)
@@ -27,7 +27,7 @@ func main() {
 	}
 	defer os.Remove(tmpKeytab.Name())
 
-	entries := []security.KeytabEntry{
+	entries := []auth.KeytabEntry{
 		{
 			Principal: "db2/db2server.corp.local@CORP.LOCAL",
 			KeyType:   18, // AES256-CTS-HMAC-SHA1-96
@@ -41,7 +41,7 @@ func main() {
 			Key:       []byte("fedcba9876543210fedcba9876543210"),
 		},
 	}
-	keytabBytes, err := security.BuildKeytab(entries...)
+	keytabBytes, err := auth.BuildKeytab(entries...)
 	if err != nil {
 		log.Fatalf("Erro ao gerar keytab binário: %v", err)
 	}
@@ -51,12 +51,12 @@ func main() {
 	_ = tmpKeytab.Close()
 
 	// Carregar e validar token a partir do arquivo .keytab
-	keytabKrbCfg := security.KerberosConfig{
+	keytabKrbCfg := auth.KerberosConfig{
 		KeytabFile:       tmpKeytab.Name(),
 		ServicePrincipal: spn,
 		Host:             "db2server.corp.local",
 	}
-	keytabToken, err := security.AcquireKerberosToken(keytabKrbCfg)
+	keytabToken, err := auth.AcquireKerberosToken(keytabKrbCfg)
 	if err != nil {
 		log.Fatalf("Erro ao adquirir token via keytab: %v", err)
 	}

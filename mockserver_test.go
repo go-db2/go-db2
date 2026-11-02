@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 // mockServer is a minimal DRDA server: it completes the connect handshake and
@@ -18,7 +18,7 @@ type mockServer struct {
 	accepts atomic.Int32
 }
 
-func startMockServer(t *testing.T, handle func(c net.Conn, cp network.CodePoint) bool) *mockServer {
+func startMockServer(t *testing.T, handle func(c net.Conn, cp drda.CodePoint) bool) *mockServer {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -52,10 +52,10 @@ func startMockServer(t *testing.T, handle func(c net.Conn, cp network.CodePoint)
 }
 
 // readRequestChain reads one chained request and returns the codepoint of its first command.
-func readRequestChain(c net.Conn) (network.CodePoint, bool) {
-	var first network.CodePoint
+func readRequestChain(c net.Conn) (drda.CodePoint, bool) {
+	var first drda.CodePoint
 	for i := 0; ; i++ {
-		hdr, cp, _, _, err := network.ReadDSS(c)
+		hdr, cp, _, _, err := drda.ReadDSS(c)
 		if err != nil {
 			return 0, false
 		}
@@ -73,8 +73,8 @@ func mockHandshake(c net.Conn) bool {
 	if _, ok := readRequestChain(c); !ok {
 		return false
 	}
-	accsecRdObj := network.PackDDMObject(network.CodePointACCSECRD, network.PackUint16(network.CodePointSECMEC, network.SecMecUSRIDPWD))
-	if _, err := c.Write(append(network.BuildDSSHeader(len(accsecRdObj), network.DSSTypeReply, false, false, false, 1), accsecRdObj...)); err != nil {
+	accsecRdObj := drda.PackDDMObject(drda.CodePointACCSECRD, drda.PackUint16(drda.CodePointSECMEC, drda.SecMecUSRIDPWD))
+	if _, err := c.Write(append(drda.BuildDSSHeader(len(accsecRdObj), drda.DSSTypeReply, false, false, false, 1), accsecRdObj...)); err != nil {
 		return false
 	}
 
@@ -82,12 +82,12 @@ func mockHandshake(c net.Conn) bool {
 	if _, ok := readRequestChain(c); !ok {
 		return false
 	}
-	secchkRmObj := network.PackDDMObject(network.CodePointSECCHKRM, network.PackBytes(network.CodePointSECCHKCD, []byte{0x00}))
-	accrdbRmObj := network.PackDDMObject(network.CodePointACCRDBRM, nil)
+	secchkRmObj := drda.PackDDMObject(drda.CodePointSECCHKRM, drda.PackBytes(drda.CodePointSECCHKCD, []byte{0x00}))
+	accrdbRmObj := drda.PackDDMObject(drda.CodePointACCRDBRM, nil)
 	var resp bytes.Buffer
-	resp.Write(network.BuildDSSHeader(len(secchkRmObj), network.DSSTypeReply, true, false, false, 1))
+	resp.Write(drda.BuildDSSHeader(len(secchkRmObj), drda.DSSTypeReply, true, false, false, 1))
 	resp.Write(secchkRmObj)
-	resp.Write(network.BuildDSSHeader(len(accrdbRmObj), network.DSSTypeReply, false, false, false, 1))
+	resp.Write(drda.BuildDSSHeader(len(accrdbRmObj), drda.DSSTypeReply, false, false, false, 1))
 	resp.Write(accrdbRmObj)
 	if _, err := c.Write(resp.Bytes()); err != nil {
 		return false
@@ -105,15 +105,15 @@ func writeSQLCARDOK(c net.Conn) bool {
 	payload := make([]byte, 20)
 	binary.LittleEndian.PutUint32(payload[1:5], 0)
 	copy(payload[5:10], "00000")
-	obj := network.PackDDMObject(network.CodePointSQLCARD, payload)
-	_, err := c.Write(append(network.BuildDSSHeader(len(obj), network.DSSTypeReply, false, false, false, 1), obj...))
+	obj := drda.PackDDMObject(drda.CodePointSQLCARD, payload)
+	_, err := c.Write(append(drda.BuildDSSHeader(len(obj), drda.DSSTypeReply, false, false, false, 1), obj...))
 	return err == nil
 }
 
 // writeEXCSATRD replies with an EXCSATRD reply object.
 func writeEXCSATRD(c net.Conn) bool {
-	obj := network.PackDDMObject(network.CodePointEXCSATRD, nil)
-	_, err := c.Write(append(network.BuildDSSHeader(len(obj), network.DSSTypeReply, false, false, false, 1), obj...))
+	obj := drda.PackDDMObject(drda.CodePointEXCSATRD, nil)
+	_, err := c.Write(append(drda.BuildDSSHeader(len(obj), drda.DSSTypeReply, false, false, false, 1), obj...))
 	return err == nil
 }
 

@@ -16,16 +16,16 @@ type Result struct {
 	lastInsertId int64
 }
 
-// NewResult creates a new driver.Result with affected rows count and preset lastInsertId.
-func NewResult(affectedRows, lastInsertId int64) *Result {
+// newResult creates a new driver.Result with affected rows count and preset lastInsertId.
+func newResult(affectedRows, lastInsertId int64) *Result {
 	return &Result{
 		affectedRows: affectedRows,
 		lastInsertId: lastInsertId,
 	}
 }
 
-// NewResultWithConn creates a new driver.Result without retaining connection pointer.
-func NewResultWithConn(conn *Conn, affectedRows int64, isInsert bool) *Result {
+// newResultWithConn creates a new driver.Result without retaining connection pointer.
+func newResultWithConn(conn *Conn, affectedRows int64, isInsert bool) *Result {
 	return &Result{
 		affectedRows: affectedRows,
 	}

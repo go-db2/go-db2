@@ -38,6 +38,17 @@ jobs:
       - name: Go Vet
         run: go vet ./...
 
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
       - name: Run Unit Tests with Race Detector
         run: go test -v -race -timeout 5m ./...
 

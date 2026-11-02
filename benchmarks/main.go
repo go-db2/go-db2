@@ -28,7 +28,7 @@ func main() {
 	fmt.Println("==========================================================================================================")
 
 	// 1. Conectar via go-db2 (Pure Go)
-	pureGoDSN := fmt.Sprintf("db2://%s:%s@%s:%s/%s?ssl=false", user, password, host, port, database)
+	pureGoDSN := fmt.Sprintf("db2://%s:%s@%s:%s/%s?ssl=false&allow_plaintext_auth=true", user, password, host, port, database)
 	pgDB, err := sql.Open("db2", pureGoDSN)
 	if err != nil {
 		log.Fatalf("Erro ao abrir conexão com go-db2: %v", err)

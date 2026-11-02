@@ -70,7 +70,13 @@ func RunPerformanceSuite(ctx context.Context, pgDB, cgoDB *sql.DB) []BenchmarkRe
 			}
 			count++
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if count != 1000 {
+			return fmt.Errorf("expected 1000 rows, got %d", count)
+		}
+		return nil
 	}, pgDB, cgoDB))
 
 	// 4. Benchmark: Prepared Statement DML Exec
@@ -117,8 +123,13 @@ func measure(iterations int, fn func() error) PerfMetric {
 	runtime.ReadMemStats(&m1)
 
 	start := time.Now()
+	executed := 0
 	for i := 0; i < iterations; i++ {
-		_ = fn()
+		if err := fn(); err != nil {
+			fmt.Printf("   ⚠️ Falha na iteração %d da medição de performance: %v\n", i, err)
+			break
+		}
+		executed++
 	}
 	duration := time.Since(start)
 
@@ -134,9 +145,13 @@ func measure(iterations int, fn func() error) PerfMetric {
 		allocs = m2.Mallocs - m1.Mallocs
 	}
 
+	if executed == 0 {
+		executed = 1
+	}
+
 	return PerfMetric{
 		Duration:   duration,
-		Ops:        iterations,
+		Ops:        executed,
 		BytesAlloc: bytesAlloc,
 		Allocs:     allocs,
 	}

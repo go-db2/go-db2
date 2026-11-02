@@ -10,14 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-db2/go-db2/converters"
-	"github.com/go-db2/go-db2/types"
+	"github.com/go-db2/go-db2/internal/codec"
 )
 
 func getBenchmarkDSN() string {
 	dsn := os.Getenv("DB2_DSN")
 	if dsn == "" {
-		dsn = "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false"
+		dsn = "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true"
 	}
 	return dsn
 }
@@ -31,7 +30,7 @@ func BenchmarkDecodeField_Integer(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		r := bytes.NewReader(data)
-		_, err := converters.DecodeField(converters.DRDATypeInteger, ps, r, endian)
+		_, err := codec.DecodeField(codec.DRDATypeInteger, ps, r, endian)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -47,7 +46,7 @@ func BenchmarkDecodeField_NInteger(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		r := bytes.NewReader(data)
-		_, err := converters.DecodeField(converters.DRDATypeNInteger, ps, r, endian)
+		_, err := codec.DecodeField(codec.DRDATypeNInteger, ps, r, endian)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -67,7 +66,7 @@ func BenchmarkDecodeField_VarChar(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		r := bytes.NewReader(data)
-		_, err := converters.DecodeField(converters.DRDATypeVarChar, ps, r, endian)
+		_, err := codec.DecodeField(codec.DRDATypeVarChar, ps, r, endian)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -84,7 +83,7 @@ func BenchmarkDecodeField_Char(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		r := bytes.NewReader(data)
-		_, err := converters.DecodeField(converters.DRDATypeChar, ps, r, endian)
+		_, err := codec.DecodeField(codec.DRDATypeChar, ps, r, endian)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -101,7 +100,7 @@ func BenchmarkDecodeField_Timestamp(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		r := bytes.NewReader(data)
-		_, err := converters.DecodeField(converters.DRDATypeTimestamp, ps, r, endian)
+		_, err := codec.DecodeField(codec.DRDATypeTimestamp, ps, r, endian)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -118,7 +117,7 @@ func BenchmarkDecodeField_PackedDecimal(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		r := bytes.NewReader(data)
-		_, err := converters.DecodeField(converters.DRDATypeDecimal, ps, r, endian)
+		_, err := codec.DecodeField(codec.DRDATypeDecimal, ps, r, endian)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -144,7 +143,7 @@ func BenchmarkIsInsertQuery(b *testing.B) {
 }
 
 func BenchmarkBuildSQLDTA(b *testing.B) {
-	colTypes := []types.SQLType{types.SQLTypeInteger, types.SQLTypeVarChar, types.SQLTypeDecimal}
+	colTypes := []codec.SQLType{codec.SQLTypeInteger, codec.SQLTypeVarChar, codec.SQLTypeDecimal}
 	colLens := []int64{4, 100, 10}
 	precs := []int{0, 0, 10}
 	scales := []int{0, 0, 2}
@@ -154,7 +153,7 @@ func BenchmarkBuildSQLDTA(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := converters.BuildSQLDTA(colTypes, colLens, precs, scales, args, endian)
+		_, err := codec.BuildSQLDTA(colTypes, colLens, precs, scales, args, endian)
 		if err != nil {
 			b.Fatal(err)
 		}

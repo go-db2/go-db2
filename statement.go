@@ -11,16 +11,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-db2/go-db2/network"
-	"github.com/go-db2/go-db2/types"
+	"github.com/go-db2/go-db2/internal/codec"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 // Stmt implements the database/sql/driver.Stmt and StmtExecContext / StmtQueryContext interfaces.
 type Stmt struct {
 	conn              *Conn
 	query             string
-	outputCols        []network.ColumnDescription
-	paramCols         []network.ColumnDescription
+	outputCols        []drda.ColumnDescription
+	paramCols         []drda.ColumnDescription
 	pkgsn             uint16
 	rewrittenOnServer bool
 	isTemp            bool
@@ -28,8 +28,8 @@ type Stmt struct {
 	mu                sync.Mutex
 }
 
-// NewStmt creates a prepared statement wrapper.
-func NewStmt(conn *Conn, query string, outputCols, paramCols []network.ColumnDescription, pkgsn ...uint16) *Stmt {
+// newStmt creates a prepared statement wrapper.
+func newStmt(conn *Conn, query string, outputCols, paramCols []drda.ColumnDescription, pkgsn ...uint16) *Stmt {
 	var sec uint16 = 1
 	if len(pkgsn) > 0 {
 		sec = pkgsn[0]
@@ -156,7 +156,7 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		if err != nil {
 			return nil, err
 		}
-		return NewResult(totalAffected, 0), nil
+		return newResult(totalAffected, 0), nil
 	}
 
 	if hasBlobParams(s.paramCols, rawArgs) {
@@ -167,7 +167,7 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 			if err != nil {
 				return nil, err
 			}
-			return NewResult(affected, 0), nil
+			return newResult(affected, 0), nil
 		}
 		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, newQuery, s.pkgsn)
 		if err != nil {
@@ -186,7 +186,7 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 				}
 			}
 		}
-		return NewResult(affected, 0), nil
+		return newResult(affected, 0), nil
 	}
 
 	if s.rewrittenOnServer {
@@ -213,7 +213,7 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		}
 	}
 
-	return NewResult(affected, 0), nil
+	return newResult(affected, 0), nil
 }
 
 // Query executes a prepared query statement with positional arguments (legacy interface).
@@ -319,13 +319,13 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		}
 
 		if len(sets) == 0 {
-			return NewRows(nil, nil), nil
+			return newRows(nil, nil), nil
 		}
-		resultSets := make([]ResultSet, len(sets))
+		resultSets := make([]resultSet, len(sets))
 		for i, set := range sets {
-			resultSets[i] = ResultSet{Columns: set.Columns, Data: set.Data}
+			resultSets[i] = resultSet{columns: set.Columns, data: set.Data}
 		}
-		return NewMultiRows(resultSets), nil
+		return newMultiRows(resultSets), nil
 	}
 
 	if len(s.outputCols) == 0 {
@@ -336,7 +336,7 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		if err != nil {
 			return nil, err
 		}
-		return NewRows(nil, nil), nil
+		return newRows(nil, nil), nil
 	}
 
 	rawArgs := make([]any, len(args))
@@ -357,12 +357,12 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		onClose = s.Close
 	}
 
-	return NewStreamingRows(cols, initialRows, stream, onClose), nil
+	return newStreamingRows(cols, initialRows, stream, onClose), nil
 }
 
-func hasBlobParams(paramCols []network.ColumnDescription, args []any) bool {
+func hasBlobParams(paramCols []drda.ColumnDescription, args []any) bool {
 	for i, c := range paramCols {
-		if (types.SQLType(c.SQLType) == types.SQLTypeBlob || types.SQLType(c.SQLType) == types.SQLTypeNBlob) && i < len(args) {
+		if (codec.SQLType(c.SQLType) == codec.SQLTypeBlob || codec.SQLType(c.SQLType) == codec.SQLTypeNBlob) && i < len(args) {
 			if b, ok := args[i].([]byte); ok && len(b) > 0 && len(b) <= 16383 {
 				return true
 			}
@@ -373,9 +373,9 @@ func hasBlobParams(paramCols []network.ColumnDescription, args []any) bool {
 
 // rewriteBinaryParams rewrites '?' for BLOB parameters while safely ignoring '?' within
 // string literals ('...'), identifiers ("..."), line comments (--...) and block comments (/*...*/).
-func rewriteBinaryParams(query string, paramCols []network.ColumnDescription, args []any) (string, []network.ColumnDescription, []any) {
+func rewriteBinaryParams(query string, paramCols []drda.ColumnDescription, args []any) (string, []drda.ColumnDescription, []any) {
 	var rewrittenQuery strings.Builder
-	var rewrittenCols []network.ColumnDescription
+	var rewrittenCols []drda.ColumnDescription
 	var rewrittenArgs []any
 
 	paramIdx := 0
@@ -466,7 +466,7 @@ func rewriteBinaryParams(query string, paramCols []network.ColumnDescription, ar
 		if ch == '?' {
 			if paramIdx < len(paramCols) && paramIdx < len(args) {
 				c := paramCols[paramIdx]
-				if types.SQLType(c.SQLType) == types.SQLTypeBlob || types.SQLType(c.SQLType) == types.SQLTypeNBlob {
+				if codec.SQLType(c.SQLType) == codec.SQLTypeBlob || codec.SQLType(c.SQLType) == codec.SQLTypeNBlob {
 					if b, ok := args[paramIdx].([]byte); ok && len(b) > 0 {
 						rewrittenQuery.WriteString(fmt.Sprintf("BLOB(X'%x')", b))
 						paramIdx++

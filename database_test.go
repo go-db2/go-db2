@@ -315,3 +315,26 @@ func BenchmarkQuoteIdentifier_WithQuotes(b *testing.B) {
 		_ = quoteIdentifier(name)
 	}
 }
+
+func TestCreateDB_ContextValidation(t *testing.T) {
+	ctx := context.Background()
+	if err := CreateDB(ctx, "", "db2://usr:pwd@localhost:50000/DB"); err == nil {
+		t.Errorf("expected error with empty dbname in CreateDB")
+	}
+	if err := CreateDB(ctx, "VALIDDB", ""); err == nil {
+		t.Errorf("expected error with empty connStr in CreateDB")
+	}
+	if err := CreateDB(ctx, "VALIDDB", "db2://usr:pwd@localhost:50000/DB", "invalidOpt"); err == nil {
+		t.Errorf("expected error with invalid option format in CreateDB")
+	}
+}
+
+func TestDropDB_ContextValidation(t *testing.T) {
+	ctx := context.Background()
+	if err := DropDB(ctx, "", "db2://usr:pwd@localhost:50000/DB"); err == nil {
+		t.Errorf("expected error with empty dbname in DropDB")
+	}
+	if err := DropDB(ctx, "VALIDDB", ""); err == nil {
+		t.Errorf("expected error with empty connStr in DropDB")
+	}
+}

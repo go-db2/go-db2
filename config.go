@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 var (
@@ -363,9 +363,9 @@ func applyParam(cfg *Config, key, val string) error {
 	return nil
 }
 
-// ToSessionConfig converts Config to the network.SessionConfig structure.
-func (c *Config) ToSessionConfig() network.SessionConfig {
-	return network.SessionConfig{
+// toSessionConfig converts Config to the drda.SessionConfig structure.
+func (c *Config) toSessionConfig() drda.SessionConfig {
+	return drda.SessionConfig{
 		Host:               c.Host,
 		Port:               c.Port,
 		Database:           c.Database,

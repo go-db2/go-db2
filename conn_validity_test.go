@@ -8,28 +8,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 // A reply the client cannot frame leaves unread bytes on the socket. The
 // connection must not go back into the pool: the next request on it would
 // read those bytes as the start of its own reply.
 func TestConnectionIsDiscardedAfterUnreadableReply(t *testing.T) {
-	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case network.CodePointPRPSQLSTT:
+		case drda.CodePointPRPSQLSTT:
 			// A DSS frame whose DDM object claims more bytes than the frame
 			// holds, followed by the rest of the frame.
 			frame := make([]byte, 20)
 			binary.BigEndian.PutUint16(frame[0:2], 20)
-			frame[2] = network.DSSMagic
-			frame[3] = network.DSSTypeReply
+			frame[2] = drda.DSSMagic
+			frame[3] = drda.DSSTypeReply
 			binary.BigEndian.PutUint16(frame[4:6], 1)
 			binary.BigEndian.PutUint16(frame[6:8], 0x0100)
-			binary.BigEndian.PutUint16(frame[8:10], uint16(network.CodePointQRYDTA))
+			binary.BigEndian.PutUint16(frame[8:10], uint16(drda.CodePointQRYDTA))
 			_, err := c.Write(frame)
 			return err == nil
-		case network.CodePointEXCSAT, network.CodePointRDBCMM:
+		case drda.CodePointEXCSAT, drda.CodePointRDBCMM:
 			return writeEXCSATRDOrOK(c)
 		}
 		return false

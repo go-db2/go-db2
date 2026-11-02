@@ -14,10 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-db2/go-db2/converters"
-	"github.com/go-db2/go-db2/network"
-	"github.com/go-db2/go-db2/network/security"
-	"github.com/go-db2/go-db2/types"
+	"github.com/go-db2/go-db2/internal/auth"
+	"github.com/go-db2/go-db2/internal/codec"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 // 1. SEC-01: SQL Injection in Administrative Functions (CreateDb, DropDb)
@@ -63,7 +62,7 @@ func TestSecurity_SQLInjection_SwitchUser(t *testing.T) {
 		"",
 	}
 
-	session := &network.Session{}
+	session := &drda.Session{}
 
 	for _, user := range maliciousUsers {
 		t.Run("SwitchUser_"+user, func(t *testing.T) {
@@ -102,7 +101,7 @@ func TestSecurity_PasswordRedaction(t *testing.T) {
 		}
 	}
 
-	sessCfg := cfg.ToSessionConfig()
+	sessCfg := cfg.toSessionConfig()
 	sStrOutput := fmt.Sprintf("%v", sessCfg)
 	sStrDetailed := fmt.Sprintf("%+v", sessCfg)
 
@@ -120,21 +119,21 @@ func TestSecurity_PasswordRedaction(t *testing.T) {
 func TestSecurity_BuildSQLDTA_Over84Parameters(t *testing.T) {
 	numParams := 100 // Exceeds the 84 limit that would overflow a uint8
 
-	colTypes := make([]types.SQLType, numParams)
+	colTypes := make([]codec.SQLType, numParams)
 	colLens := make([]int64, numParams)
 	precs := make([]int, numParams)
 	scales := make([]int, numParams)
 	args := make([]any, numParams)
 
 	for i := 0; i < numParams; i++ {
-		colTypes[i] = types.SQLTypeInteger
+		colTypes[i] = codec.SQLTypeInteger
 		colLens[i] = 4
 		precs[i] = 0
 		scales[i] = 0
 		args[i] = int32(i + 1)
 	}
 
-	sqldta, err := converters.BuildSQLDTA(colTypes, colLens, precs, scales, args, binary.BigEndian)
+	sqldta, err := codec.BuildSQLDTA(colTypes, colLens, precs, scales, args, binary.BigEndian)
 	if err != nil {
 		t.Fatalf("BuildSQLDTA failed for %d parameters: %v", numParams, err)
 	}
@@ -152,9 +151,9 @@ func TestSecurity_BuildSQLDTA_Over84Parameters(t *testing.T) {
 // 5. SEC-03: SQL Parser Rewriting with Comments and String Literals
 func TestSecurity_RewriteBinaryParams_WithCommentsAndStrings(t *testing.T) {
 	query := "SELECT 'Is this a param ? or not?' AS txt, col1 FROM tbl WHERE id = ? -- is this id ?\n AND name = /* block ? */ ?"
-	paramCols := []network.ColumnDescription{
-		{SQLType: uint16(types.SQLTypeInteger)},
-		{SQLType: uint16(types.SQLTypeVarChar)},
+	paramCols := []drda.ColumnDescription{
+		{SQLType: uint16(codec.SQLTypeInteger)},
+		{SQLType: uint16(codec.SQLTypeVarChar)},
 	}
 	args := []any{100, "Alice"}
 
@@ -179,7 +178,7 @@ func TestSecurity_SECMEC9_InvalidDHPublicKeys(t *testing.T) {
 	oneKey := make([]byte, 32)
 	oneKey[31] = 0x01 // 1
 
-	pMinusOne := new(big.Int).Sub(security.DHSecmec9Prime, big.NewInt(1))
+	pMinusOne := new(big.Int).Sub(auth.DHSecmec9Prime, big.NewInt(1))
 	pMinusOneKey := pMinusOne.Bytes()
 
 	testCases := []struct {
@@ -193,7 +192,7 @@ func TestSecurity_SECMEC9_InvalidDHPublicKeys(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := security.CalculateSessionKey(tc.key, clientPriv)
+			_, err := auth.CalculateSessionKey(tc.key, clientPriv)
 			if err == nil {
 				t.Fatalf("expected error for weak DH public key %s, got nil", tc.name)
 			}
@@ -210,7 +209,7 @@ func TestSecurity_FDODTA_InvalidTemporalFormat(t *testing.T) {
 	}
 
 	for _, invalid := range invalidDates {
-		_, err := converters.FDODTA(types.SQLTypeDate, 10, 0, 0, invalid, binary.BigEndian)
+		_, err := codec.FDODTA(codec.SQLTypeDate, 10, 0, 0, invalid, binary.BigEndian)
 		if err == nil {
 			t.Fatalf("expected error for invalid date %q, got nil", invalid)
 		}
@@ -220,8 +219,8 @@ func TestSecurity_FDODTA_InvalidTemporalFormat(t *testing.T) {
 // 8. SEC-10 & SEC-11: Mutex Concurrency on Stmt and Result
 func TestSecurity_Stmt_And_Result_Concurrency(t *testing.T) {
 	conn := &Conn{}
-	stmt := NewStmt(conn, "SELECT 1 FROM SYSIBM.SYSDUMMY1 WHERE ID = ?", nil, []network.ColumnDescription{
-		{SQLType: uint16(types.SQLTypeInteger)},
+	stmt := newStmt(conn, "SELECT 1 FROM SYSIBM.SYSDUMMY1 WHERE ID = ?", nil, []drda.ColumnDescription{
+		{SQLType: uint16(codec.SQLTypeInteger)},
 	})
 
 	var wg sync.WaitGroup
@@ -233,7 +232,7 @@ func TestSecurity_Stmt_And_Result_Concurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			_ = stmt.NumInput()
-			res := NewResult(int64(id), int64(id*10))
+			res := newResult(int64(id), int64(id*10))
 			_, _ = res.RowsAffected()
 		}(i)
 	}
@@ -254,7 +253,7 @@ func TestSecurity_ReadDSS_MalformedFrameLength(t *testing.T) {
 	buf = append(buf, make([]byte, 10)...)
 
 	reader := strings.NewReader(string(buf))
-	_, _, _, _, err := network.ReadDSS(reader)
+	_, _, _, _, err := drda.ReadDSS(reader)
 	if err == nil {
 		t.Fatal("expected error when objLen > dssLen - 6, got nil")
 	}
@@ -263,13 +262,13 @@ func TestSecurity_ReadDSS_MalformedFrameLength(t *testing.T) {
 // 10. SEC-03: DecodeField panic protection for truncated metadata (len(ps) < 2)
 func TestSecurity_DecodeField_TruncatedMetadataPanicProtection(t *testing.T) {
 	testTypes := []uint8{
-		converters.DRDATypeChar,
-		converters.DRDATypeGraphic,
-		converters.DRDATypeVarChar,
-		converters.DRDATypeDate,
-		converters.DRDATypeTime,
-		converters.DRDATypeTimestamp,
-		converters.DRDATypeDecimal,
+		codec.DRDATypeChar,
+		codec.DRDATypeGraphic,
+		codec.DRDATypeVarChar,
+		codec.DRDATypeDate,
+		codec.DRDATypeTime,
+		codec.DRDATypeTimestamp,
+		codec.DRDATypeDecimal,
 	}
 
 	invalidPSList := [][]byte{
@@ -288,7 +287,7 @@ func TestSecurity_DecodeField_TruncatedMetadataPanicProtection(t *testing.T) {
 				}()
 
 				dummyData := strings.NewReader("1234567890abcdef")
-				_, err := converters.DecodeField(dt, ps, dummyData, binary.LittleEndian)
+				_, err := codec.DecodeField(dt, ps, dummyData, binary.LittleEndian)
 				if err == nil {
 					t.Fatalf("expected error for truncated ps with len %d, got nil", len(ps))
 				}
@@ -301,7 +300,7 @@ func TestSecurity_DecodeField_TruncatedMetadataPanicProtection(t *testing.T) {
 // long for a 15-bit length is carried whole behind a 4-byte extended length.
 func TestSecurity_PackDDMObject_LargePayloadProtection(t *testing.T) {
 	largeBody := make([]byte, 70000)
-	obj := network.PackDDMObject(network.CodePointSQLSTT, largeBody)
+	obj := drda.PackDDMObject(drda.CodePointSQLSTT, largeBody)
 	if got := binary.BigEndian.Uint16(obj[0:2]); got != 0x8008 {
 		t.Fatalf("expected extended length field 0x8008, got 0x%04X", got)
 	}
@@ -315,7 +314,7 @@ func TestSecurity_PackDDMObject_LargePayloadProtection(t *testing.T) {
 
 // 12. SEC-01 & SEC-05: Session AutoCommit state and Tx concurrency
 func TestSecurity_Session_AutoCommitSwitching(t *testing.T) {
-	sess := network.NewSession(network.SessionConfig{Database: "TESTDB"})
+	sess := drda.NewSession(drda.SessionConfig{Database: "TESTDB"})
 	if !sess.AutoCommit() {
 		t.Fatal("expected AutoCommit=true on new session")
 	}
@@ -506,9 +505,9 @@ func TestSecurity_NullByteSanitization_AdminCmd(t *testing.T) {
 
 // 16. SEC-16: Context Metadata (WithUser & WithClientInfo) Enforcement in Prepared Statements
 func TestSecurity_PreparedStatement_ContextMetadata(t *testing.T) {
-	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case network.CodePointEXCSQLSET, network.CodePointRDBCMM, network.CodePointEXCSAT:
+		case drda.CodePointEXCSQLSET, drda.CodePointRDBCMM, drda.CodePointEXCSAT:
 			return writeEXCSATRDOrOK(c)
 		}
 		return false
@@ -540,7 +539,7 @@ func TestSecurity_PreparedStatement_ContextMetadata(t *testing.T) {
 		t.Fatalf("failed to extract *Conn: %v", err)
 	}
 
-	stmt := NewStmt(conn, "SELECT 1 FROM SYSIBM.SYSDUMMY1", nil, nil)
+	stmt := newStmt(conn, "SELECT 1 FROM SYSIBM.SYSDUMMY1", nil, nil)
 
 	maliciousCtx := WithUser(context.Background(), "ADMIN; DROP TABLE USERS; --")
 
@@ -595,9 +594,9 @@ func TestSecurity_PasswordRedaction_DSNError(t *testing.T) {
 
 // 18. SEC-18: ResetSession Optimization and Error Handling
 func TestSecurity_ResetSession_OptimizationAndErrorHandling(t *testing.T) {
-	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case network.CodePointEXCSQLSET, network.CodePointRDBCMM:
+		case drda.CodePointEXCSQLSET, drda.CodePointRDBCMM:
 			return writeSQLCARDOK(c)
 		}
 		return false
@@ -689,7 +688,7 @@ func TestSecurity_ParseQRYDSC_MultiGroupOver84Columns(t *testing.T) {
 		i += chunkSize
 	}
 
-	fields, err := network.ParseQRYDSC(payload)
+	fields, err := drda.ParseQRYDSC(payload)
 	if err != nil {
 		t.Fatalf("ParseQRYDSC failed for %d columns across multiple descriptor groups: %v", numCols, err)
 	}
@@ -707,9 +706,9 @@ func TestSecurity_ParseQRYDSC_MultiGroupOver84Columns(t *testing.T) {
 
 // 20. SEC-20: CRLF & Control Character Sanitization in Client Audit Special Registers
 func TestSecurity_ClientInfo_CRLF_Sanitization(t *testing.T) {
-	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case network.CodePointEXCSQLSET, network.CodePointRDBCMM, network.CodePointEXCSAT:
+		case drda.CodePointEXCSQLSET, drda.CodePointRDBCMM, drda.CodePointEXCSAT:
 			return writeEXCSATRDOrOK(c)
 		}
 		return false
@@ -761,7 +760,7 @@ func TestSecurity_ClientInfo_CRLF_Sanitization(t *testing.T) {
 // 22. SEC-22: Context Metadata (WithUser) Username Identifier Validation
 func TestSecurity_WithUser_Validation(t *testing.T) {
 	conn := &Conn{
-		session: &network.Session{},
+		session: &drda.Session{},
 	}
 
 	invalidUsers := []string{
@@ -807,10 +806,10 @@ func TestSecurity_WithUser_Validation(t *testing.T) {
 // 21. SEC-21: sql.Out nil destination pointer dereference protection
 func TestSecurity_SqlOut_NilDestinationPanicProtection(t *testing.T) {
 	conn := &Conn{
-		session: &network.Session{},
+		session: &drda.Session{},
 	}
-	stmt := NewStmt(conn, "CALL MY_PROC(?)", nil, []network.ColumnDescription{
-		{SQLType: uint16(types.SQLTypeInteger)},
+	stmt := newStmt(conn, "CALL MY_PROC(?)", nil, []drda.ColumnDescription{
+		{SQLType: uint16(codec.SQLTypeInteger)},
 	})
 
 	testCases := []struct {
@@ -874,7 +873,7 @@ func TestSecurity_ParseSQLDTARD_ExtendedLengthAndBounds(t *testing.T) {
 
 	sqldtardPayload := append(fdodscObj, fdodtaObj...)
 
-	res, err := converters.ParseSQLDTARD(sqldtardPayload, binary.BigEndian)
+	res, err := codec.ParseSQLDTARD(sqldtardPayload, binary.BigEndian)
 	if err != nil {
 		t.Fatalf("ParseSQLDTARD failed for extended length FDODTA parameter: %v", err)
 	}
@@ -889,7 +888,7 @@ func TestSecurity_ParseSQLDTARD_ExtendedLengthAndBounds(t *testing.T) {
 
 	// Test malformed payload bounds
 	malformed := []byte{0x80, 0x08, 0x14, 0x7A, 0x00, 0x00, 0x01, 0xFF} // claims 0x1FF bytes payload but data truncated
-	_, err = converters.ParseSQLDTARD(malformed, binary.BigEndian)
+	_, err = codec.ParseSQLDTARD(malformed, binary.BigEndian)
 	if err == nil {
 		t.Fatalf("expected error for malformed extended length payload, got nil")
 	}

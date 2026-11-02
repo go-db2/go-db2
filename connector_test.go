@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 func TestNewConnectorAndDriver(t *testing.T) {
@@ -115,41 +115,41 @@ func TestConnectorOpenDB_Success(t *testing.T) {
 
 				// 1. Read EXCSAT + ACCSEC
 				for {
-					hdr, cp, _, _, err := network.ReadDSS(c)
+					hdr, cp, _, _, err := drda.ReadDSS(c)
 					if err != nil {
 						return
 					}
-					if cp == network.CodePointACCSEC || !hdr.Chained {
+					if cp == drda.CodePointACCSEC || !hdr.Chained {
 						break
 					}
 				}
 
 				// 2. Respond with ACCSECRD
-				accsecRdBody := network.PackUint16(network.CodePointSECMEC, network.SecMecUSRIDPWD)
-				accsecRdObj := network.PackDDMObject(network.CodePointACCSECRD, accsecRdBody)
-				dssHdr := network.BuildDSSHeader(len(accsecRdObj), network.DSSTypeReply, false, false, false, 1)
+				accsecRdBody := drda.PackUint16(drda.CodePointSECMEC, drda.SecMecUSRIDPWD)
+				accsecRdObj := drda.PackDDMObject(drda.CodePointACCSECRD, accsecRdBody)
+				dssHdr := drda.BuildDSSHeader(len(accsecRdObj), drda.DSSTypeReply, false, false, false, 1)
 				if _, err := c.Write(append(dssHdr, accsecRdObj...)); err != nil {
 					return
 				}
 
 				// 3. Read SECCHK + ACCRDB
 				for {
-					hdr, cp, _, _, err := network.ReadDSS(c)
+					hdr, cp, _, _, err := drda.ReadDSS(c)
 					if err != nil {
 						return
 					}
-					if cp == network.CodePointACCRDB || !hdr.Chained {
+					if cp == drda.CodePointACCRDB || !hdr.Chained {
 						break
 					}
 				}
 
 				// 4. Respond with SECCHKRM + ACCRDBRM
-				secchkRmBody := network.PackBytes(network.CodePointSECCHKCD, []byte{0x00})
-				secchkRmObj := network.PackDDMObject(network.CodePointSECCHKRM, secchkRmBody)
-				accrdbRmObj := network.PackDDMObject(network.CodePointACCRDBRM, nil)
+				secchkRmBody := drda.PackBytes(drda.CodePointSECCHKCD, []byte{0x00})
+				secchkRmObj := drda.PackDDMObject(drda.CodePointSECCHKRM, secchkRmBody)
+				accrdbRmObj := drda.PackDDMObject(drda.CodePointACCRDBRM, nil)
 
-				hdr1 := network.BuildDSSHeader(len(secchkRmObj), network.DSSTypeReply, true, false, false, 1)
-				hdr2 := network.BuildDSSHeader(len(accrdbRmObj), network.DSSTypeReply, false, false, false, 1)
+				hdr1 := drda.BuildDSSHeader(len(secchkRmObj), drda.DSSTypeReply, true, false, false, 1)
+				hdr2 := drda.BuildDSSHeader(len(accrdbRmObj), drda.DSSTypeReply, false, false, false, 1)
 
 				var respBuf bytes.Buffer
 				respBuf.Write(hdr1)
@@ -162,11 +162,11 @@ func TestConnectorOpenDB_Success(t *testing.T) {
 
 				// 5. Read post-connect setup packets
 				for {
-					hdr, cp, _, _, err := network.ReadDSS(c)
+					hdr, cp, _, _, err := drda.ReadDSS(c)
 					if err != nil {
 						return
 					}
-					if cp == network.CodePointRDBCMM || !hdr.Chained {
+					if cp == drda.CodePointRDBCMM || !hdr.Chained {
 						break
 					}
 				}
@@ -176,25 +176,25 @@ func TestConnectorOpenDB_Success(t *testing.T) {
 				sqlcardPayload[0] = 0x00
 				binary.LittleEndian.PutUint32(sqlcardPayload[1:5], 0)
 				copy(sqlcardPayload[5:10], "00000")
-				sqlcardObj := network.PackDDMObject(network.CodePointSQLCARD, sqlcardPayload)
-				sqlcardHdr := network.BuildDSSHeader(len(sqlcardObj), network.DSSTypeReply, false, false, false, 1)
+				sqlcardObj := drda.PackDDMObject(drda.CodePointSQLCARD, sqlcardPayload)
+				sqlcardHdr := drda.BuildDSSHeader(len(sqlcardObj), drda.DSSTypeReply, false, false, false, 1)
 				if _, err := c.Write(append(sqlcardHdr, sqlcardObj...)); err != nil {
 					return
 				}
 
 				// 6. Loop to handle Ping (RDBCMM) or Begin/Commit
 				for {
-					_, cp, _, _, err := network.ReadDSS(c)
+					_, cp, _, _, err := drda.ReadDSS(c)
 					if err != nil {
 						return
 					}
-					if cp == network.CodePointEXCSAT {
-						excsatRdObj := network.PackDDMObject(network.CodePointEXCSATRD, nil)
-						excsatRdHdr := network.BuildDSSHeader(len(excsatRdObj), network.DSSTypeReply, false, false, false, 1)
+					if cp == drda.CodePointEXCSAT {
+						excsatRdObj := drda.PackDDMObject(drda.CodePointEXCSATRD, nil)
+						excsatRdHdr := drda.BuildDSSHeader(len(excsatRdObj), drda.DSSTypeReply, false, false, false, 1)
 						if _, err := c.Write(append(excsatRdHdr, excsatRdObj...)); err != nil {
 							return
 						}
-					} else if cp == network.CodePointRDBCMM {
+					} else if cp == drda.CodePointRDBCMM {
 						if _, err := c.Write(append(sqlcardHdr, sqlcardObj...)); err != nil {
 							return
 						}

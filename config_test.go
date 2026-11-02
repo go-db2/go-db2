@@ -226,12 +226,12 @@ func TestParseDSN_Kerberos(t *testing.T) {
 		t.Errorf("Krb5CCacheFile = %q, want /tmp/krb5cc_1000", cfg.Krb5CCacheFile)
 	}
 
-	sessCfg := cfg.ToSessionConfig()
+	sessCfg := cfg.toSessionConfig()
 	if sessCfg.SecurityMechanism != 7 {
-		t.Errorf("ToSessionConfig().SecurityMechanism = %d, want 7", sessCfg.SecurityMechanism)
+		t.Errorf("toSessionConfig().SecurityMechanism = %d, want 7", sessCfg.SecurityMechanism)
 	}
 	if sessCfg.KerberosSPN != "db2/server.corp.local@CORP.LOCAL" {
-		t.Errorf("ToSessionConfig().KerberosSPN = %q, want db2/server.corp.local@CORP.LOCAL", sessCfg.KerberosSPN)
+		t.Errorf("toSessionConfig().KerberosSPN = %q, want db2/server.corp.local@CORP.LOCAL", sessCfg.KerberosSPN)
 	}
 }
 
@@ -258,12 +258,12 @@ func TestParseDSN_ClientInfo(t *testing.T) {
 		t.Errorf("ClientCorrToken = %q, want trace-xyz-789", cfg.ClientCorrToken)
 	}
 
-	sessCfg := cfg.ToSessionConfig()
+	sessCfg := cfg.toSessionConfig()
 	if sessCfg.ClientApplName != "orders-service" {
-		t.Errorf("ToSessionConfig().ClientApplName = %q, want orders-service", sessCfg.ClientApplName)
+		t.Errorf("toSessionConfig().ClientApplName = %q, want orders-service", sessCfg.ClientApplName)
 	}
 	if sessCfg.ClientWrkstnName != "k8s-pod-99" {
-		t.Errorf("ToSessionConfig().ClientWrkstnName = %q, want k8s-pod-99", sessCfg.ClientWrkstnName)
+		t.Errorf("toSessionConfig().ClientWrkstnName = %q, want k8s-pod-99", sessCfg.ClientWrkstnName)
 	}
 }
 

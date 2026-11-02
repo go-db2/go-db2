@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 
-	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 // Connector implements the database/sql/driver.Connector interface.
@@ -23,14 +23,14 @@ func NewConnector(cfg *Config) *Connector {
 
 // Connect returns a new active connection to the database.
 func (c *Connector) Connect(ctx context.Context) (driver.Conn, error) {
-	sessionCfg := c.cfg.ToSessionConfig()
-	session := network.NewSession(sessionCfg)
+	sessionCfg := c.cfg.toSessionConfig()
+	session := drda.NewSession(sessionCfg)
 
 	if err := session.Connect(ctx); err != nil {
 		return nil, err
 	}
 
-	return NewConn(session, c.cfg), nil
+	return newConn(session, c.cfg), nil
 }
 
 // Driver returns the underlying Driver of the Connector.

@@ -6,21 +6,21 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/go-db2/go-db2/network"
-	"github.com/go-db2/go-db2/types"
+	"github.com/go-db2/go-db2/internal/codec"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
-func TestRowsSingleResultSet(t *testing.T) {
-	cols := []network.ColumnDescription{
-		{Name: "ID", SQLType: uint16(types.SQLTypeInteger), Length: 4},
-		{Name: "NAME", SQLType: uint16(types.SQLTypeVarChar), Length: 50, Nullable: true},
+func TestRowsSingleresultSet(t *testing.T) {
+	cols := []drda.ColumnDescription{
+		{Name: "ID", SQLType: uint16(codec.SQLTypeInteger), Length: 4},
+		{Name: "NAME", SQLType: uint16(codec.SQLTypeVarChar), Length: 50, Nullable: true},
 	}
 	data := [][]driver.Value{
 		{int64(1), "Alice"},
 		{int64(2), "Bob"},
 	}
 
-	rows := NewRows(cols, data)
+	rows := newRows(cols, data)
 
 	names := rows.Columns()
 	if len(names) != 2 || names[0] != "ID" || names[1] != "NAME" {
@@ -55,27 +55,27 @@ func TestRowsSingleResultSet(t *testing.T) {
 	}
 }
 
-func TestRowsMultipleResultSets(t *testing.T) {
-	set1Cols := []network.ColumnDescription{
-		{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
-		{Name: "NAME", SQLType: uint16(types.SQLTypeVarChar)},
+func TestRowsMultipleresultSets(t *testing.T) {
+	set1Cols := []drda.ColumnDescription{
+		{Name: "ID", SQLType: uint16(codec.SQLTypeInteger)},
+		{Name: "NAME", SQLType: uint16(codec.SQLTypeVarChar)},
 	}
 	set1Data := [][]driver.Value{
 		{int64(1), "Alice"},
 		{int64(2), "Bob"},
 	}
 
-	set2Cols := []network.ColumnDescription{
-		{Name: "TOTAL_USERS", SQLType: uint16(types.SQLTypeBigInt)},
-		{Name: "AVG_AGE", SQLType: uint16(types.SQLTypeFloat)},
+	set2Cols := []drda.ColumnDescription{
+		{Name: "TOTAL_USERS", SQLType: uint16(codec.SQLTypeBigInt)},
+		{Name: "AVG_AGE", SQLType: uint16(codec.SQLTypeFloat)},
 	}
 	set2Data := [][]driver.Value{
 		{int64(2), float64(27.5)},
 	}
 
-	multiRows := NewMultiRows([]ResultSet{
-		{Columns: set1Cols, Data: set1Data},
-		{Columns: set2Cols, Data: set2Data},
+	multiRows := newMultiRows([]resultSet{
+		{columns: set1Cols, data: set1Data},
+		{columns: set2Cols, data: set2Data},
 	})
 
 	// 1. First Result Set
@@ -139,13 +139,13 @@ func TestRowsMultipleResultSets(t *testing.T) {
 }
 
 func TestRowsColumns(t *testing.T) {
-	t.Run("SingleResultSet", func(t *testing.T) {
-		cols := []network.ColumnDescription{
-			{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
-			{Name: "NAME", SQLType: uint16(types.SQLTypeVarChar)},
-			{Name: "CREATED_AT", SQLType: uint16(types.SQLTypeTimestamp)},
+	t.Run("SingleresultSet", func(t *testing.T) {
+		cols := []drda.ColumnDescription{
+			{Name: "ID", SQLType: uint16(codec.SQLTypeInteger)},
+			{Name: "NAME", SQLType: uint16(codec.SQLTypeVarChar)},
+			{Name: "CREATED_AT", SQLType: uint16(codec.SQLTypeTimestamp)},
 		}
-		rows := NewRows(cols, nil)
+		rows := newRows(cols, nil)
 		got := rows.Columns()
 		expected := []string{"ID", "NAME", "CREATED_AT"}
 
@@ -160,27 +160,27 @@ func TestRowsColumns(t *testing.T) {
 	})
 
 	t.Run("EmptyColumns", func(t *testing.T) {
-		rows := NewRows([]network.ColumnDescription{}, nil)
+		rows := newRows([]drda.ColumnDescription{}, nil)
 		got := rows.Columns()
 		if len(got) != 0 {
 			t.Fatalf("expected empty slice, got len %d (%v)", len(got), got)
 		}
 	})
 
-	t.Run("MultipleResultSets", func(t *testing.T) {
-		set1Cols := []network.ColumnDescription{
+	t.Run("MultipleresultSets", func(t *testing.T) {
+		set1Cols := []drda.ColumnDescription{
 			{Name: "COL1_A"},
 			{Name: "COL1_B"},
 		}
-		set2Cols := []network.ColumnDescription{
+		set2Cols := []drda.ColumnDescription{
 			{Name: "COL2_X"},
 			{Name: "COL2_Y"},
 			{Name: "COL2_Z"},
 		}
 
-		multiRows := NewMultiRows([]ResultSet{
-			{Columns: set1Cols},
-			{Columns: set2Cols},
+		multiRows := newMultiRows([]resultSet{
+			{columns: set1Cols},
+			{columns: set2Cols},
 		})
 
 		// First result set columns
@@ -201,7 +201,7 @@ func TestRowsColumns(t *testing.T) {
 		}
 	})
 
-	t.Run("EmptyOrOutOfBoundsResultSets", func(t *testing.T) {
+	t.Run("EmptyOrOutOfBoundsresultSets", func(t *testing.T) {
 		t.Run("ZeroValueRows", func(t *testing.T) {
 			var rows Rows
 			got := rows.Columns()
@@ -211,15 +211,15 @@ func TestRowsColumns(t *testing.T) {
 		})
 
 		t.Run("EmptySetsSlice", func(t *testing.T) {
-			rows := NewMultiRows([]ResultSet{})
+			rows := newMultiRows([]resultSet{})
 			got := rows.Columns()
 			if len(got) != 0 {
-				t.Fatalf("expected empty slice for empty ResultSet slice, got %v", got)
+				t.Fatalf("expected empty slice for empty resultSet slice, got %v", got)
 			}
 		})
 
 		t.Run("OutOfBoundsIndex", func(t *testing.T) {
-			rows := NewRows([]network.ColumnDescription{{Name: "ID"}}, nil)
+			rows := newRows([]drda.ColumnDescription{{Name: "ID"}}, nil)
 			rows.currSetIndex = 99
 			got := rows.Columns()
 			if len(got) != 0 {
@@ -236,18 +236,18 @@ func TestRowsColumns(t *testing.T) {
 }
 
 func TestRowsColumnTypes(t *testing.T) {
-	cols := []network.ColumnDescription{
-		{Name: "C_INT", SQLType: uint16(types.SQLTypeInteger), Length: 4, Nullable: false},
-		{Name: "C_VARCHAR", SQLType: uint16(types.SQLTypeVarChar), Length: 100, Nullable: true},
-		{Name: "C_DECIMAL", SQLType: uint16(types.SQLTypeDecimal), Precision: 10, Scale: 2, Nullable: true},
-		{Name: "C_SMALLINT", SQLType: uint16(types.SQLTypeSmall)},
-		{Name: "C_BIGINT", SQLType: uint16(types.SQLTypeBigInt)},
-		{Name: "C_FLOAT", SQLType: uint16(types.SQLTypeFloat)},
-		{Name: "C_DATE", SQLType: uint16(types.SQLTypeDate)},
-		{Name: "C_BLOB", SQLType: uint16(types.SQLTypeBlob)},
-		{Name: "C_BOOLEAN", SQLType: uint16(types.SQLTypeBoolean)},
+	cols := []drda.ColumnDescription{
+		{Name: "C_INT", SQLType: uint16(codec.SQLTypeInteger), Length: 4, Nullable: false},
+		{Name: "C_VARCHAR", SQLType: uint16(codec.SQLTypeVarChar), Length: 100, Nullable: true},
+		{Name: "C_DECIMAL", SQLType: uint16(codec.SQLTypeDecimal), Precision: 10, Scale: 2, Nullable: true},
+		{Name: "C_SMALLINT", SQLType: uint16(codec.SQLTypeSmall)},
+		{Name: "C_BIGINT", SQLType: uint16(codec.SQLTypeBigInt)},
+		{Name: "C_FLOAT", SQLType: uint16(codec.SQLTypeFloat)},
+		{Name: "C_DATE", SQLType: uint16(codec.SQLTypeDate)},
+		{Name: "C_BLOB", SQLType: uint16(codec.SQLTypeBlob)},
+		{Name: "C_BOOLEAN", SQLType: uint16(codec.SQLTypeBoolean)},
 	}
-	rows := NewRows(cols, nil)
+	rows := newRows(cols, nil)
 
 	if rows.ColumnTypeScanType(0) != reflect.TypeOf(int32(0)) {
 		t.Fatalf("expected int32 scan type, got %v", rows.ColumnTypeScanType(0))
@@ -288,13 +288,32 @@ func TestRowsColumnTypes(t *testing.T) {
 }
 
 func BenchmarkRowsColumnTypeScanType(b *testing.B) {
-	cols := []network.ColumnDescription{
-		{Name: "C_INT", SQLType: uint16(types.SQLTypeInteger)},
-		{Name: "C_VARCHAR", SQLType: uint16(types.SQLTypeVarChar)},
-		{Name: "C_TIMESTAMP", SQLType: uint16(types.SQLTypeTimestamp)},
-		{Name: "C_DECIMAL", SQLType: uint16(types.SQLTypeDecimal)},
+	cols := []drda.ColumnDescription{
+		{Name: "C_INT", SQLType: uint16(codec.SQLTypeInteger)},
+		{Name: "C_VARCHAR", SQLType: uint16(codec.SQLTypeVarChar)},
+		{Name: "C_TIMESTAMP", SQLType: uint16(codec.SQLTypeTimestamp)},
+		{Name: "C_DECIMAL", SQLType: uint16(codec.SQLTypeDecimal)},
 	}
-	rows := NewRows(cols, nil)
+	rows := newRows(cols, nil)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = rows.ColumnTypeScanType(0)
+		_ = rows.ColumnTypeScanType(1)
+		_ = rows.ColumnTypeScanType(2)
+		_ = rows.ColumnTypeScanType(3)
+	}
+}
+
+func BenchmarkRowsColumnTypeScanType_Nullable(b *testing.B) {
+	cols := []drda.ColumnDescription{
+		{Name: "C_INT", SQLType: uint16(codec.SQLTypeInteger), Nullable: true},
+		{Name: "C_VARCHAR", SQLType: uint16(codec.SQLTypeVarChar), Nullable: true},
+		{Name: "C_TIMESTAMP", SQLType: uint16(codec.SQLTypeTimestamp), Nullable: true},
+		{Name: "C_DECIMAL", SQLType: uint16(codec.SQLTypeDecimal), Nullable: true},
+	}
+	rows := newRows(cols, nil)
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = rows.ColumnTypeScanType(0)
@@ -305,13 +324,13 @@ func BenchmarkRowsColumnTypeScanType(b *testing.B) {
 }
 
 func BenchmarkRowsColumnTypeDatabaseTypeName(b *testing.B) {
-	cols := []network.ColumnDescription{
-		{Name: "C_INT", SQLType: uint16(types.SQLTypeInteger)},
-		{Name: "C_VARCHAR", SQLType: uint16(types.SQLTypeVarChar)},
-		{Name: "C_TIMESTAMP", SQLType: uint16(types.SQLTypeTimestamp)},
-		{Name: "C_DECIMAL", SQLType: uint16(types.SQLTypeDecimal)},
+	cols := []drda.ColumnDescription{
+		{Name: "C_INT", SQLType: uint16(codec.SQLTypeInteger)},
+		{Name: "C_VARCHAR", SQLType: uint16(codec.SQLTypeVarChar)},
+		{Name: "C_TIMESTAMP", SQLType: uint16(codec.SQLTypeTimestamp)},
+		{Name: "C_DECIMAL", SQLType: uint16(codec.SQLTypeDecimal)},
 	}
-	rows := NewRows(cols, nil)
+	rows := newRows(cols, nil)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = rows.ColumnTypeDatabaseTypeName(0)
@@ -323,16 +342,16 @@ func BenchmarkRowsColumnTypeDatabaseTypeName(b *testing.B) {
 
 func TestNewRows(t *testing.T) {
 	t.Run("NormalInitializationAndIteration", func(t *testing.T) {
-		cols := []network.ColumnDescription{
-			{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
-			{Name: "NAME", SQLType: uint16(types.SQLTypeVarChar)},
+		cols := []drda.ColumnDescription{
+			{Name: "ID", SQLType: uint16(codec.SQLTypeInteger)},
+			{Name: "NAME", SQLType: uint16(codec.SQLTypeVarChar)},
 		}
 		data := [][]driver.Value{
 			{int64(10), "Alice"},
 			{int64(20), "Bob"},
 		}
 
-		rows := NewRows(cols, data)
+		rows := newRows(cols, data)
 		if rows == nil {
 			t.Fatalf("expected non-nil Rows")
 		}
@@ -371,14 +390,14 @@ func TestNewRows(t *testing.T) {
 	})
 
 	t.Run("MismatchedDestinationSliceLength", func(t *testing.T) {
-		cols := []network.ColumnDescription{
-			{Name: "VAL", SQLType: uint16(types.SQLTypeInteger)},
+		cols := []drda.ColumnDescription{
+			{Name: "VAL", SQLType: uint16(codec.SQLTypeInteger)},
 		}
 		data := [][]driver.Value{
 			{int64(100)},
 		}
 
-		rows := NewRows(cols, data)
+		rows := newRows(cols, data)
 
 		// Destination larger than row length
 		destLarge := make([]driver.Value, 3)
@@ -396,7 +415,7 @@ func TestNewRows(t *testing.T) {
 
 func TestNewRows_EdgeCases(t *testing.T) {
 	t.Run("NilColumnsAndData", func(t *testing.T) {
-		rows := NewRows(nil, nil)
+		rows := newRows(nil, nil)
 		if rows == nil {
 			t.Fatalf("expected non-nil Rows when instantiated with nil arguments")
 		}
@@ -412,7 +431,7 @@ func TestNewRows_EdgeCases(t *testing.T) {
 		}
 
 		if rows.HasNextResultSet() {
-			t.Errorf("expected HasNextResultSet to be false for empty NewRows")
+			t.Errorf("expected HasNextResultSet to be false for empty newRows")
 		}
 
 		if err := rows.NextResultSet(); err != io.EOF {
@@ -446,14 +465,14 @@ func TestNewRows_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("OperationsAfterClose", func(t *testing.T) {
-		cols := []network.ColumnDescription{
-			{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
+		cols := []drda.ColumnDescription{
+			{Name: "ID", SQLType: uint16(codec.SQLTypeInteger)},
 		}
 		data := [][]driver.Value{
 			{int64(1)},
 		}
 
-		rows := NewRows(cols, data)
+		rows := newRows(cols, data)
 		if err := rows.Close(); err != nil {
 			t.Fatalf("unexpected error on Close: %v", err)
 		}
@@ -473,10 +492,10 @@ func TestNewRows_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("NegativeColumnTypeIndexes", func(t *testing.T) {
-		cols := []network.ColumnDescription{
-			{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
+		cols := []drda.ColumnDescription{
+			{Name: "ID", SQLType: uint16(codec.SQLTypeInteger)},
 		}
-		rows := NewRows(cols, nil)
+		rows := newRows(cols, nil)
 
 		if scanType := rows.ColumnTypeScanType(-1); scanType != reflect.TypeOf(new(any)).Elem() {
 			t.Errorf("expected interface{} scan type for negative index, got %v", scanType)
@@ -501,8 +520,8 @@ func TestNewRows_EdgeCases(t *testing.T) {
 }
 
 func TestNewStreamingRows_NextAndPagination(t *testing.T) {
-	cols := []network.ColumnDescription{
-		{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
+	cols := []drda.ColumnDescription{
+		{Name: "ID", SQLType: uint16(codec.SQLTypeInteger)},
 	}
 	initial := [][]driver.Value{
 		{int64(1)},
@@ -515,7 +534,7 @@ func TestNewStreamingRows_NextAndPagination(t *testing.T) {
 		return nil
 	}
 
-	rows := NewStreamingRows(cols, initial, nil, onClose)
+	rows := newStreamingRows(cols, initial, nil, onClose)
 	dest := make([]driver.Value, 1)
 
 	if err := rows.Next(dest); err != nil || dest[0] != int64(1) {
@@ -533,5 +552,52 @@ func TestNewStreamingRows_NextAndPagination(t *testing.T) {
 	}
 	if !closedCalled {
 		t.Fatalf("expected onClose to be called on Close")
+	}
+}
+
+func TestRowsNullableColumnScanType(t *testing.T) {
+	cols := []drda.ColumnDescription{
+		{Name: "C_INT", SQLType: uint16(codec.SQLTypeInteger), Nullable: true},
+		{Name: "C_SMALLINT", SQLType: uint16(codec.SQLTypeSmall), Nullable: true},
+		{Name: "C_BIGINT", SQLType: uint16(codec.SQLTypeBigInt), Nullable: true},
+		{Name: "C_FLOAT", SQLType: uint16(codec.SQLTypeFloat), Nullable: true},
+		{Name: "C_VARCHAR", SQLType: uint16(codec.SQLTypeVarChar), Nullable: true},
+		{Name: "C_DATE", SQLType: uint16(codec.SQLTypeDate), Nullable: true},
+		{Name: "C_TIMESTAMP", SQLType: uint16(codec.SQLTypeTimestamp), Nullable: true},
+		{Name: "C_BOOLEAN", SQLType: uint16(codec.SQLTypeBoolean), Nullable: true},
+		{Name: "C_DECIMAL", SQLType: uint16(codec.SQLTypeDecimal), Nullable: true},
+		{Name: "C_BLOB", SQLType: uint16(codec.SQLTypeBlob), Nullable: true},
+	}
+	rows := newRows(cols, nil)
+
+	if rows.ColumnTypeScanType(0) != scanTypeNullInt64 {
+		t.Fatalf("expected scanTypeNullInt64, got %v", rows.ColumnTypeScanType(0))
+	}
+	if rows.ColumnTypeScanType(1) != scanTypeNullInt64 {
+		t.Fatalf("expected scanTypeNullInt64, got %v", rows.ColumnTypeScanType(1))
+	}
+	if rows.ColumnTypeScanType(2) != scanTypeNullInt64 {
+		t.Fatalf("expected scanTypeNullInt64, got %v", rows.ColumnTypeScanType(2))
+	}
+	if rows.ColumnTypeScanType(3) != scanTypeNullFloat64 {
+		t.Fatalf("expected scanTypeNullFloat64, got %v", rows.ColumnTypeScanType(3))
+	}
+	if rows.ColumnTypeScanType(4) != scanTypeNullString {
+		t.Fatalf("expected scanTypeNullString, got %v", rows.ColumnTypeScanType(4))
+	}
+	if rows.ColumnTypeScanType(5) != scanTypeNullTime {
+		t.Fatalf("expected scanTypeNullTime, got %v", rows.ColumnTypeScanType(5))
+	}
+	if rows.ColumnTypeScanType(6) != scanTypeNullTime {
+		t.Fatalf("expected scanTypeNullTime, got %v", rows.ColumnTypeScanType(6))
+	}
+	if rows.ColumnTypeScanType(7) != scanTypeNullBool {
+		t.Fatalf("expected scanTypeNullBool, got %v", rows.ColumnTypeScanType(7))
+	}
+	if rows.ColumnTypeScanType(8) != scanTypeNullString {
+		t.Fatalf("expected scanTypeNullString for Decimal, got %v", rows.ColumnTypeScanType(8))
+	}
+	if rows.ColumnTypeScanType(9) != scanTypeByteSlice {
+		t.Fatalf("expected scanTypeByteSlice for Blob, got %v", rows.ColumnTypeScanType(9))
 	}
 }

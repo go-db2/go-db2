@@ -13,15 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-db2/go-db2/converters"
-	"github.com/go-db2/go-db2/network"
-	"github.com/go-db2/go-db2/types"
+	"github.com/go-db2/go-db2/internal/codec"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 // AC-1: Statement isolation on the same connection.
 // Validates that multiple statements prepared on the same connection obtain distinct DRDA sections (pkgsn).
 func TestAC1_StatementIsolation_DistinctPkgsn(t *testing.T) {
-	conn := NewConn(nil, &Config{Database: "TESTDB"})
+	conn := newConn(nil, &Config{Database: "TESTDB"})
 
 	sm := conn.getSections()
 
@@ -30,14 +29,14 @@ func TestAC1_StatementIsolation_DistinctPkgsn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error acquiring sec1: %v", err)
 	}
-	stmt1 := NewStmt(conn, "INSERT INTO t1 VALUES (?)", nil, nil, sec1)
+	stmt1 := newStmt(conn, "INSERT INTO t1 VALUES (?)", nil, nil, sec1)
 
 	// stmt2 acquires section
 	sec2, err := sm.Acquire()
 	if err != nil {
 		t.Fatalf("unexpected error acquiring sec2: %v", err)
 	}
-	stmt2 := NewStmt(conn, "DELETE FROM t2 WHERE id = ?", nil, nil, sec2)
+	stmt2 := newStmt(conn, "DELETE FROM t2 WHERE id = ?", nil, nil, sec2)
 
 	if stmt1.pkgsn == stmt2.pkgsn {
 		t.Fatalf("expected distinct pkgsn for stmt1 and stmt2, got %d for both", stmt1.pkgsn)
@@ -54,7 +53,7 @@ func TestAC1_StatementIsolation_DistinctPkgsn(t *testing.T) {
 // 1. Preparing and closing 600 statements sequentially with max 500 sections does not exhaust pool.
 // 2. Executing 600 parameterized direct queries releases ephemeral sections via defer.
 func TestAC2_SectionLifecycleAndExhaustion(t *testing.T) {
-	conn := NewConn(nil, &Config{Database: "TESTDB"})
+	conn := newConn(nil, &Config{Database: "TESTDB"})
 
 	// 1. Prepare and close 600 statements
 	for i := 0; i < 600; i++ {
@@ -62,7 +61,7 @@ func TestAC2_SectionLifecycleAndExhaustion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("iteration %d: unexpected exhaustion error acquiring section: %v", i, err)
 		}
-		stmt := NewStmt(conn, "SELECT 1 FROM SYSIBM.SYSDUMMY1", nil, nil, sec)
+		stmt := newStmt(conn, "SELECT 1 FROM SYSIBM.SYSDUMMY1", nil, nil, sec)
 		if err := stmt.Close(); err != nil {
 			t.Fatalf("iteration %d: unexpected error closing stmt: %v", i, err)
 		}
@@ -82,7 +81,7 @@ func TestAC2_SectionLifecycleAndExhaustion(t *testing.T) {
 
 // AC-3: Section rollback when preparation fails.
 func TestAC3_SectionRollbackOnPrepareFailure(t *testing.T) {
-	conn := NewConn(nil, &Config{Database: "TESTDB"})
+	conn := newConn(nil, &Config{Database: "TESTDB"})
 	sm := conn.getSections()
 
 	// Acquire a section
@@ -114,7 +113,7 @@ func (m mockValuer) Value() (driver.Value, error) {
 
 // AC-4: driver.Valuer, [16]byte UUID, and Batch discrimination in CheckNamedValue.
 func TestAC4_NamedValueChecker_Valuer_UUID_Batch(t *testing.T) {
-	conn := NewConn(nil, &Config{Database: "TESTDB"})
+	conn := newConn(nil, &Config{Database: "TESTDB"})
 
 	// 1. driver.Valuer dereferencing
 	nvValuer := &driver.NamedValue{
@@ -194,8 +193,8 @@ func TestAC5_StrictNumericValidation(t *testing.T) {
 	endian := binary.BigEndian
 
 	// SMALLINT overflow: 70000
-	_, err := converters.BuildSQLDTA(
-		[]types.SQLType{types.SQLTypeSmall},
+	_, err := codec.BuildSQLDTA(
+		[]codec.SQLType{codec.SQLTypeSmall},
 		[]int64{2},
 		[]int{0},
 		[]int{0},
@@ -207,8 +206,8 @@ func TestAC5_StrictNumericValidation(t *testing.T) {
 	}
 
 	// INTEGER overflow: 5000000000
-	_, err = converters.BuildSQLDTA(
-		[]types.SQLType{types.SQLTypeInteger},
+	_, err = codec.BuildSQLDTA(
+		[]codec.SQLType{codec.SQLTypeInteger},
 		[]int64{4},
 		[]int{0},
 		[]int{0},
@@ -220,8 +219,8 @@ func TestAC5_StrictNumericValidation(t *testing.T) {
 	}
 
 	// Incompatible type: string "texto" passed to numeric column
-	_, err = converters.BuildSQLDTA(
-		[]types.SQLType{types.SQLTypeInteger},
+	_, err = codec.BuildSQLDTA(
+		[]codec.SQLType{codec.SQLTypeInteger},
 		[]int64{4},
 		[]int{0},
 		[]int{0},
@@ -233,8 +232,8 @@ func TestAC5_StrictNumericValidation(t *testing.T) {
 	}
 
 	// uint64 overflow > math.MaxInt64
-	_, err = converters.BuildSQLDTA(
-		[]types.SQLType{types.SQLTypeBigInt},
+	_, err = codec.BuildSQLDTA(
+		[]codec.SQLType{codec.SQLTypeBigInt},
 		[]int64{8},
 		[]int{0},
 		[]int{0},
@@ -248,7 +247,7 @@ func TestAC5_StrictNumericValidation(t *testing.T) {
 
 // AC-6: Transaction isolation levels and state restoration.
 func TestAC6_TransactionIsolation(t *testing.T) {
-	conn := NewConn(nil, &Config{Database: "TESTDB"})
+	conn := newConn(nil, &Config{Database: "TESTDB"})
 
 	// Unsupported isolation level
 	_, err := conn.BeginTx(context.Background(), driver.TxOptions{
@@ -269,7 +268,7 @@ func TestAC6_TransactionIsolation(t *testing.T) {
 
 // AC-7: Result decoupling and safe LastInsertId contract.
 func TestAC7_ResultDecouplingAndLastInsertId(t *testing.T) {
-	res := NewResult(10, 0)
+	res := newResult(10, 0)
 
 	// LastInsertId returns explicit unsupported error
 	_, err := res.LastInsertId()
@@ -322,9 +321,9 @@ func TestSectionManager_ConcurrentAcquireRelease(t *testing.T) {
 
 // TestMockServer_AC1_StatementIsolationDRDA verifies statement isolation end-to-end with network interaction.
 func TestMockServer_AC1_StatementIsolationDRDA(t *testing.T) {
-	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case network.CodePointPRPSQLSTT, network.CodePointDSCSQLSTT, network.CodePointEXCSQLSTT, network.CodePointRDBCMM, network.CodePointEXCSAT:
+		case drda.CodePointPRPSQLSTT, drda.CodePointDSCSQLSTT, drda.CodePointEXCSQLSTT, drda.CodePointRDBCMM, drda.CodePointEXCSAT:
 			return writeSQLCARDOK(c)
 		}
 		return false
@@ -384,9 +383,9 @@ func TestMockServer_AC1_StatementIsolationDRDA(t *testing.T) {
 
 // TestMockServer_AC6_TransactionIsolationRestoration verifies isolation setting and restoration end-to-end.
 func TestMockServer_AC6_TransactionIsolationRestoration(t *testing.T) {
-	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case network.CodePointEXCSQLIMM, network.CodePointRDBCMM, network.CodePointRDBRLLBCK, network.CodePointEXCSAT, network.CodePointEXCSQLSET:
+		case drda.CodePointEXCSQLIMM, drda.CodePointRDBCMM, drda.CodePointRDBRLLBCK, drda.CodePointEXCSAT, drda.CodePointEXCSQLSET:
 			return writeSQLCARDOK(c)
 		}
 		return false

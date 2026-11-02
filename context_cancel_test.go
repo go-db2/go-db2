@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-db2/go-db2/network"
+	"github.com/go-db2/go-db2/internal/drda"
 )
 
 // A query the server never answers must return once its context is done,
@@ -17,12 +17,12 @@ func TestQueryReturnsWhenContextIsDone(t *testing.T) {
 	hang := make(chan struct{})
 	t.Cleanup(func() { close(hang) })
 
-	srv := startMockServer(t, func(c net.Conn, cp network.CodePoint) bool {
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case network.CodePointPRPSQLSTT:
+		case drda.CodePointPRPSQLSTT:
 			<-hang // never reply, like a long-running statement
 			return false
-		case network.CodePointEXCSAT, network.CodePointRDBCMM:
+		case drda.CodePointEXCSAT, drda.CodePointRDBCMM:
 			return writeEXCSATRDOrOK(c)
 		}
 		return false
