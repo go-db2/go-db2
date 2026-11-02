@@ -1,8 +1,10 @@
 package converters
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,5 +187,72 @@ func TestEncodePackedDecimalParam_TableDriven(t *testing.T) {
 				t.Errorf("mismatch!\nGot:      %s\nExpected: %s", gotHex, tc.expectedHex)
 			}
 		})
+	}
+}
+
+func TestBuildSQLDTAWithEXTDTA_LargeLOB(t *testing.T) {
+	colTypes := []types.SQLType{types.SQLTypeBlob, types.SQLTypeClob}
+	colLens := []int64{200000, 200000}
+	precs := []int{0, 0}
+	scales := []int{0, 0}
+
+	payloadBlob := make([]byte, 100000)
+	for i := range payloadBlob {
+		payloadBlob[i] = byte(i % 256)
+	}
+	payloadClob := strings.Repeat("A", 80000)
+
+	sqldta, extdta, err := BuildSQLDTAWithEXTDTA(colTypes, colLens, precs, scales, []any{payloadBlob, payloadClob}, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("BuildSQLDTAWithEXTDTA failed: %v", err)
+	}
+
+	if len(extdta) != 2 {
+		t.Fatalf("expected 2 EXTDTA packets, got %d", len(extdta))
+	}
+
+	// Verify EXTDTA packet 1 (BLOB): 0x8008 extended length and CodePointEXTDTA (0x146C)
+	pkt1 := extdta[0]
+	if binary.BigEndian.Uint16(pkt1[0:2]) != 0x8008 {
+		t.Errorf("expected extended DDM length 0x8008, got 0x%04X", binary.BigEndian.Uint16(pkt1[0:2]))
+	}
+	if binary.BigEndian.Uint16(pkt1[2:4]) != 0x146C {
+		t.Errorf("expected EXTDTA codepoint 0x146C, got 0x%04X", binary.BigEndian.Uint16(pkt1[2:4]))
+	}
+	if binary.BigEndian.Uint32(pkt1[4:8]) != uint32(1+len(payloadBlob)) {
+		t.Errorf("expected payload length %d, got %d", 1+len(payloadBlob), binary.BigEndian.Uint32(pkt1[4:8]))
+	}
+
+	// Verify EXTDTA packet 2 (CLOB)
+	pkt2 := extdta[1]
+	if binary.BigEndian.Uint16(pkt2[0:2]) != 0x8008 {
+		t.Errorf("expected extended DDM length 0x8008, got 0x%04X", binary.BigEndian.Uint16(pkt2[0:2]))
+	}
+	if binary.BigEndian.Uint16(pkt2[2:4]) != 0x146C {
+		t.Errorf("expected EXTDTA codepoint 0x146C, got 0x%04X", binary.BigEndian.Uint16(pkt2[2:4]))
+	}
+	if binary.BigEndian.Uint32(pkt2[4:8]) != uint32(1+len(payloadClob)) {
+		t.Errorf("expected payload length %d, got %d", 1+len(payloadClob), binary.BigEndian.Uint32(pkt2[4:8]))
+	}
+
+	// Verify FDODSC has LOB descriptors
+	if !bytes.Contains(sqldta, []byte{0xC9, 0x80, 0x04}) {
+		t.Errorf("expected FDODSC to contain BLOB descriptor {0xC9, 0x80, 0x04}")
+	}
+	if !bytes.Contains(sqldta, []byte{0xCF, 0x80, 0x04}) {
+		t.Errorf("expected FDODSC to contain CLOB descriptor {0xCF, 0x80, 0x04}")
+	}
+}
+
+func TestScalarInlineOverflow(t *testing.T) {
+	colTypes := []types.SQLType{types.SQLTypeVarChar}
+	colLens := []int64{100000}
+	precs := []int{0}
+	scales := []int{0}
+
+	bigString := strings.Repeat("A", 70000)
+	_, _, err := BuildSQLDTAWithEXTDTA(colTypes, colLens, precs, scales, []any{bigString}, binary.BigEndian)
+	if err == nil {
+		t.Fatalf("expected overflow error for VARCHAR > 65535, got nil")
 	}
 }

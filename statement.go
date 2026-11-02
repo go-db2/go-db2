@@ -23,6 +23,7 @@ type Stmt struct {
 	paramCols         []network.ColumnDescription
 	pkgsn             uint16
 	rewrittenOnServer bool
+	isTemp            bool
 	closed            bool
 	mu                sync.Mutex
 }
@@ -158,45 +159,6 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		return NewResult(totalAffected, 0), nil
 	}
 
-	if hasBlobParams(s.paramCols, rawArgs) {
-		s.rewrittenOnServer = true
-		newQuery, _, newArgs := rewriteBinaryParams(s.query, s.paramCols, rawArgs)
-		if len(newArgs) == 0 {
-			affected, err := s.conn.session.ExecDirect(ctx, newQuery)
-			if err != nil {
-				return nil, err
-			}
-			return NewResult(affected, 0), nil
-		}
-		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, newQuery, s.pkgsn)
-		if err != nil {
-			return nil, err
-		}
-		affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.pkgsn, newParamCols, newArgs)
-		if err != nil {
-			return nil, err
-		}
-		if len(outTargets) > 0 && len(outValues) > 0 {
-			for _, target := range outTargets {
-				if target.index < len(outValues) {
-					if err := assignOutParam(target.dest, outValues[target.index]); err != nil {
-						return nil, err
-					}
-				}
-			}
-		}
-		return NewResult(affected, 0), nil
-	}
-
-	if s.rewrittenOnServer {
-		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query, s.pkgsn)
-		if err != nil {
-			return nil, err
-		}
-		s.paramCols = newParamCols
-		s.rewrittenOnServer = false
-	}
-
 	affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.pkgsn, s.paramCols, rawArgs)
 	if err != nil {
 		return nil, err
@@ -238,20 +200,100 @@ func (s *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driv
 
 func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
 	if s.isClosed() || s.conn == nil || s.conn.session == nil {
+		if s.isTemp {
+			_ = s.Close()
+		}
 		return nil, ErrConnectionClosed
 	}
 
 	if err := s.conn.applyContextMetadata(ctx); err != nil {
+		if s.isTemp {
+			_ = s.Close()
+		}
 		return nil, err
 	}
 
 	if len(args) != len(s.paramCols) {
+		if s.isTemp {
+			_ = s.Close()
+		}
 		return nil, fmt.Errorf("db2: expected %d arguments, got %d", len(s.paramCols), len(args))
 	}
 
 	sQuery := stripLeadingCommentsAndSpaces(s.query)
-	if hasPrefixFold(sQuery, "CALL") || len(s.outputCols) == 0 {
+	if hasPrefixFold(sQuery, "CALL") {
+		rawArgs := make([]any, len(args))
+		type outInfo struct {
+			index int
+			dest  any
+		}
+		var outTargets []outInfo
+
+		for i, arg := range args {
+			switch v := arg.Value.(type) {
+			case sql.Out:
+				outTargets = append(outTargets, outInfo{index: i, dest: v.Dest})
+				if v.Dest != nil {
+					val := reflect.ValueOf(v.Dest)
+					if val.Kind() == reflect.Ptr && !val.IsNil() {
+						rawArgs[i] = val.Elem().Interface()
+					}
+				}
+			case *sql.Out:
+				if v != nil {
+					outTargets = append(outTargets, outInfo{index: i, dest: v.Dest})
+					if v.Dest != nil {
+						val := reflect.ValueOf(v.Dest)
+						if val.Kind() == reflect.Ptr && !val.IsNil() {
+							rawArgs[i] = val.Elem().Interface()
+						}
+					}
+				}
+			default:
+				rawArgs[i] = arg.Value
+			}
+		}
+
+		sets, outValues, err := s.conn.session.QueryCallWithParams(ctx, s.pkgsn, s.paramCols, rawArgs)
+		if err != nil {
+			if s.isTemp {
+				_ = s.Close()
+			}
+			return nil, err
+		}
+
+		if len(outTargets) > 0 && len(outValues) > 0 {
+			for _, target := range outTargets {
+				if target.index < len(outValues) {
+					if err := assignOutParam(target.dest, outValues[target.index]); err != nil {
+						if s.isTemp {
+							_ = s.Close()
+						}
+						return nil, err
+					}
+				}
+			}
+		}
+
+		if s.isTemp {
+			_ = s.Close()
+		}
+
+		if len(sets) == 0 {
+			return NewRows(nil, nil), nil
+		}
+		resultSets := make([]ResultSet, len(sets))
+		for i, set := range sets {
+			resultSets[i] = ResultSet{Columns: set.Columns, Data: set.Data}
+		}
+		return NewMultiRows(resultSets), nil
+	}
+
+	if len(s.outputCols) == 0 {
 		_, err := s.execContextLocked(ctx, args)
+		if s.isTemp {
+			_ = s.Close()
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -263,12 +305,20 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		rawArgs[i] = arg.Value
 	}
 
-	cols, rowsData, err := s.conn.session.QueryWithParams(ctx, s.pkgsn, s.outputCols, s.paramCols, rawArgs)
+	cols, initialRows, stream, err := s.conn.session.QueryStreamWithParams(ctx, s.pkgsn, s.outputCols, s.paramCols, rawArgs)
 	if err != nil {
+		if s.isTemp {
+			_ = s.Close()
+		}
 		return nil, err
 	}
 
-	return NewRows(cols, rowsData), nil
+	var onClose func() error
+	if s.isTemp {
+		onClose = s.Close
+	}
+
+	return NewStreamingRows(cols, initialRows, stream, onClose), nil
 }
 
 func hasBlobParams(paramCols []network.ColumnDescription, args []any) bool {
