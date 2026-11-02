@@ -663,13 +663,29 @@ func packDDM(cp uint16, body []byte) []byte {
 	return append(obj, body...)
 }
 
-// isLOBType reports whether the SQL type is BLOB, CLOB or DBCLOB.
-func isLOBType(t types.SQLType) bool {
+// shouldExternalizeLOB reports whether a parameter should be sent via EXTDTA (0x146C)
+// rather than inline in FDODTA. BLOB parameters, io.Reader streams, and CLOB/DBCLOB
+// payloads exceeding the 16383-unit inline UTF-16 limit use EXTDTA.
+func shouldExternalizeLOB(t types.SQLType, arg any) bool {
 	switch t {
-	case types.SQLTypeBlob, types.SQLTypeNBlob,
-		types.SQLTypeClob, types.SQLTypeNClob,
-		types.SQLTypeDbClob, types.SQLTypeNDbClob:
+	case types.SQLTypeBlob, types.SQLTypeNBlob:
 		return true
+	case types.SQLTypeClob, types.SQLTypeNClob,
+		types.SQLTypeDbClob, types.SQLTypeNDbClob:
+		if arg == nil {
+			return false
+		}
+		if _, ok := arg.(io.Reader); ok {
+			return true
+		}
+		switch v := arg.(type) {
+		case string:
+			return len(v) > 16383
+		case []byte:
+			return len(v) > 16383
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -699,7 +715,12 @@ func BuildSQLDTAWithEXTDTA(colTypes []types.SQLType, colLens []int64, precs, sca
 
 		for j := 0; j < chunkSize; j++ {
 			idx := i + j
-			fdodscSlice = appendFDODSC(fdodscSlice, colTypes[idx], colLens[idx], precs[idx], scales[idx])
+			ct := colTypes[idx]
+			if (ct == types.SQLTypeClob || ct == types.SQLTypeNClob || ct == types.SQLTypeDbClob || ct == types.SQLTypeNDbClob) && !shouldExternalizeLOB(ct, args[idx]) {
+				fdodscSlice = append(fdodscSlice, fdodscVarChar...)
+			} else {
+				fdodscSlice = appendFDODSC(fdodscSlice, ct, colLens[idx], precs[idx], scales[idx])
+			}
 		}
 
 		i += chunkSize
@@ -713,7 +734,8 @@ func BuildSQLDTAWithEXTDTA(colTypes []types.SQLType, colLens []int64, precs, sca
 	var extdtaPackets [][]byte
 
 	for i := 0; i < numParams; i++ {
-		rawVal := args[i]
+		origArg := args[i]
+		rawVal := origArg
 		if r, ok := rawVal.(io.Reader); ok && r != nil {
 			b, err := io.ReadAll(r)
 			if err != nil {
@@ -731,7 +753,7 @@ func BuildSQLDTAWithEXTDTA(colTypes []types.SQLType, colLens []int64, precs, sca
 		}
 
 		colType := colTypes[i]
-		if isLOBType(colType) {
+		if shouldExternalizeLOB(colType, origArg) {
 			if rawVal == nil {
 				sqldta = append(sqldta, 0xFF) // Null indicator
 				continue

@@ -298,11 +298,11 @@ func TestSession_QueryCallDirect_MultiResultSets(t *testing.T) {
 		defer close(serverDone)
 		// Read EXCSQLIMM + SQLSTT
 		for {
-			hdr, cp, _, _, err := ReadDSS(server)
+			hdr, _, _, _, err := ReadDSS(server)
 			if err != nil {
 				return
 			}
-			if cp == CodePointSQLSTT || !hdr.Chained {
+			if !hdr.Chained {
 				break
 			}
 		}

@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/binary"
+	"errors"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -113,6 +115,22 @@ func pipeSession(t *testing.T) (*Session, net.Conn) {
 	return s, server
 }
 
+func drainQueryStream(firstBatch [][]driver.Value, qs *QueryStream) ([][]driver.Value, error) {
+	all := append([][]driver.Value(nil), firstBatch...)
+	for {
+		batch, err := qs.FetchNextBatch(context.Background())
+		if len(batch) > 0 {
+			all = append(all, batch...)
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return all, nil
+			}
+			return all, err
+		}
+	}
+}
+
 func queryPaths() map[string]func(s *Session) ([][]driver.Value, error) {
 	return map[string]func(s *Session) ([][]driver.Value, error){
 		"QueryDirect": func(s *Session) ([][]driver.Value, error) {
@@ -122,6 +140,20 @@ func queryPaths() map[string]func(s *Session) ([][]driver.Value, error) {
 		"QueryWithParams": func(s *Session) ([][]driver.Value, error) {
 			_, rows, err := s.QueryWithParams(context.Background(), ReservedDirectSec, nil, nil, nil)
 			return rows, err
+		},
+		"QueryStreamDirect": func(s *Session) ([][]driver.Value, error) {
+			_, firstBatch, qs, err := s.QueryStreamDirect(context.Background(), "SELECT N FROM T")
+			if err != nil {
+				return nil, err
+			}
+			return drainQueryStream(firstBatch, qs)
+		},
+		"QueryStreamWithParams": func(s *Session) ([][]driver.Value, error) {
+			_, firstBatch, qs, err := s.QueryStreamWithParams(context.Background(), ReservedDirectSec, nil, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			return drainQueryStream(firstBatch, qs)
 		},
 	}
 }
@@ -204,4 +236,97 @@ func equalInt64(a, b []int64) bool {
 		}
 	}
 	return true
+}
+
+// TestQueryStream_SingleBlockAutoCommit_NoDeadlock verifies that when OPNQRY returns
+// the complete result set in a single block (ENDQRYRM in OPNQRY reply) with autoCommit=true,
+// initStreamFromReplies commits without self-deadlocking on s.mu.
+func TestQueryStream_SingleBlockAutoCommit_NoDeadlock(t *testing.T) {
+	for name, query := range queryPaths() {
+		t.Run(name, func(t *testing.T) {
+			s, server := pipeSession(t)
+			s.SetAutoCommit(true)
+			cntqrys := make(chan int, 1)
+			go serveQuery(t, server, queryScript{
+				open: [][]byte{
+					opnqryrm(),
+					qrydscInteger(),
+					qrydta(integerRows(10, 20)),
+					endqryrm(),
+					sqlcard(100, "02000"),
+				},
+			}, cntqrys)
+
+			rows, err := query(s)
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
+			var got []int64
+			for _, r := range rows {
+				got = append(got, r[0].(int64))
+			}
+			if want := []int64{10, 20}; !equalInt64(got, want) {
+				t.Fatalf("rows = %v, want %v", got, want)
+			}
+
+			_ = s.conn.Close()
+			select {
+			case n := <-cntqrys:
+				if n != 0 {
+					t.Fatalf("client sent %d CNTQRY, want 0 for single-block query", n)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("mock server did not finish")
+			}
+		})
+	}
+}
+
+// TestQueryStream_DeferredEXTDTAOnCNTQRY verifies that when OPNQRY returns QRYDTA for an XML/LOB
+// column without EXTDTA, and EXTDTA arrives in the subsequent CNTQRY response, QueryStream
+// waits to stitch the EXTDTA payload before yielding the row.
+func TestQueryStream_DeferredEXTDTAOnCNTQRY(t *testing.T) {
+	s, server := pipeSession(t)
+	s.SetAutoCommit(true)
+	cntqrys := make(chan int, 1)
+
+	qrydscXML := PackDDMObject(CodePointQRYDSC, []byte{0x06, 0x76, 0xD0, 0xC6, 0x00, 0x00, 0x06, 0x71, 0xF0, 0xE0, 0x00, 0x00})
+	xmlRowDta := []byte{0xFF, 0x00, 0x00, 0x00, 0x00, 0x00}
+	extdtaXML := PackDDMObject(CodePointEXTDTA, append([]byte{0x00}, []byte("<order id=\"1\"><item>widget</item></order>")...))
+
+	go serveQuery(t, server, queryScript{
+		open: [][]byte{
+			opnqryrm(),
+			qrydscXML,
+			qrydta(xmlRowDta),
+		},
+		continues: [][][]byte{
+			{extdtaXML, endqryrm(), sqlcard(100, "02000")},
+		},
+	}, cntqrys)
+
+	_, firstBatch, qs, err := s.QueryStreamDirect(context.Background(), "SELECT X FROM T")
+	if err != nil {
+		t.Fatalf("QueryStreamDirect failed: %v", err)
+	}
+	rows, err := drainQueryStream(firstBatch, qs)
+	if err != nil {
+		t.Fatalf("drainQueryStream failed: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if got, ok := rows[0][0].(string); !ok || got != "<order id=\"1\"><item>widget</item></order>" {
+		t.Fatalf("expected stitched XML string, got %#v", rows[0][0])
+	}
+
+	_ = s.conn.Close()
+	select {
+	case n := <-cntqrys:
+		if n != 1 {
+			t.Fatalf("client sent %d CNTQRY, want 1", n)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("mock server did not finish")
+	}
 }

@@ -159,6 +159,45 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		return NewResult(totalAffected, 0), nil
 	}
 
+	if hasBlobParams(s.paramCols, rawArgs) {
+		s.rewrittenOnServer = true
+		newQuery, _, newArgs := rewriteBinaryParams(s.query, s.paramCols, rawArgs)
+		if len(newArgs) == 0 {
+			affected, err := s.conn.session.ExecDirect(ctx, newQuery)
+			if err != nil {
+				return nil, err
+			}
+			return NewResult(affected, 0), nil
+		}
+		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, newQuery, s.pkgsn)
+		if err != nil {
+			return nil, err
+		}
+		affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.pkgsn, newParamCols, newArgs)
+		if err != nil {
+			return nil, err
+		}
+		if len(outTargets) > 0 && len(outValues) > 0 {
+			for _, target := range outTargets {
+				if target.index < len(outValues) {
+					if err := assignOutParam(target.dest, outValues[target.index]); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+		return NewResult(affected, 0), nil
+	}
+
+	if s.rewrittenOnServer {
+		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query, s.pkgsn)
+		if err != nil {
+			return nil, err
+		}
+		s.paramCols = newParamCols
+		s.rewrittenOnServer = false
+	}
+
 	affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.pkgsn, s.paramCols, rawArgs)
 	if err != nil {
 		return nil, err
@@ -324,7 +363,7 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 func hasBlobParams(paramCols []network.ColumnDescription, args []any) bool {
 	for i, c := range paramCols {
 		if (types.SQLType(c.SQLType) == types.SQLTypeBlob || types.SQLType(c.SQLType) == types.SQLTypeNBlob) && i < len(args) {
-			if b, ok := args[i].([]byte); ok && len(b) > 0 {
+			if b, ok := args[i].([]byte); ok && len(b) > 0 && len(b) <= 16383 {
 				return true
 			}
 		}

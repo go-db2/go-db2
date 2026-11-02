@@ -683,6 +683,15 @@ func (s *Session) Commit(ctx context.Context) error {
 	}
 	defer s.watch(ctx)()
 
+	return s.commitLocked()
+}
+
+// commitLocked sends RDBCMM and reads its reply chain. Caller must hold s.mu.
+func (s *Session) commitLocked() error {
+	if s.closed || s.conn == nil {
+		return errors.New("db2: connection is closed")
+	}
+
 	s.correlationID = 1
 	rdbcmm := PackRDBCMM()
 	var err error
@@ -929,7 +938,7 @@ func (s *Session) ExecWithParams(ctx context.Context, pkgsn uint16, paramCols []
 
 	// 2. SQLDTA
 	hasMore := len(extdtaList) > 0 || s.autoCommit
-	curID, err = WriteRequestDSS(s.conn, sqldta, curID, false, !hasMore)
+	curID, err = WriteRequestDSS(s.conn, sqldta, curID, len(extdtaList) > 0, !hasMore)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -937,7 +946,7 @@ func (s *Session) ExecWithParams(ctx context.Context, pkgsn uint16, paramCols []
 	// 3. EXTDTA
 	for i, extObj := range extdtaList {
 		isLast := (i == len(extdtaList)-1) && !s.autoCommit
-		curID, err = WriteRequestDSS(s.conn, extObj, curID, false, isLast)
+		curID, err = WriteRequestDSS(s.conn, extObj, curID, i < len(extdtaList)-1, isLast)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -946,7 +955,7 @@ func (s *Session) ExecWithParams(ctx context.Context, pkgsn uint16, paramCols []
 	// 4. RDBCMM if autoCommit
 	if s.autoCommit {
 		cmm := PackRDBCMM()
-		_, err = WriteRequestDSS(s.conn, cmm, curID, false, true)
+		_, err = WriteRequestDSS(s.conn, cmm, 1, false, true)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -1066,14 +1075,14 @@ func (s *Session) QueryWithParams(ctx context.Context, pkgsn uint16, outputCols,
 
 	// 2. SQLDTA with parameters
 	hasMore := len(extdtaList) > 0
-	curID, err = WriteRequestDSS(s.conn, sqldta, curID, false, !hasMore)
+	curID, err = WriteRequestDSS(s.conn, sqldta, curID, hasMore, !hasMore)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	for i, extObj := range extdtaList {
 		isLast := (i == len(extdtaList)-1)
-		curID, err = WriteRequestDSS(s.conn, extObj, curID, false, isLast)
+		curID, err = WriteRequestDSS(s.conn, extObj, curID, !isLast, isLast)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1387,6 +1396,10 @@ func isDBCLOBType(t uint8) bool {
 }
 
 func stitchEXTDTA(fields []FieldDescriptor, rows [][]driver.Value, extdtaList [][]byte) {
+	_, _, _ = stitchReadyRows(fields, rows, extdtaList, true)
+}
+
+func stitchReadyRows(fields []FieldDescriptor, rows [][]driver.Value, extdtaList [][]byte, ended bool) ([][]driver.Value, [][]driver.Value, [][]byte) {
 	var lobIndices []int
 	for i, f := range fields {
 		if isLOBType(f.Type) {
@@ -1394,11 +1407,20 @@ func stitchEXTDTA(fields []FieldDescriptor, rows [][]driver.Value, extdtaList []
 		}
 	}
 	if len(lobIndices) == 0 {
-		return
+		return rows, nil, nil
 	}
 
 	extIdx := 0
 	for rowIdx := range rows {
+		needed := 0
+		for _, colIdx := range lobIndices {
+			if rows[rowIdx][colIdx] != nil {
+				needed++
+			}
+		}
+		if !ended && extIdx+needed > len(extdtaList) {
+			return rows[:rowIdx], rows[rowIdx:], extdtaList[extIdx:]
+		}
 		for _, colIdx := range lobIndices {
 			if rows[rowIdx][colIdx] != nil && extIdx < len(extdtaList) {
 				data := extdtaList[extIdx]
@@ -1418,6 +1440,7 @@ func stitchEXTDTA(fields []FieldDescriptor, rows [][]driver.Value, extdtaList []
 			}
 		}
 	}
+	return rows, nil, extdtaList[extIdx:]
 }
 
 // decodeRowsPartial decodes complete QRYDTA rows from data and returns rows, consumed bytes, and error.
@@ -1496,18 +1519,20 @@ func decodeRowsPartial(fields []FieldDescriptor, data []byte, endian binary.Byte
 
 // QueryStream streams query result sets on demand using DRDA CNTQRY / CLSQRY.
 type QueryStream struct {
-	session    *Session
-	pkgsn      uint16
-	columns    []ColumnDescription
-	fields     []FieldDescriptor
-	qryinsid   uint64
-	cntqryID   uint16
-	open       bool
-	ended      bool
-	committed  bool
-	closed     bool
-	tailBuf    []byte
-	pendingExt [][]byte
+	session     *Session
+	ctx         context.Context
+	pkgsn       uint16
+	columns     []ColumnDescription
+	fields      []FieldDescriptor
+	qryinsid    uint64
+	cntqryID    uint16
+	open        bool
+	ended       bool
+	committed   bool
+	closed      bool
+	tailBuf     []byte
+	pendingRows [][]driver.Value
+	pendingExt  [][]byte
 }
 
 // FetchNextBatch requests the next QRYDTA block via CNTQRY and decodes complete rows.
@@ -1516,30 +1541,59 @@ func (qs *QueryStream) FetchNextBatch(ctx context.Context) ([][]driver.Value, er
 		return nil, io.EOF
 	}
 
+	watchCtx := ctx
+	if (watchCtx == nil || watchCtx == context.Background()) && qs.ctx != nil {
+		watchCtx = qs.ctx
+	}
+
+	qs.session.mu.Lock()
+	defer qs.session.mu.Unlock()
+	if watchCtx != nil {
+		defer qs.session.watch(watchCtx)()
+	}
+
+	return qs.fetchNextBatchLocked()
+}
+
+// fetchNextBatchLocked requests CNTQRY blocks until at least one complete row is ready or the query ends.
+// Caller must hold qs.session.mu.
+func (qs *QueryStream) fetchNextBatchLocked() ([][]driver.Value, error) {
+	if qs.closed {
+		return nil, io.EOF
+	}
+
 	for {
 		if !qs.open || qs.ended {
-			if qs.session.AutoCommit() && !qs.committed && !qs.session.Broken() {
-				_ = qs.session.Commit(ctx)
+			if len(qs.pendingRows) > 0 {
+				ready, _, _ := stitchReadyRows(qs.fields, qs.pendingRows, qs.pendingExt, true)
+				qs.pendingRows = nil
+				qs.pendingExt = nil
+				if qs.session.autoCommit && !qs.committed && !qs.session.Broken() {
+					_ = qs.session.commitLocked()
+					qs.committed = true
+				}
+				if len(ready) > 0 {
+					return ready, nil
+				}
+			}
+			if qs.session.autoCommit && !qs.committed && !qs.session.Broken() {
+				_ = qs.session.commitLocked()
 				qs.committed = true
 			}
 			return nil, io.EOF
 		}
 
-		cntqry := PackCNTQRY(qs.session.pkgid, qs.session.pkgcnstkn, qs.pkgsn, qs.session.cfg.Database, qs.session.qryblksz, qs.qryinsid)
-
-		qs.session.mu.Lock()
 		if qs.session.closed || qs.session.conn == nil || qs.session.Broken() {
-			qs.session.mu.Unlock()
 			return nil, errors.New("db2: connection is closed")
 		}
+
+		cntqry := PackCNTQRY(qs.session.pkgid, qs.session.pkgcnstkn, qs.pkgsn, qs.session.cfg.Database, qs.session.qryblksz, qs.qryinsid)
 		_, err := WriteRequestDSS(qs.session.conn, cntqry, qs.cntqryID, false, true)
 		if err != nil {
-			qs.session.mu.Unlock()
 			return nil, fmt.Errorf("failed to write CNTQRY: %w", err)
 		}
 
 		cntReplies, err := qs.session.readReplyChain()
-		qs.session.mu.Unlock()
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CNTQRY response: %w", err)
 		}
@@ -1583,21 +1637,26 @@ func (qs *QueryStream) FetchNextBatch(ctx context.Context) ([][]driver.Value, er
 		copy(combinedData, qs.tailBuf)
 		copy(combinedData[len(qs.tailBuf):], newQryDta.Bytes())
 
-		rows, consumed, err := decodeRowsPartial(qs.fields, combinedData, qs.session.endian)
+		decodedRows, consumed, err := decodeRowsPartial(qs.fields, combinedData, qs.session.endian)
 		if err != nil {
 			return nil, err
 		}
 
 		qs.tailBuf = append([]byte(nil), combinedData[consumed:]...)
 
+		allRows := append(qs.pendingRows, decodedRows...)
 		allExt := append(qs.pendingExt, newExtdta...)
-		if len(allExt) > 0 {
-			stitchEXTDTA(qs.fields, rows, allExt)
-		}
-		qs.pendingExt = nil
+		readyRows, pendingRows, unusedExt := stitchReadyRows(qs.fields, allRows, allExt, !qs.open || qs.ended)
+		qs.pendingRows = pendingRows
+		qs.pendingExt = unusedExt
 
-		if len(rows) > 0 {
-			return rows, nil
+		if (!qs.open || qs.ended) && len(qs.pendingRows) == 0 && qs.session.autoCommit && !qs.committed && !qs.session.Broken() {
+			_ = qs.session.commitLocked()
+			qs.committed = true
+		}
+
+		if len(readyRows) > 0 {
+			return readyRows, nil
 		}
 	}
 }
@@ -1640,6 +1699,7 @@ func (qs *QueryStream) Close(ctx context.Context) error {
 	}
 
 	qs.tailBuf = nil
+	qs.pendingRows = nil
 	qs.pendingExt = nil
 	return closeErr
 }
@@ -1717,14 +1777,14 @@ func (s *Session) QueryStreamWithParams(ctx context.Context, pkgsn uint16, outpu
 	}
 
 	hasMore := len(extdtaList) > 0
-	curID, err = WriteRequestDSS(s.conn, sqldta, curID, false, !hasMore)
+	curID, err = WriteRequestDSS(s.conn, sqldta, curID, hasMore, !hasMore)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	for i, extObj := range extdtaList {
 		isLast := (i == len(extdtaList)-1)
-		curID, err = WriteRequestDSS(s.conn, extObj, curID, false, isLast)
+		curID, err = WriteRequestDSS(s.conn, extObj, curID, !isLast, isLast)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -1744,14 +1804,12 @@ func (s *Session) initStreamFromReplies(ctx context.Context, replies []ReplyPack
 		return nil, nil, nil, err
 	}
 
-	rows, consumed, err := decodeRowsPartial(q.fields, q.rowData.Bytes(), s.endian)
+	decodedRows, consumed, err := decodeRowsPartial(q.fields, q.rowData.Bytes(), s.endian)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	if len(q.extdta) > 0 {
-		stitchEXTDTA(q.fields, rows, q.extdta)
-	}
+	readyRows, pendingRows, unusedExt := stitchReadyRows(q.fields, decodedRows, q.extdta, !q.open || q.ended)
 
 	if len(q.columns) == 0 && len(q.fields) > 0 {
 		q.columns = make([]ColumnDescription, len(q.fields))
@@ -1766,26 +1824,34 @@ func (s *Session) initStreamFromReplies(ctx context.Context, replies []ReplyPack
 	tail := append([]byte(nil), q.rowData.Bytes()[consumed:]...)
 
 	qs := &QueryStream{
-		session:   s,
-		pkgsn:     pkgsn,
-		columns:   q.columns,
-		fields:    q.fields,
-		qryinsid:  q.qryinsid,
-		cntqryID:  q.cntqryID,
-		open:      q.open,
-		ended:     q.ended,
-		tailBuf:   tail,
-		committed: false,
+		session:     s,
+		ctx:         ctx,
+		pkgsn:       pkgsn,
+		columns:     q.columns,
+		fields:      q.fields,
+		qryinsid:    q.qryinsid,
+		cntqryID:    q.cntqryID,
+		open:        q.open,
+		ended:       q.ended,
+		tailBuf:     tail,
+		pendingRows: pendingRows,
+		pendingExt:  unusedExt,
+		committed:   false,
 	}
 
-	if !q.open || q.ended {
-		if s.autoCommit {
-			_ = s.Commit(ctx)
+	if len(readyRows) == 0 && qs.open && !qs.ended {
+		readyRows, err = qs.fetchNextBatchLocked()
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, nil, nil, err
+		}
+	} else if !qs.open || qs.ended {
+		if s.autoCommit && !qs.committed && !s.Broken() {
+			_ = s.commitLocked()
 			qs.committed = true
 		}
 	}
 
-	return q.columns, rows, qs, nil
+	return q.columns, readyRows, qs, nil
 }
 
 // CallResultSet holds column metadata and row values for a procedure result set.
@@ -1814,14 +1880,42 @@ func (s *Session) QueryCallDirect(ctx context.Context, sql string) ([]CallResult
 	}
 
 	stt := PackSQLSTT(sql)
-	s.correlationID, err = WriteRequestDSS(s.conn, stt, s.correlationID, false, true)
-	if err != nil {
-		return nil, err
+	if s.autoCommit {
+		s.correlationID, err = WriteRequestDSS(s.conn, stt, s.correlationID, false, false)
+		if err != nil {
+			return nil, err
+		}
+		cmm := PackRDBCMM()
+		s.correlationID, err = WriteRequestDSS(s.conn, cmm, s.correlationID, false, true)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		s.correlationID, err = WriteRequestDSS(s.conn, stt, s.correlationID, false, true)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	replies, err := s.readReplyChain()
 	if err != nil {
 		return nil, err
+	}
+
+	if s.autoCommit {
+		hasOnlyDARD := false
+		for _, r := range replies {
+			if r.CodePoint == CodePointSQLDARD {
+				hasOnlyDARD = true
+				break
+			}
+		}
+		if hasOnlyDARD {
+			replies2, err := s.readReplyChain()
+			if err == nil {
+				replies = append(replies, replies2...)
+			}
+		}
 	}
 
 	sets, _, err := s.parseCallResultSets(replies)
@@ -1861,15 +1955,23 @@ func (s *Session) QueryCallWithParams(ctx context.Context, pkgsn uint16, paramCo
 		return nil, nil, err
 	}
 
-	hasMore := len(extdtaList) > 0
-	curID, err = WriteRequestDSS(s.conn, sqldta, curID, false, !hasMore)
+	hasMore := len(extdtaList) > 0 || s.autoCommit
+	curID, err = WriteRequestDSS(s.conn, sqldta, curID, len(extdtaList) > 0, !hasMore)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	for i, extObj := range extdtaList {
-		isLast := (i == len(extdtaList)-1)
-		curID, err = WriteRequestDSS(s.conn, extObj, curID, false, isLast)
+		isLast := (i == len(extdtaList)-1) && !s.autoCommit
+		curID, err = WriteRequestDSS(s.conn, extObj, curID, i < len(extdtaList)-1, isLast)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if s.autoCommit {
+		cmm := PackRDBCMM()
+		_, err = WriteRequestDSS(s.conn, cmm, 1, false, true)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1878,6 +1980,20 @@ func (s *Session) QueryCallWithParams(ctx context.Context, pkgsn uint16, paramCo
 	replies, err := s.readReplyChain()
 	if err != nil {
 		return nil, nil, err
+	}
+
+	hasOnlyDARD := false
+	for _, r := range replies {
+		if r.CodePoint == CodePointSQLDARD {
+			hasOnlyDARD = true
+			break
+		}
+	}
+	if hasOnlyDARD {
+		replies2, err := s.readReplyChain()
+		if err == nil {
+			replies = append(replies, replies2...)
+		}
 	}
 
 	return s.parseCallResultSets(replies)
