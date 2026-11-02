@@ -1239,7 +1239,10 @@ func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) 
 		}
 
 		for i := 0; i < numFields; i++ {
-			f := fields[i]
+			// Optimization: Index fields slice directly by address (&fields[i]) rather than copying by value (f := fields[i]).
+			// Slicing f.PS[:] on a stack copy caused Go escape analysis to force f onto the heap (moved to heap: f)
+			// because subslices escape into error formatting, incurring 1 heap allocation per column per row (200 allocs/100 rows).
+			f := &fields[i]
 			val, err := converters.DecodeField(f.Type, f.PS[:], reader, endian)
 			if err != nil {
 				return nil, fmt.Errorf("failed to decode row %d column %d (Type=0x%02X, PS=%x, RemainingBytes=%d): %w",
