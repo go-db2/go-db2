@@ -39,12 +39,14 @@ jobs:
         run: go vet ./...
 
       - name: Run golangci-lint
+        if: matrix.go-version == '1.24.x'
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           args: --timeout=5m
 
       - name: Run govulncheck
+        if: matrix.go-version == '1.24.x'
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
