@@ -1,6 +1,7 @@
 package db2
 
 import (
+	"context"
 	"database/sql/driver"
 	"io"
 	"reflect"
@@ -14,6 +15,7 @@ import (
 type ResultSet struct {
 	Columns []network.ColumnDescription
 	Data    [][]driver.Value
+	Stream  *network.QueryStream
 }
 
 // Rows implements database/sql/driver.Rows, driver.RowsNextResultSet, and column type introspection interfaces.
@@ -22,6 +24,7 @@ type Rows struct {
 	currSetIndex int
 	cursor       int
 	closed       bool
+	onClose      func() error
 }
 
 // NewRows instantiates a new driver.Rows container for a single result set.
@@ -47,6 +50,18 @@ func NewMultiRows(sets []ResultSet) *Rows {
 	}
 }
 
+// NewStreamingRows creates a driver.Rows backed by a QueryStream and optional cleanup callback.
+func NewStreamingRows(columns []network.ColumnDescription, initialData [][]driver.Value, stream *network.QueryStream, onClose func() error) *Rows {
+	return &Rows{
+		resultSets: []ResultSet{
+			{Columns: columns, Data: initialData, Stream: stream},
+		},
+		currSetIndex: 0,
+		cursor:       0,
+		onClose:      onClose,
+	}
+}
+
 // currentSet returns the active result set.
 func (r *Rows) currentSet() *ResultSet {
 	if r.currSetIndex >= 0 && r.currSetIndex < len(r.resultSets) {
@@ -65,11 +80,30 @@ func (r *Rows) Columns() []string {
 	return names
 }
 
-// Close closes the rows iterator.
+// Close closes the rows iterator and any active server query stream.
 func (r *Rows) Close() error {
+	if r.closed {
+		return nil
+	}
 	r.closed = true
+
+	var firstErr error
+	for i := range r.resultSets {
+		if r.resultSets[i].Stream != nil {
+			if err := r.resultSets[i].Stream.Close(context.Background()); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	if r.onClose != nil {
+		if err := r.onClose(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
 	r.resultSets = nil
-	return nil
+	return firstErr
 }
 
 // Next is called to populate the next row of data into the provided slice.
@@ -78,8 +112,20 @@ func (r *Rows) Next(dest []driver.Value) error {
 		return io.EOF
 	}
 	cur := r.currentSet()
+
 	if r.cursor >= len(cur.Data) {
-		return io.EOF
+		if cur.Stream == nil {
+			return io.EOF
+		}
+		batch, err := cur.Stream.FetchNextBatch(context.Background())
+		if err != nil {
+			return err
+		}
+		cur.Data = batch
+		r.cursor = 0
+		if len(cur.Data) == 0 {
+			return io.EOF
+		}
 	}
 
 	row := cur.Data[r.cursor]

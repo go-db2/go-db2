@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"strconv"
 	"strings"
@@ -25,7 +26,8 @@ var (
 	fdodscTime       = []byte{0x23, 0x00, 0x08}
 	fdodscTimestamp  = []byte{0x25, 0x00, 0x20}
 	fdodscBoolBit    = []byte{0xBF, 0x00, 0x01}
-	fdodscBlob       = []byte{0xC9, 0x80, 0x02}
+	fdodscBlob       = []byte{0xC9, 0x80, 0x04} // 4 bytes length size (LOB)
+	fdodscClob       = []byte{0xCF, 0x80, 0x04} // 4 bytes length size (CLOB/DBCLOB)
 	fdodscDecFloat8  = []byte{0xBB, 0x00, 0x08}
 	fdodscDecFloat16 = []byte{0xBB, 0x00, 0x10}
 )
@@ -63,8 +65,9 @@ func appendFDODSC(dst []byte, sqlType types.SQLType, sqllen int64, prec, scale i
 		return append(dst, fdodscBoolBit...)
 	case types.SQLTypeBlob, types.SQLTypeNBlob:
 		return append(dst, fdodscBlob...)
-	case types.SQLTypeClob, types.SQLTypeNClob, types.SQLTypeDbClob, types.SQLTypeNDbClob,
-		types.SQLTypeClobLocator, types.SQLTypeNClobLocator, types.SQLTypeDbClobLocator, types.SQLTypeNDbClobLocator:
+	case types.SQLTypeClob, types.SQLTypeNClob, types.SQLTypeDbClob, types.SQLTypeNDbClob:
+		return append(dst, fdodscClob...)
+	case types.SQLTypeClobLocator, types.SQLTypeNClobLocator, types.SQLTypeDbClobLocator, types.SQLTypeNDbClobLocator:
 		return append(dst, fdodscVarChar...)
 	case types.SQLTypeGraphic, types.SQLTypeNGraphic:
 		return append(dst, 0x37, byte(sqllen>>8), byte(sqllen&0xFF))
@@ -115,14 +118,24 @@ func appendFDODTA(dst []byte, sqlType types.SQLType, sqllen int64, prec, scale i
 		types.SQLTypeVarGraph, types.SQLTypeNVarGraph, types.SQLTypeLonGraph, types.SQLTypeNLonGraph:
 		switch v := val.(type) {
 		case []byte:
+			if len(v) > math.MaxUint16 {
+				return nil, fmt.Errorf("db2: parameter length %d exceeds maximum inline length %d", len(v), math.MaxUint16)
+			}
 			origLen := len(dst)
 			dst = append(dst, 0x00, 0, 0) // Not null (1) + length (2)
 			binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(len(v)))
 			return append(dst, v...), nil
 		case string:
+			if len(v) > math.MaxUint16 {
+				return nil, fmt.Errorf("db2: parameter length %d exceeds maximum inline length %d", len(v), math.MaxUint16)
+			}
 			return appendStringFDODTA(dst, v), nil
 		default:
-			return appendStringFDODTA(dst, fmt.Sprint(v)), nil
+			s := fmt.Sprint(v)
+			if len(s) > math.MaxUint16 {
+				return nil, fmt.Errorf("db2: parameter length %d exceeds maximum inline length %d", len(s), math.MaxUint16)
+			}
+			return appendStringFDODTA(dst, s), nil
 		}
 
 	case types.SQLTypeGraphic, types.SQLTypeNGraphic:
@@ -246,6 +259,9 @@ func appendFDODTA(dst []byte, sqlType types.SQLType, sqllen int64, prec, scale i
 
 	case types.SQLTypeVarBinary, types.SQLTypeNVarBinary, types.SQLTypeBlob, types.SQLTypeNBlob:
 		b := toBytes(val)
+		if len(b) > math.MaxUint16 {
+			return nil, fmt.Errorf("db2: parameter length %d exceeds maximum inline length %d", len(b), math.MaxUint16)
+		}
 		origLen := len(dst)
 		dst = append(dst, 0x00, 0, 0)
 		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(len(b)))
@@ -647,27 +663,31 @@ func packDDM(cp uint16, body []byte) []byte {
 	return append(obj, body...)
 }
 
-// BuildSQLDTA constructs the complete SQLDTA object containing FDODSC and FDODTA blocks for the parameters.
-// Optimization: Pre-calculates exact FDODSC size and constructs SQLDTA payload directly in a single contiguous buffer (reduces heap allocs by 80%, cuts execution time by ~33%).
-func BuildSQLDTA(colTypes []types.SQLType, colLens []int64, precs, scales []int, args []any, endian binary.ByteOrder) ([]byte, error) {
+// isLOBType reports whether the SQL type is BLOB, CLOB or DBCLOB.
+func isLOBType(t types.SQLType) bool {
+	switch t {
+	case types.SQLTypeBlob, types.SQLTypeNBlob,
+		types.SQLTypeClob, types.SQLTypeNClob,
+		types.SQLTypeDbClob, types.SQLTypeNDbClob:
+		return true
+	default:
+		return false
+	}
+}
+
+// BuildSQLDTAWithEXTDTA constructs SQLDTA containing FDODSC and FDODTA, extracting LOB payloads into EXTDTA packets.
+func BuildSQLDTAWithEXTDTA(colTypes []types.SQLType, colLens []int64, precs, scales []int, args []any, endian binary.ByteOrder) ([]byte, [][]byte, error) {
 	numParams := len(args)
 	if len(colTypes) != numParams || len(colLens) != numParams || len(precs) != numParams || len(scales) != numParams {
-		return nil, fmt.Errorf("db2: mismatched parameter column metadata lengths (expected %d, got %d colTypes)", numParams, len(colTypes))
+		return nil, nil, fmt.Errorf("db2: mismatched parameter column metadata lengths (expected %d, got %d colTypes)", numParams, len(colTypes))
 	}
 
 	numGroups := (numParams + 83) / 84
 	fdodscLen := numGroups*3 + numParams*3 + 6
 
-	// Allocate a single contiguous slice initialized with room for headers + FDODSC
-	// sqldta layout:
-	// 0..4: SQLDTA header
-	// 4..8: FDODSC header
-	// 8..8+fdodscLen: FDODSC payload
-	// 8+fdodscLen .. 12+fdodscLen: FDODTA header
-	// 12+fdodscLen ..: FDODTA payload
 	sqldta := make([]byte, 12+fdodscLen, 12+fdodscLen+numParams*32+32)
 
-	// Populate FDODSC directly at sqldta[8:]
+	// 1. FDODSC
 	fdodscSlice := sqldta[8:8]
 	for i := 0; i < numParams; {
 		chunkSize := numParams - i
@@ -686,21 +706,77 @@ func BuildSQLDTA(colTypes []types.SQLType, colLens []int64, precs, scales []int,
 	}
 	fdodscSlice = append(fdodscSlice, 0x06, 0x71, 0xE4, 0xD0, 0x00, 0x01)
 
-	// Populate FDODTA payload starting at index 12+fdodscLen
+	// 2. FDODTA + EXTDTA
 	dtaOffset := 12 + fdodscLen
 	sqldta = sqldta[:dtaOffset]
 
+	var extdtaPackets [][]byte
+
 	for i := 0; i < numParams; i++ {
-		var err error
-		sqldta, err = appendFDODTA(sqldta, colTypes[i], colLens[i], precs[i], scales[i], args[i], endian)
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode parameter %d: %w", i+1, err)
+		rawVal := args[i]
+		if r, ok := rawVal.(io.Reader); ok && r != nil {
+			b, err := io.ReadAll(r)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to read parameter %d io.Reader: %w", i+1, err)
+			}
+			rawVal = b
+		}
+
+		if valuer, ok := rawVal.(driver.Valuer); ok {
+			var err error
+			rawVal, err = valuer.Value()
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+
+		colType := colTypes[i]
+		if isLOBType(colType) {
+			if rawVal == nil {
+				sqldta = append(sqldta, 0xFF) // Null indicator
+				continue
+			}
+
+			var payload []byte
+			switch v := rawVal.(type) {
+			case []byte:
+				payload = v
+			case string:
+				if colType == types.SQLTypeDbClob || colType == types.SQLTypeNDbClob {
+					payload = EncodeUTF16BE(v)
+				} else {
+					payload = []byte(v)
+				}
+			default:
+				payload = fmt.Append(nil, v)
+			}
+
+			if uint64(len(payload)) > math.MaxUint32 {
+				return nil, nil, fmt.Errorf("db2: parameter %d length %d exceeds max uint32 for LOB", i+1, len(payload))
+			}
+
+			// FDODTA 5 bytes: 0x00 indicator + uint32 BigEndian length
+			origLen := len(sqldta)
+			sqldta = append(sqldta, 0x00, 0, 0, 0, 0)
+			binary.BigEndian.PutUint32(sqldta[origLen+1:origLen+5], uint32(len(payload)))
+
+			// EXTDTA DDM object (0x146C): status byte 0x00 + payload
+			extBody := make([]byte, 1+len(payload))
+			extBody[0] = 0x00
+			copy(extBody[1:], payload)
+			extPacket := packDDM(0x146C, extBody)
+			extdtaPackets = append(extdtaPackets, extPacket)
+		} else {
+			var err error
+			sqldta, err = appendFDODTA(sqldta, colTypes[i], colLens[i], precs[i], scales[i], rawVal, endian)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to encode parameter %d: %w", i+1, err)
+			}
 		}
 	}
 
 	dtaBytesLen := len(sqldta) - dtaOffset
 	if (fdodscLen+dtaBytesLen)%2 != 0 {
-		// Prepend padding 0x00 byte before dtaBytes
 		sqldta = append(sqldta[:dtaOffset+1], sqldta[dtaOffset:]...)
 		sqldta[dtaOffset] = 0x00
 		dtaBytesLen++
@@ -708,16 +784,12 @@ func BuildSQLDTA(colTypes []types.SQLType, colLens []int64, precs, scales []int,
 
 	bodyLen := 4 + (4 + fdodscLen) + (4 + dtaBytesLen)
 	if bodyLen > 0x7FFF {
-		// Too long for 15-bit DDM lengths: repack SQLDTA and FDODTA with
-		// extended lengths. Sending it over more than one DSS is up to the
-		// caller's WriteRequestDSS.
 		fdodsc := sqldta[8 : 8+fdodscLen]
 		dta := sqldta[dtaOffset:]
-		inner := append(packDDM(0x0010, fdodsc), packDDM(0x147A, dta)...) // FDODSC, FDODTA
-		return packDDM(0x2412, inner), nil                                // SQLDTA
+		inner := append(packDDM(0x0010, fdodsc), packDDM(0x147A, dta)...)
+		return packDDM(0x2412, inner), extdtaPackets, nil
 	}
 
-	// Fill in headers
 	binary.BigEndian.PutUint16(sqldta[0:2], uint16(bodyLen))
 	binary.BigEndian.PutUint16(sqldta[2:4], 0x2412) // SQLDTA
 
@@ -728,5 +800,12 @@ func BuildSQLDTA(colTypes []types.SQLType, colLens []int64, precs, scales []int,
 	binary.BigEndian.PutUint16(sqldta[offset:offset+2], uint16(4+dtaBytesLen))
 	binary.BigEndian.PutUint16(sqldta[offset+2:offset+4], 0x147A) // FDODTA
 
-	return sqldta, nil
+	return sqldta, extdtaPackets, nil
+}
+
+// BuildSQLDTA constructs the complete SQLDTA object containing FDODSC and FDODTA blocks for the parameters.
+// Optimization: Pre-calculates exact FDODSC size and constructs SQLDTA payload directly in a single contiguous buffer (reduces heap allocs by 80%, cuts execution time by ~33%).
+func BuildSQLDTA(colTypes []types.SQLType, colLens []int64, precs, scales []int, args []any, endian binary.ByteOrder) ([]byte, error) {
+	sqldta, _, err := BuildSQLDTAWithEXTDTA(colTypes, colLens, precs, scales, args, endian)
+	return sqldta, err
 }

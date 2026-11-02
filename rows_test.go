@@ -499,3 +499,39 @@ func TestNewRows_EdgeCases(t *testing.T) {
 		}
 	})
 }
+
+func TestNewStreamingRows_NextAndPagination(t *testing.T) {
+	cols := []network.ColumnDescription{
+		{Name: "ID", SQLType: uint16(types.SQLTypeInteger)},
+	}
+	initial := [][]driver.Value{
+		{int64(1)},
+		{int64(2)},
+	}
+
+	closedCalled := false
+	onClose := func() error {
+		closedCalled = true
+		return nil
+	}
+
+	rows := NewStreamingRows(cols, initial, nil, onClose)
+	dest := make([]driver.Value, 1)
+
+	if err := rows.Next(dest); err != nil || dest[0] != int64(1) {
+		t.Fatalf("expected 1, got %v (err: %v)", dest[0], err)
+	}
+	if err := rows.Next(dest); err != nil || dest[0] != int64(2) {
+		t.Fatalf("expected 2, got %v (err: %v)", dest[0], err)
+	}
+	if err := rows.Next(dest); err != io.EOF {
+		t.Fatalf("expected io.EOF when stream is nil, got %v", err)
+	}
+
+	if err := rows.Close(); err != nil {
+		t.Fatalf("unexpected error on Close: %v", err)
+	}
+	if !closedCalled {
+		t.Fatalf("expected onClose to be called on Close")
+	}
+}

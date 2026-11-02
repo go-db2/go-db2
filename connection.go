@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -164,6 +165,22 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	}
 
 	if len(args) == 0 {
+		sQuery := stripLeadingCommentsAndSpaces(query)
+		if hasPrefixFold(sQuery, "CALL") {
+			sets, err := c.session.QueryCallDirect(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			if len(sets) == 0 {
+				return NewRows(nil, nil), nil
+			}
+			resultSets := make([]ResultSet, len(sets))
+			for i, s := range sets {
+				resultSets[i] = ResultSet{Columns: s.Columns, Data: s.Data}
+			}
+			return NewMultiRows(resultSets), nil
+		}
+
 		if !isQueryStatement(query) {
 			_, err := c.session.ExecDirect(ctx, query)
 			if err != nil {
@@ -172,12 +189,12 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			return NewRows(nil, nil), nil
 		}
 
-		cols, rowsData, err := c.session.QueryDirect(ctx, query)
+		cols, rowsData, stream, err := c.session.QueryStreamDirect(ctx, query)
 		if err != nil {
 			return nil, err
 		}
 
-		return NewRows(cols, rowsData), nil
+		return NewStreamingRows(cols, rowsData, stream, nil), nil
 	}
 
 	// Prepare and query with parameters
@@ -193,7 +210,7 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	}
 
 	stmt := NewStmt(c, query, outCols, paramCols, sec)
-	defer stmt.Close()
+	stmt.isTemp = true
 	return stmt.queryContextLocked(ctx, args)
 }
 
@@ -446,6 +463,8 @@ func checkNamedValueCommon(nv *driver.NamedValue) error {
 		nv.Value = b
 		return nil
 	case sql.Out, *sql.Out:
+		return nil
+	case io.Reader:
 		return nil
 	}
 
