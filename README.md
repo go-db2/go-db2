@@ -44,7 +44,7 @@
 | **LOBs (BLOB / CLOB / DBCLOB)** | Supported | Large binary and text streaming via DRDA `EXTDTA` (`0x146C`) packet collection |
 | **Stored Procedures & `sql.Out`** | Supported | `CALL procedure(?, ...)` supporting `IN`, `OUT`, and `INOUT` parameters via `SQLDTARD` |
 | **Multi-Result Sets** | Supported | Full `driver.RowsNextResultSet` implementation for procedures returning multiple cursors |
-| **`Result.LastInsertId()`** | Supported | Automatic identity recovery on `INSERT` via `IDENTITY_VAL_LOCAL()` |
+| **`Result.LastInsertId()`** | Unsupported (DRDA) | Retorna erro explícito orientando uso idiomático de `SELECT ... FROM FINAL TABLE (INSERT ...)` |
 | **Extended Data Types** | Supported | `DECFLOAT(16/34)` (IEEE 754-2008 DPD), `XML` documents, `TIMESTAMP WITH TIME ZONE` |
 | **Graphic & DBCS Types** | Supported | `GRAPHIC`, `VARGRAPHIC`, `LONG VARGRAPHIC`, `DBCLOB`, `CODEUNITS32` |
 | **Batch / Array Parameter DML** | Supported | High-throughput bulk operations with primitive slices (`[]int`, `[]string`, `[]float64`) |

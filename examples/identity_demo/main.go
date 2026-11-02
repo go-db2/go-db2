@@ -45,51 +45,58 @@ func main() {
 	}
 	fmt.Println("   ✅ Tabela 'test_orders' criada com IDENTITY iniciando em 100!")
 
-	fmt.Println("\n3. Executando inserções diretas (db.ExecContext) e testando LastInsertId()...")
-	res1, err := db.ExecContext(ctx, "INSERT INTO test_orders (customer, amount) VALUES ('Alice Santos', 150.75)")
-	if err != nil {
-		log.Fatalf("Erro ao inserir pedido 1: %v", err)
+	fmt.Println("\n3. Executando inserções diretas e recuperando IDENTITY de forma idiomática...")
+	// Nota: No protocolo DRDA do IBM Db2, o método driver.Result.LastInsertId() não é suportado nativamente
+	// pelo fluxo padrão de INSERT. A forma segura e idiomática no Db2 é utilizar a cláusula
+	// 'SELECT ... FROM FINAL TABLE (INSERT INTO ...)' via QueryRowContext.
+
+	var id1 int64
+	insertSQL1 := "SELECT order_id FROM FINAL TABLE (INSERT INTO test_orders (customer, amount) VALUES ('Alice Santos', 150.75))"
+	if err := db.QueryRowContext(ctx, insertSQL1).Scan(&id1); err != nil {
+		log.Fatalf("Erro ao inserir pedido 1 com FINAL TABLE: %v", err)
 	}
-	id1, err := res1.LastInsertId()
-	if err != nil {
-		log.Fatalf("Erro ao obter LastInsertId para pedido 1: %v", err)
-	}
-	fmt.Printf("   ➕ Pedido #1 inserido! LastInsertId = %d (esperado: 100)\n", id1)
+	fmt.Printf("   ➕ Pedido #1 inserido via FINAL TABLE! ID gerado = %d (esperado: 100)\n", id1)
 	if id1 != 100 {
 		log.Fatalf("Falha na validação do ID: obteve %d, esperava 100", id1)
 	}
 
-	res2, err := db.ExecContext(ctx, "INSERT INTO test_orders (customer, amount) VALUES ('Bruno Lima', 320.00)")
+	// Validando também o comportamento de Result.LastInsertId() em INSERT direto
+	resDirect, err := db.ExecContext(ctx, "INSERT INTO test_orders (customer, amount) VALUES ('Bruno Lima', 320.00)")
 	if err != nil {
-		log.Fatalf("Erro ao inserir pedido 2: %v", err)
+		log.Fatalf("Erro ao inserir pedido 2 via ExecContext: %v", err)
 	}
-	id2, err := res2.LastInsertId()
-	if err != nil {
-		log.Fatalf("Erro ao obter LastInsertId para pedido 2: %v", err)
+	_, err = resDirect.LastInsertId()
+	if err == nil {
+		log.Fatalf("Esperava erro de Result.LastInsertId() não suportado pelo protocolo DRDA, mas obteve nil")
 	}
-	fmt.Printf("   ➕ Pedido #2 inserido! LastInsertId = %d (esperado: 101)\n", id2)
-	if id2 != 101 {
-		log.Fatalf("Falha na validação do ID: obteve %d, esperava 101", id2)
+	fmt.Printf("   ✅ Chamada direta a Result.LastInsertId() retornou erro explícito esperado: %v\n", err)
+
+	// Recuperando o ID gerado para Bruno Lima via FINAL TABLE
+	var id2 int64
+	insertSQL2 := "SELECT order_id FROM FINAL TABLE (INSERT INTO test_orders (customer, amount) VALUES ('Carlos Souza', 210.50))"
+	if err := db.QueryRowContext(ctx, insertSQL2).Scan(&id2); err != nil {
+		log.Fatalf("Erro ao inserir pedido 3 com FINAL TABLE: %v", err)
+	}
+	// Note que test_orders teve: Alice (100), Bruno (101), Carlos (102)
+	fmt.Printf("   ➕ Pedido #3 inserido via FINAL TABLE! ID gerado = %d (esperado: 102)\n", id2)
+	if id2 != 102 {
+		log.Fatalf("Falha na validação do ID: obteve %d, esperava 102", id2)
 	}
 
-	fmt.Println("\n4. Executando inserção parametrizada (stmt.ExecContext) e testando LastInsertId()...")
-	stmt, err := db.PrepareContext(ctx, "INSERT INTO test_orders (customer, amount) VALUES (?, ?)")
+	fmt.Println("\n4. Executando inserção parametrizada preparada com FINAL TABLE...")
+	stmt, err := db.PrepareContext(ctx, "SELECT order_id FROM FINAL TABLE (INSERT INTO test_orders (customer, amount) VALUES (?, ?))")
 	if err != nil {
-		log.Fatalf("Erro ao preparar statement: %v", err)
+		log.Fatalf("Erro ao preparar statement com FINAL TABLE: %v", err)
 	}
 	defer stmt.Close()
 
-	res3, err := stmt.ExecContext(ctx, "Carla Dias", 890.50)
-	if err != nil {
-		log.Fatalf("Erro ao executar prepared insert: %v", err)
+	var id3 int64
+	if err := stmt.QueryRowContext(ctx, "Carla Dias", 890.50).Scan(&id3); err != nil {
+		log.Fatalf("Erro ao executar prepared insert via FINAL TABLE: %v", err)
 	}
-	id3, err := res3.LastInsertId()
-	if err != nil {
-		log.Fatalf("Erro ao obter LastInsertId via Prepared Statement: %v", err)
-	}
-	fmt.Printf("   ➕ Pedido #3 inserido via Prepared Statement! LastInsertId = %d (esperado: 102)\n", id3)
-	if id3 != 102 {
-		log.Fatalf("Falha na validação do ID: obteve %d, esperava 102", id3)
+	fmt.Printf("   ➕ Pedido #4 inserido via Prepared FINAL TABLE! ID gerado = %d (esperado: 103)\n", id3)
+	if id3 != 103 {
+		log.Fatalf("Falha na validação do ID: obteve %d, esperava 103", id3)
 	}
 
 	fmt.Println("\n5. Validando todos os registros inseridos na tabela...")
