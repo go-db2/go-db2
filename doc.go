@@ -47,4 +47,3 @@
 //	    fmt.Printf("SQLCODE: %d, SQLSTATE: %s\n", dbErr.SQLCode, dbErr.SQLState)
 //	}
 package db2
-
