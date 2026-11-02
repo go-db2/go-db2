@@ -11,7 +11,7 @@ import (
 func TestDecodeFieldIntegers(t *testing.T) {
 	// Smallint: 42
 	var buf bytes.Buffer
-	binary.Write(&buf, binary.LittleEndian, int16(42))
+	_ = binary.Write(&buf, binary.LittleEndian, int16(42))
 	v, err := DecodeField(DRDATypeSmall, []byte{0x00, 0x02}, &buf, binary.LittleEndian)
 	if err != nil || v.(int64) != 42 {
 		t.Errorf("Smallint decode = %v, err: %v; want 42", v, err)
@@ -28,7 +28,7 @@ func TestDecodeFieldIntegers(t *testing.T) {
 	// Nullable Integer with Value (0x00 + 1000)
 	buf.Reset()
 	buf.WriteByte(0x00)
-	binary.Write(&buf, binary.LittleEndian, int32(1000))
+	_ = binary.Write(&buf, binary.LittleEndian, int32(1000))
 	v, err = DecodeField(DRDATypeNInteger, []byte{0x00, 0x04}, &buf, binary.LittleEndian)
 	if err != nil || v.(int64) != 1000 {
 		t.Errorf("Nullable Integer decode = %v, want 1000", v)
@@ -180,8 +180,8 @@ func TestParseSQLDTARD_TableDriven(t *testing.T) {
 			dtaBytes: func() []byte {
 				var buf bytes.Buffer
 				buf.Write([]byte{0xFF, 0x00}) // row header
-				binary.Write(&buf, binary.BigEndian, int16(42))
-				binary.Write(&buf, binary.BigEndian, int32(100))
+				_ = binary.Write(&buf, binary.BigEndian, int16(42))
+				_ = binary.Write(&buf, binary.BigEndian, int32(100))
 				return buf.Bytes()
 			}(),
 			expectedCount: 2,
@@ -200,9 +200,9 @@ func TestParseSQLDTARD_TableDriven(t *testing.T) {
 			dtaBytes: func() []byte {
 				var buf bytes.Buffer
 				buf.Write([]byte{0xFF, 0x00}) // row header
-				binary.Write(&buf, binary.BigEndian, int16(10))
-				binary.Write(&buf, binary.BigEndian, int32(20))
-				binary.Write(&buf, binary.BigEndian, int16(30))
+				_ = binary.Write(&buf, binary.BigEndian, int16(10))
+				_ = binary.Write(&buf, binary.BigEndian, int32(20))
+				_ = binary.Write(&buf, binary.BigEndian, int16(30))
 				return buf.Bytes()
 			}(),
 			expectedCount: 3,

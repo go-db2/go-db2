@@ -17,7 +17,8 @@ func TestContextUserPropagation(t *testing.T) {
 		t.Errorf("UserFromContext(userCtx) = %q, want tenant_alice", user)
 	}
 
-	nilCtxUser := UserFromContext(nil)
+	var nilCtx context.Context
+	nilCtxUser := UserFromContext(nilCtx)
 	if nilCtxUser != "" {
 		t.Errorf("UserFromContext(nil) = %q, want empty string", nilCtxUser)
 	}

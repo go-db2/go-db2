@@ -393,10 +393,6 @@ func writePKGNAMCSN(buf []byte, database, pkgid, pkgcnstkn string, pkgsn uint16)
 	if pkgidLen < 18 {
 		pkgidLen = 18
 	}
-	tokenLen := len(pkgcnstkn)
-	if tokenLen < 8 {
-		tokenLen = 8
-	}
 
 	totalLen := len(buf)
 	binary.BigEndian.PutUint16(buf[0:2], uint16(totalLen))

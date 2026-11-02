@@ -724,6 +724,7 @@ func BuildSQLDTAWithEXTDTA(colTypes []SQLType, colLens []int64, precs, scales []
 		i += chunkSize
 	}
 	fdodscSlice = append(fdodscSlice, 0x06, 0x71, 0xE4, 0xD0, 0x00, 0x01)
+	_ = fdodscSlice
 
 	// 2. FDODTA + EXTDTA
 	dtaOffset := 12 + fdodscLen

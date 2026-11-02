@@ -46,7 +46,8 @@ func TestClientInfoContext(t *testing.T) {
 		t.Errorf("CorrelationToken = %q, want %q", extracted.CorrelationToken, info.CorrelationToken)
 	}
 
-	nilCtxInfo := ClientInfoFromContext(nil)
+	var nilCtx context.Context
+	nilCtxInfo := ClientInfoFromContext(nilCtx)
 	if !nilCtxInfo.IsEmpty() {
 		t.Errorf("expected empty ClientInfo for nil context, got %+v", nilCtxInfo)
 	}

@@ -115,5 +115,5 @@ func PadGraphicUTF16BE(b []byte, targetCharLen int) []byte {
 
 // TrimRightGraphicSpaces trims trailing spaces (including DBCS / Ideographic space U+3000 and nulls) from a graphic string.
 func TrimRightGraphicSpaces(s string) string {
-	return strings.TrimRight(s, " \t\r\n\u0020\u3000\u0000")
+	return strings.TrimRight(s, " \t\r\n\u3000\u0000")
 }
