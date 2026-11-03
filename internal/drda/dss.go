@@ -21,6 +21,9 @@ const (
 	DSSFlagChained uint8 = 0x40 // Bit 6: Chained to next DSS packet (0b01000000)
 	DSSFlagError   uint8 = 0x20 // Bit 5: DSS Error (0b00100000)
 	DSSFlagSameID  uint8 = 0x10 // Bit 4: Next DSS has same correlation ID (0b00010000)
+
+	// MaxDSSPayloadSize defines the cumulative maximum allowed payload size for a DSS packet (128 MiB).
+	MaxDSSPayloadSize = 128 * 1024 * 1024
 )
 
 var (
@@ -28,6 +31,8 @@ var (
 	ErrInvalidDSSMagic = errors.New("invalid DSS packet: missing 0xD0 magic identifier")
 	// ErrTruncatedDSS is returned when fewer bytes than expected are read from the stream.
 	ErrTruncatedDSS = errors.New("truncated DSS packet received")
+	// ErrDSSPayloadTooLarge is returned when a DSS packet (single or continued) exceeds MaxDSSPayloadSize.
+	ErrDSSPayloadTooLarge = errors.New("db2: DSS packet payload exceeds maximum limit of 128MB")
 )
 
 // DSSHeader represents the 6-byte DRDA Data Stream Structure header.
@@ -188,8 +193,12 @@ func ReadDSS(r io.Reader) (*DSSHeader, CodePoint, []byte, bool, error) {
 		if n < 2 {
 			return header, 0, nil, false, fmt.Errorf("db2: invalid DSS continuation length %d", n)
 		}
+		segPayload := n - 2
+		if int64(len(body))+int64(segPayload) > MaxDSSPayloadSize {
+			return header, 0, nil, false, ErrDSSPayloadTooLarge
+		}
 		start := len(body)
-		body = append(body, make([]byte, n-2)...)
+		body = append(body, make([]byte, segPayload)...)
 		if _, err := io.ReadFull(r, body[start:]); err != nil {
 			return header, 0, nil, false, fmt.Errorf("failed to read DSS continuation: %w", err)
 		}
