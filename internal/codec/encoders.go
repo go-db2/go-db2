@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -11,6 +12,13 @@ import (
 	"strings"
 	"time"
 )
+
+// MaxLOBStreamSize defines the architectural maximum size limit for reading io.Reader streams in LOB parameters (2 GiB).
+// Declared as a package-level variable to allow safe adjustment during unit tests.
+var MaxLOBStreamSize int64 = 2 * 1024 * 1024 * 1024 // 2 GiB
+
+// ErrLOBStreamTooLarge is returned when an io.Reader stream exceeds MaxLOBStreamSize.
+var ErrLOBStreamTooLarge = errors.New("db2: LOB stream exceeds maximum allowed size of 2GB")
 
 // Optimization: Pre-allocated static byte slices for FDODSC parameter descriptors to avoid heap allocations on every call.
 var (
@@ -736,9 +744,14 @@ func BuildSQLDTAWithEXTDTA(colTypes []SQLType, colLens []int64, precs, scales []
 		origArg := args[i]
 		rawVal := origArg
 		if r, ok := rawVal.(io.Reader); ok && r != nil {
-			b, err := io.ReadAll(r)
+			limit := MaxLOBStreamSize
+			lr := io.LimitReader(r, limit+1)
+			b, err := io.ReadAll(lr)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to read parameter %d io.Reader: %w", i+1, err)
+			}
+			if int64(len(b)) > limit {
+				return nil, nil, fmt.Errorf("%w: parameter %d exceeds maximum allowed size of %d bytes", ErrLOBStreamTooLarge, i+1, limit)
 			}
 			rawVal = b
 		}

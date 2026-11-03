@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -252,5 +253,71 @@ func TestScalarInlineOverflow(t *testing.T) {
 	_, _, err := BuildSQLDTAWithEXTDTA(colTypes, colLens, precs, scales, []any{bigString}, binary.BigEndian)
 	if err == nil {
 		t.Fatalf("expected overflow error for VARCHAR > 65535, got nil")
+	}
+}
+
+// AC-3: LOB Stream DoS Guard
+func TestBuildSQLDTAWithEXTDTA_LOBStreamExceedsLimit_AC3(t *testing.T) {
+	oldLimit := MaxLOBStreamSize
+	MaxLOBStreamSize = 1024
+	defer func() {
+		MaxLOBStreamSize = oldLimit
+	}()
+
+	colTypes := []SQLType{SQLTypeBlob}
+	colLens := []int64{2048}
+	precs := []int{0}
+	scales := []int{0}
+
+	oversizedStream := bytes.NewReader(make([]byte, 1025))
+
+	_, _, err := BuildSQLDTAWithEXTDTA(colTypes, colLens, precs, scales, []any{oversizedStream}, binary.BigEndian)
+	if err == nil {
+		t.Fatalf("expected error when stream exceeds MaxLOBStreamSize, got nil")
+	}
+	if !errors.Is(err, ErrLOBStreamTooLarge) {
+		t.Fatalf("expected ErrLOBStreamTooLarge, got: %v", err)
+	}
+	expectedMsg := "parameter 1 exceeds maximum allowed size of 1024 bytes"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("expected error message containing %q, got %q", expectedMsg, err.Error())
+	}
+}
+
+// AC-4: LOB Stream Sem Truncamento
+func TestBuildSQLDTAWithEXTDTA_ValidLOBStreamNoTruncation_AC4(t *testing.T) {
+	colTypes := []SQLType{SQLTypeBlob}
+	colLens := []int64{100000}
+	precs := []int{0}
+	scales := []int{0}
+
+	streamSize := 65536 // 64 KiB
+	payload := make([]byte, streamSize)
+	for i := 0; i < streamSize; i++ {
+		payload[i] = byte(i % 256)
+	}
+
+	stream := bytes.NewReader(payload)
+	_, extdta, err := BuildSQLDTAWithEXTDTA(colTypes, colLens, precs, scales, []any{stream}, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("BuildSQLDTAWithEXTDTA failed: %v", err)
+	}
+
+	if len(extdta) != 1 {
+		t.Fatalf("expected 1 EXTDTA packet, got %d", len(extdta))
+	}
+
+	pkt := extdta[0]
+	if binary.BigEndian.Uint16(pkt[0:2]) != 0x8008 {
+		t.Errorf("expected extended DDM length 0x8008, got 0x%04X", binary.BigEndian.Uint16(pkt[0:2]))
+	}
+	if binary.BigEndian.Uint16(pkt[2:4]) != 0x146C {
+		t.Errorf("expected EXTDTA codepoint 0x146C, got 0x%04X", binary.BigEndian.Uint16(pkt[2:4]))
+	}
+	if binary.BigEndian.Uint32(pkt[4:8]) != uint32(1+streamSize) {
+		t.Errorf("expected payload length %d, got %d", 1+streamSize, binary.BigEndian.Uint32(pkt[4:8]))
+	}
+	if !bytes.Equal(pkt[9:], payload) {
+		t.Fatalf("payload corrupted or truncated")
 	}
 }

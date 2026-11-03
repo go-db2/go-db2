@@ -2,6 +2,8 @@ package drda
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"io"
 	"testing"
 )
@@ -137,4 +139,120 @@ func BenchmarkWriteRequestDSS(b *testing.B) {
 			_, _ = WriteRequestDSS(io.Discard, largePayload, 1, false, true)
 		}
 	})
+}
+
+// endlessContinuationReader simulates an infinite stream of DSS continuation frames
+// with 0x8000 flag set, generating bytes on the fly without memory allocation.
+type endlessContinuationReader struct {
+	hdrSent      bool
+	segHdr       [2]byte
+	segHdrPos    int
+	segBytesLeft int
+}
+
+func newEndlessContinuationReader() *endlessContinuationReader {
+	r := &endlessContinuationReader{}
+	binary.BigEndian.PutUint16(r.segHdr[:], dssContinuationFlag|maxDSSSegment)
+	return r
+}
+
+func (r *endlessContinuationReader) Read(p []byte) (int, error) {
+	if !r.hdrSent {
+		hdr := []byte{0xFF, 0xFF, DSSMagic, DSSTypeRequest, 0x00, 0x01}
+		n := copy(p, hdr)
+		r.hdrSent = true
+		r.segBytesLeft = maxDSSSegment - 6
+		return n, nil
+	}
+
+	written := 0
+	for written < len(p) {
+		if r.segBytesLeft > 0 {
+			toWrite := r.segBytesLeft
+			if toWrite > len(p)-written {
+				toWrite = len(p) - written
+			}
+			for i := 0; i < toWrite; i++ {
+				p[written+i] = 0x00
+			}
+			written += toWrite
+			r.segBytesLeft -= toWrite
+			continue
+		}
+
+		if r.segHdrPos < 2 {
+			p[written] = r.segHdr[r.segHdrPos]
+			r.segHdrPos++
+			written++
+			if r.segHdrPos == 2 {
+				r.segHdrPos = 0
+				r.segBytesLeft = maxDSSSegment - 2
+			}
+			continue
+		}
+	}
+	return written, nil
+}
+
+// AC-1: ReadDSS DoS Guard
+func TestReadDSS_ContinuationExceedsMaxPayloadSize_AC1(t *testing.T) {
+	reader := newEndlessContinuationReader()
+	_, _, _, _, err := ReadDSS(reader)
+	if err == nil {
+		t.Fatalf("expected error when DSS exceeds MaxDSSPayloadSize, got nil")
+	}
+	if !errors.Is(err, ErrDSSPayloadTooLarge) {
+		t.Fatalf("expected ErrDSSPayloadTooLarge, got: %v", err)
+	}
+}
+
+// AC-2: ReadDSS Continuação Válida
+func TestReadDSS_ValidMultiSegmentContinuation_AC2(t *testing.T) {
+	totalPayloadLen := 70000
+	payload := make([]byte, totalPayloadLen)
+
+	binary.BigEndian.PutUint16(payload[0:2], 0x8008)
+	binary.BigEndian.PutUint16(payload[2:4], uint16(CodePointEXTDTA))
+	binary.BigEndian.PutUint32(payload[4:8], uint32(totalPayloadLen-8))
+	for i := 8; i < totalPayloadLen; i++ {
+		payload[i] = byte(i % 251)
+	}
+
+	var buf bytes.Buffer
+	curID := uint16(42)
+	if _, err := WriteRequestDSS(&buf, payload, curID, false, true); err != nil {
+		t.Fatalf("WriteRequestDSS failed: %v", err)
+	}
+
+	_, cp, data, moreData, err := ReadDSS(&buf)
+	if err != nil {
+		t.Fatalf("ReadDSS failed on multi-segment continuation: %v", err)
+	}
+	if cp != CodePointEXTDTA {
+		t.Errorf("expected CodePointEXTDTA (0x146C), got %v", cp)
+	}
+	if len(data) != totalPayloadLen-8 {
+		t.Fatalf("expected payload len %d, got %d", totalPayloadLen-8, len(data))
+	}
+	if moreData {
+		t.Errorf("expected moreData = false, got true")
+	}
+}
+
+// AC-5: BenchmarkReadDSS_SingleSegment
+func BenchmarkReadDSS_SingleSegment(b *testing.B) {
+	payload := []byte{0x00, 0x08, 0x10, 0x41, 0xDE, 0xAD, 0xBE, 0xEF}
+	var buf bytes.Buffer
+	if _, err := WriteRequestDSS(&buf, payload, 1, false, true); err != nil {
+		b.Fatalf("WriteRequestDSS failed: %v", err)
+	}
+	rawPacket := buf.Bytes()
+	reader := bytes.NewReader(rawPacket)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader.Reset(rawPacket)
+		_, _, _, _, _ = ReadDSS(reader)
+	}
 }
