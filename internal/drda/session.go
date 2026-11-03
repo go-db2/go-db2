@@ -1290,7 +1290,7 @@ func decodeRows(fields []FieldDescriptor, data []byte, endian binary.ByteOrder) 
 		}
 
 		for i := 0; i < numFields; i++ {
-			f := fields[i]
+			f := &fields[i]
 			val, err := codec.DecodeField(f.Type, f.PS[:], reader, endian)
 			if err != nil {
 				return nil, fmt.Errorf("failed to decode row %d column %d (Type=0x%02X, PS=%x, RemainingBytes=%d): %w",
@@ -1488,7 +1488,7 @@ func decodeRowsPartial(fields []FieldDescriptor, data []byte, endian binary.Byte
 		rowComplete := true
 
 		for i := 0; i < numFields; i++ {
-			f := fields[i]
+			f := &fields[i]
 			val, err := codec.DecodeField(f.Type, f.PS[:], reader, endian)
 			if err != nil {
 				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
