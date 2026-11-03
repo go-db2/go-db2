@@ -16,15 +16,16 @@ func TestParseDSN_URL(t *testing.T) {
 	}{
 		{
 			name: "Basic URL",
-			dsn:  "db2://db2inst1:password@localhost:50000/SAMPLE",
+			dsn:  "db2://db2inst1:password@localhost:50000/SAMPLE?allow_plaintext_auth=true",
 			expected: &Config{
-				Host:     "localhost",
-				Port:     50000,
-				Database: "SAMPLE",
-				User:     "db2inst1",
-				Password: "password",
-				UseSSL:   false,
-				Timeout:  30 * time.Second,
+				Host:               "localhost",
+				Port:               50000,
+				Database:           "SAMPLE",
+				User:               "db2inst1",
+				Password:           "password",
+				UseSSL:             false,
+				AllowPlaintextAuth: true,
+				Timeout:            30 * time.Second,
 			},
 		},
 		{
@@ -78,7 +79,7 @@ func TestParseDSN_URL(t *testing.T) {
 }
 
 func TestParseDSN_KeyValue(t *testing.T) {
-	dsn := "host=mydb2.local;port=50000;database=TESTDB;user=alice;password=secret123;ssl=false;timeout=45s;"
+	dsn := "host=mydb2.local;port=50000;database=TESTDB;user=alice;password=secret123;ssl=false;timeout=45s;allow_plaintext_auth=true;"
 	cfg, err := ParseDSN(dsn)
 	if err != nil {
 		t.Fatalf("ParseDSN(%q) error: %v", dsn, err)
@@ -455,7 +456,7 @@ func TestParseDSN_PortPreservation(t *testing.T) {
 	}
 
 	// DSN without port specified and ssl=false defaults to 50000
-	cfg6, err := ParseDSN("host=mydb.local;ssl=false;database=SAMPLE;user=u;pwd=p")
+	cfg6, err := ParseDSN("host=mydb.local;ssl=false;database=SAMPLE;user=u;pwd=p;allow_plaintext_auth=true")
 	if err != nil {
 		t.Fatalf("ParseDSN failed: %v", err)
 	}
@@ -481,8 +482,43 @@ func TestParseDSN_PlaintextAuthPolicy(t *testing.T) {
 	}
 }
 
+func TestParseDSN_SecurityMechanismZeroPlaintextPolicy(t *testing.T) {
+	// DSN with password, without SSL, without allow_plaintext_auth, and without explicit security_mechanism (defaults to 0) must fail
+	_, err := ParseDSN("db2://db2inst1:password@localhost:50000/SAMPLE")
+	if err == nil || !strings.Contains(err.Error(), "plaintext authentication over unencrypted connection is disabled by default") {
+		t.Fatalf("expected plaintext auth error for default security mechanism, got: %v", err)
+	}
+
+	// DSN without password is permitted even without SSL
+	cfg, err := ParseDSN("db2://db2inst1@localhost:50000/SAMPLE")
+	if err != nil {
+		t.Fatalf("expected success for passwordless DSN, got: %v", err)
+	}
+	if cfg.User != "db2inst1" {
+		t.Errorf("User = %q, want db2inst1", cfg.User)
+	}
+
+	// DSN with password and SSL enabled is permitted
+	cfg, err = ParseDSN("db2s://db2inst1:password@localhost:50001/SAMPLE")
+	if err != nil {
+		t.Fatalf("expected success for SSL DSN, got: %v", err)
+	}
+	if !cfg.UseSSL {
+		t.Errorf("expected UseSSL=true")
+	}
+
+	// DSN with password and dh_encrypted_password (9) is permitted without SSL
+	cfg, err = ParseDSN("db2://db2inst1:password@localhost:50000/SAMPLE?security_mechanism=dh_encrypted_password")
+	if err != nil {
+		t.Fatalf("expected success for SECMEC 9 DSN without SSL, got: %v", err)
+	}
+	if cfg.SecurityMechanism != 9 {
+		t.Errorf("expected SecurityMechanism=9, got: %d", cfg.SecurityMechanism)
+	}
+}
+
 func BenchmarkParseDSN(b *testing.B) {
-	dsn := "db2://myuser:secretpassword@db2host.corp.internal:50000/PRODUCTION?timeout=30s&block_size=65535"
+	dsn := "db2://myuser:secretpassword@db2host.corp.internal:50000/PRODUCTION?timeout=30s&block_size=65535&allow_plaintext_auth=true"
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

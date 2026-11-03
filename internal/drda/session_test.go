@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -734,5 +735,321 @@ func BenchmarkQuoteIdentifier_WithQuotes(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = quoteIdentifier(name)
+	}
+}
+
+func TestSession_Handshake_RefuseDowngrade(t *testing.T) {
+	testCases := []struct {
+		name          string
+		clientSecmec  uint16
+		serverSecmec  uint16
+		expectedError string
+	}{
+		{
+			name:          "Refuse downgrade from SECMEC 4 to 3",
+			clientSecmec:  4,
+			serverSecmec:  3,
+			expectedError: "db2: server rejected security mechanism 4 and offered 3; refusing downgrade",
+		},
+		{
+			name:          "Refuse downgrade from SECMEC 9 to 3",
+			clientSecmec:  9,
+			serverSecmec:  3,
+			expectedError: "db2: server rejected security mechanism 9 and offered 3; refusing downgrade",
+		},
+		{
+			name:          "Refuse unsolicited change from SECMEC 3 to 9",
+			clientSecmec:  3,
+			serverSecmec:  9,
+			expectedError: "db2: server rejected security mechanism 3 and offered 9; refusing downgrade",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("failed to start listener: %v", err)
+			}
+			defer listener.Close()
+
+			port := listener.Addr().(*net.TCPAddr).Port
+
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+
+				for {
+					hdr, cp, _, _, err := ReadDSS(conn)
+					if err != nil {
+						return
+					}
+					if cp == CodePointACCSEC || !hdr.Chained {
+						break
+					}
+				}
+
+				accsecRdBody := PackUint16(CodePointSECMEC, tc.serverSecmec)
+				accsecRdObj := PackDDMObject(CodePointACCSECRD, accsecRdBody)
+				dssHdr := BuildDSSHeader(len(accsecRdObj), DSSTypeReply, false, false, false, 1)
+				_, _ = conn.Write(append(dssHdr, accsecRdObj...))
+			}()
+
+			session := NewSession(SessionConfig{
+				Host:               "127.0.0.1",
+				Port:               port,
+				Database:           "SAMPLE",
+				User:               "user",
+				Password:           "pass",
+				SecurityMechanism:  tc.clientSecmec,
+				AllowPlaintextAuth: true,
+				Timeout:            2 * time.Second,
+			})
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			err = session.Connect(ctx)
+			if err == nil || !strings.Contains(err.Error(), tc.expectedError) {
+				t.Fatalf("expected error containing %q, got: %v", tc.expectedError, err)
+			}
+		})
+	}
+}
+
+func TestSession_Handshake_PlaintextBlocked(t *testing.T) {
+	// AC-2: Connect must immediately reject plaintext auth without TLS or AllowPlaintextAuth
+	session := NewSession(SessionConfig{
+		Host:               "127.0.0.1",
+		Port:               50000,
+		Database:           "SAMPLE",
+		User:               "user",
+		Password:           "pass",
+		SecurityMechanism:  3,
+		UseSSL:             false,
+		AllowPlaintextAuth: false,
+	})
+
+	err := session.Connect(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "plaintext authentication over unencrypted connection is disabled by default") {
+		t.Fatalf("expected plaintext disabled error, got: %v", err)
+	}
+}
+
+func TestSession_SwitchUser_PasswordDirectSECCHK(t *testing.T) {
+	// AC-3: SwitchUser with password must not execute SQL commands; it must send SECCHK directly
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	var receivedCodepoints []CodePoint
+	var receivedSQLStatements []string
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		for {
+			_, cp, data, _, err := ReadDSS(conn)
+			if err != nil {
+				return
+			}
+			receivedCodepoints = append(receivedCodepoints, cp)
+			if cp == CodePointSQLSTT {
+				receivedSQLStatements = append(receivedSQLStatements, string(data))
+			}
+			if cp == CodePointSECCHK {
+				secchkRmBody := PackBytes(CodePointSECCHKCD, []byte{0x00})
+				secchkRmObj := PackDDMObject(CodePointSECCHKRM, secchkRmBody)
+				hdr := BuildDSSHeader(len(secchkRmObj), DSSTypeReply, false, false, false, 1)
+				_, _ = conn.Write(append(hdr, secchkRmObj...))
+			}
+		}
+	}()
+
+	clientConn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+
+	session := &Session{
+		conn:          clientConn,
+		secmec:        3,
+		encoding:      EncodingCP500,
+		correlationID: 1,
+		cfg: SessionConfig{
+			Database:           "SAMPLE",
+			User:               "OLDUSER",
+			AllowPlaintextAuth: true,
+		},
+	}
+	defer session.Close()
+
+	err = session.SwitchUser(context.Background(), "NEWUSER", "NEWPASS")
+	if err != nil {
+		t.Fatalf("SwitchUser failed: %v", err)
+	}
+
+	if session.CurrentUser() != "NEWUSER" {
+		t.Errorf("CurrentUser = %q, want NEWUSER", session.CurrentUser())
+	}
+
+	if len(receivedSQLStatements) > 0 {
+		t.Fatalf("expected no SQL statements to be sent when password is provided, got: %v", receivedSQLStatements)
+	}
+
+	foundSECCHK := false
+	for _, cp := range receivedCodepoints {
+		if cp == CodePointSECCHK {
+			foundSECCHK = true
+			break
+		}
+	}
+	if !foundSECCHK {
+		t.Fatalf("expected CodePointSECCHK in received packets")
+	}
+}
+
+func TestSession_SwitchUser_SECMEC9_TokenHandling(t *testing.T) {
+	// AC-4: SwitchUser with SECMEC 9 without valid secTkn must fail immediately
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	session := &Session{
+		conn:   clientConn,
+		secmec: 9,
+		secTkn: nil,
+		cfg: SessionConfig{
+			Database: "SAMPLE",
+			User:     "OLDUSER",
+		},
+	}
+
+	err := session.SwitchUser(context.Background(), "NEWUSER", "PASS")
+	if err == nil || !strings.Contains(err.Error(), "ACCSEC negotiation token is missing or invalid for SECMEC 9") {
+		t.Fatalf("expected missing token error, got: %v", err)
+	}
+}
+
+func TestSession_SwitchUser_RepliesValidation(t *testing.T) {
+	// AC-5: SwitchUser error handling on failure replies
+	testCases := []struct {
+		name        string
+		replyPacket []byte
+		expectUser  string
+	}{
+		{
+			name: "RDBAFLRM failure",
+			replyPacket: func() []byte {
+				obj := PackDDMObject(CodePointRDBAFLRM, nil)
+				hdr := BuildDSSHeader(len(obj), DSSTypeReply, false, false, false, 1)
+				return append(hdr, obj...)
+			}(),
+			expectUser: "OLDUSER",
+		},
+		{
+			name: "SECCHKCD error failure",
+			replyPacket: func() []byte {
+				body := PackBytes(CodePointSECCHKCD, []byte{0x0B}) // Userid/Password invalid
+				obj := PackDDMObject(CodePointSECCHKRM, body)
+				hdr := BuildDSSHeader(len(obj), DSSTypeReply, false, false, false, 1)
+				return append(hdr, obj...)
+			}(),
+			expectUser: "OLDUSER",
+		},
+		{
+			name: "Missing SECCHKRM reply",
+			replyPacket: func() []byte {
+				obj := PackDDMObject(CodePointACCRDBRM, nil)
+				hdr := BuildDSSHeader(len(obj), DSSTypeReply, false, false, false, 1)
+				return append(hdr, obj...)
+			}(),
+			expectUser: "OLDUSER",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("failed to start listener: %v", err)
+			}
+			defer listener.Close()
+
+			port := listener.Addr().(*net.TCPAddr).Port
+
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+
+				_, _, _, _, _ = ReadDSS(conn)
+				_, _ = conn.Write(tc.replyPacket)
+			}()
+
+			clientConn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			if err != nil {
+				t.Fatalf("failed to dial: %v", err)
+			}
+
+			session := &Session{
+				conn:          clientConn,
+				secmec:        3,
+				encoding:      EncodingCP500,
+				correlationID: 1,
+				cfg: SessionConfig{
+					Database:           "SAMPLE",
+					User:               "OLDUSER",
+					AllowPlaintextAuth: true,
+				},
+			}
+			defer session.Close()
+
+			err = session.SwitchUser(context.Background(), "NEWUSER", "PASS")
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if session.CurrentUser() != tc.expectUser {
+				t.Fatalf("expected user %q to remain unchanged, got: %q", tc.expectUser, session.CurrentUser())
+			}
+		})
+	}
+}
+
+func TestSession_SwitchUser_PlaintextBlocked(t *testing.T) {
+	// AC-6: SwitchUser with SECMEC 3 and password must be rejected if unencrypted and !AllowPlaintextAuth
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	session := &Session{
+		conn:   clientConn,
+		secmec: 3,
+		cfg: SessionConfig{
+			Database:           "SAMPLE",
+			User:               "OLDUSER",
+			UseSSL:             false,
+			AllowPlaintextAuth: false,
+		},
+	}
+
+	err := session.SwitchUser(context.Background(), "NEWUSER", "PASS")
+	if err == nil || !strings.Contains(err.Error(), "plaintext authentication over unencrypted connection is disabled by default") {
+		t.Fatalf("expected plaintext auth error, got: %v", err)
+	}
+	if session.CurrentUser() != "OLDUSER" {
+		t.Fatalf("user was updated despite error: %q", session.CurrentUser())
 	}
 }
