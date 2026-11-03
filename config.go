@@ -152,7 +152,7 @@ func ParseDSN(dsn string) (*Config, error) {
 		}
 	}
 
-	if cfg.SecurityMechanism == 3 && !cfg.UseSSL && !cfg.AllowPlaintextAuth {
+	if (cfg.SecurityMechanism == 0 || cfg.SecurityMechanism == 3) && !cfg.UseSSL && !cfg.AllowPlaintextAuth && cfg.Password != "" {
 		return nil, &redactedError{err: errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")}
 	}
 

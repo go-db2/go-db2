@@ -104,6 +104,7 @@ type Session struct {
 	mu            sync.Mutex
 	correlationID uint16
 	secmec        uint16
+	secTkn        []byte
 	encoding      StringEncoding
 	endian        binary.ByteOrder
 	prdid         string
@@ -277,7 +278,7 @@ func (s *Session) connectRaw(ctx context.Context) error {
 		return errors.New("db2: session already connected")
 	}
 
-	if (s.secmec == SecMecUSRIDPWD || s.secmec == 3) && !s.cfg.UseSSL && !s.cfg.AllowPlaintextAuth {
+	if (s.secmec == SecMecUSRIDPWD || s.secmec == 3) && len(s.cfg.Password) > 0 && !s.cfg.UseSSL && !s.cfg.AllowPlaintextAuth {
 		return errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")
 	}
 
@@ -384,28 +385,22 @@ func (s *Session) handshake(ctx context.Context) error {
 		return fmt.Errorf("ACCSEC negotiation failed: %w", err)
 	}
 
-	// S1 / FR-1: Refuse downgrade if SECMEC 9 requested
-	if (s.secmec == SecMecEUSRIDPWD || s.secmec == 9) && negotiatedSecMec != 0 && negotiatedSecMec != s.secmec {
+	// S1 / FR-1 / AC-1: Refuse downgrade or any unsolicited security mechanism change offered by server
+	if negotiatedSecMec != 0 && negotiatedSecMec != s.secmec {
 		return fmt.Errorf("db2: server rejected security mechanism %d and offered %d; refusing downgrade", s.secmec, negotiatedSecMec)
 	}
 
-	// S2 / FR-1: Validate server security token for SECMEC 9
+	// S2 / FR-1 / AC-1: Validate server security token for SECMEC 9
 	if (s.secmec == SecMecEUSRIDPWD || s.secmec == 9) && len(secTkn) < 20 {
 		return errors.New("db2: ACCSEC negotiation failed: invalid server security token")
 	}
 
-	// If server wants another SECMEC, update and resend ACCSEC
-	s.correlationID = 1
-	if negotiatedSecMec != 0 && negotiatedSecMec != s.secmec {
-		s.secmec = negotiatedSecMec
-		accsecRetry, err := PackACCSEC(s.cfg.Database, s.secmec, nil)
-		if err != nil {
-			return err
-		}
-		s.correlationID, err = WriteRequestDSS(s.conn, accsecRetry, s.correlationID, false, false)
-		if err != nil {
-			return err
-		}
+	// AC-1: Store server security token on session for subsequent re-authentication (SwitchUser)
+	s.secTkn = secTkn
+
+	// AC-2: Defense-in-depth check against plaintext authentication before packing SECCHK
+	if (s.secmec == SecMecUSRIDPWD || s.secmec == 3) && len(s.cfg.Password) > 0 && !s.cfg.UseSSL && !s.cfg.AllowPlaintextAuth {
+		return errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")
 	}
 
 	// 3. Pack SECCHK (supporting Kerberos SECMEC 7/11, and SECMEC 9 with DH key exchange & DES encryption)
@@ -2118,7 +2113,8 @@ func quoteIdentifier(name string) string {
 
 // SwitchUser transitions the active user identity on the existing session.
 // In Db2 Trusted Context and privileged sessions, identity is switched via
-// 'SET SESSION AUTHORIZATION = ?' / 'SET SESSION_USER = ?' or by issuing SECCHK with USRID.
+// 'SET SESSION AUTHORIZATION = ?' / 'SET SESSION_USER = ?' (when password is omitted)
+// or by issuing DRDA SECCHK with USRID (and encrypted/plaintext password if provided).
 func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...string) error {
 	trimmedUser := strings.TrimSpace(newUser)
 	if trimmedUser == "" {
@@ -2128,24 +2124,30 @@ func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...st
 		return fmt.Errorf("db2: invalid switch user identifier %q", newUser)
 	}
 
-	quotedUser := quoteIdentifier(trimmedUser)
+	hasPassword := len(password) > 0 && password[0] != ""
 
-	// First try SQL-level session authorization switch
-	setAuthSQL := fmt.Sprintf("SET SESSION AUTHORIZATION = %s", quotedUser)
-	if _, err := s.ExecDirect(ctx, setAuthSQL); err == nil {
-		s.mu.Lock()
-		s.cfg.User = trimmedUser
-		s.mu.Unlock()
-		return nil
-	}
+	// AC-3: If no password was provided, try SQL-level session authorization switch first.
+	// If a password was provided, SQL commands cannot verify credentials, so we skip directly to DRDA SECCHK.
+	if !hasPassword {
+		quotedUser := quoteIdentifier(trimmedUser)
 
-	// Fallback to SET SESSION_USER
-	setSessionUserSQL := fmt.Sprintf("SET SESSION_USER = %s", quotedUser)
-	if _, err := s.ExecDirect(ctx, setSessionUserSQL); err == nil {
-		s.mu.Lock()
-		s.cfg.User = trimmedUser
-		s.mu.Unlock()
-		return nil
+		// First try SQL-level session authorization switch
+		setAuthSQL := fmt.Sprintf("SET SESSION AUTHORIZATION = %s", quotedUser)
+		if _, err := s.ExecDirect(ctx, setAuthSQL); err == nil {
+			s.mu.Lock()
+			s.cfg.User = trimmedUser
+			s.mu.Unlock()
+			return nil
+		}
+
+		// Fallback to SET SESSION_USER
+		setSessionUserSQL := fmt.Sprintf("SET SESSION_USER = %s", quotedUser)
+		if _, err := s.ExecDirect(ctx, setSessionUserSQL); err == nil {
+			s.mu.Lock()
+			s.cfg.User = trimmedUser
+			s.mu.Unlock()
+			return nil
+		}
 	}
 
 	s.mu.Lock()
@@ -2156,12 +2158,38 @@ func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...st
 	}
 	defer s.watch(ctx)()
 
-	// If password or DRDA-level SECCHK user switch is needed
 	var pwdBytes []byte
-	if len(password) > 0 && password[0] != "" {
+	if hasPassword {
 		pwdBytes = []byte(password[0])
 	}
-	secchk, err := PackSECCHKWithBytes(s.secmec, nil, s.cfg.Database, trimmedUser, pwdBytes, false, s.encoding)
+
+	var secchk []byte
+	var err error
+
+	if s.secmec == SecMecEUSRIDPWD || s.secmec == 9 {
+		// AC-4: Require DH token and encrypt password with SECMEC 9
+		if len(s.secTkn) < 20 {
+			return errors.New("db2: ACCSEC negotiation token is missing or invalid for SECMEC 9")
+		}
+		clientPriv, privErr := auth.GenerateDHPrivateKey()
+		if privErr != nil {
+			return fmt.Errorf("failed to generate DH private key: %w", privErr)
+		}
+		clientPub := auth.CalculateDHPublicKey(clientPriv)
+		encPassword, encErr := auth.EncryptPasswordSECMEC9(string(pwdBytes), s.secTkn, clientPriv)
+		if encErr != nil {
+			return fmt.Errorf("failed to encrypt password with SECMEC 9: %w", encErr)
+		}
+		secchk, err = PackSECCHKWithBytes(s.secmec, clientPub, s.cfg.Database, trimmedUser, encPassword, true, s.encoding)
+	} else if s.secmec == SecMecUSRIDPWD || s.secmec == 3 {
+		// AC-6: Block plaintext password switch if unencrypted and not explicitly allowed
+		if hasPassword && !s.cfg.UseSSL && !s.cfg.AllowPlaintextAuth {
+			return errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")
+		}
+		secchk, err = PackSECCHKWithBytes(s.secmec, nil, s.cfg.Database, trimmedUser, pwdBytes, false, s.encoding)
+	} else {
+		secchk, err = PackSECCHKWithBytes(s.secmec, nil, s.cfg.Database, trimmedUser, pwdBytes, false, s.encoding)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to pack SECCHK for user switch: %w", err)
 	}
@@ -2177,13 +2205,26 @@ func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...st
 		return fmt.Errorf("user switch response failed: %w", err)
 	}
 
+	// AC-5: Validate replies and check for failure codepoints (RDBAFLRM, RDBATHRM, SQLERRRM, or missing SECCHKRM / SECCHKCD != 0)
+	var seenSECCHKRM bool
 	for _, r := range replies {
+		if r.CodePoint == CodePointRDBAFLRM || r.CodePoint == CodePointRDBATHRM {
+			return errors.New("authorization failed connecting to relational database")
+		}
+		if r.CodePoint == CodePointSQLERRRM {
+			return parseSQLERRRM(r.Data, s.endian)
+		}
 		if r.CodePoint == CodePointSECCHKRM {
+			seenSECCHKRM = true
 			sub, _ := ParseDDMReply(r.Data)
 			if secChkCd, ok := sub[CodePointSECCHKCD]; ok && len(secChkCd) > 0 && secChkCd[0] != 0 {
 				return NewError(-30082, "08001", fmt.Sprintf("user switch failed: SECCHKCD=%d", secChkCd[0]), ErrAuthenticationFailed)
 			}
 		}
+	}
+
+	if !seenSECCHKRM {
+		return NewError(-30082, "08001", "user switch failed: missing SECCHKRM reply", ErrAuthenticationFailed)
 	}
 
 	s.cfg.User = trimmedUser
