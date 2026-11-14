@@ -742,24 +742,28 @@ func TestSession_Handshake_RefuseDowngrade(t *testing.T) {
 	testCases := []struct {
 		name          string
 		clientSecmec  uint16
+		password      string
 		serverSecmec  uint16
 		expectedError string
 	}{
 		{
 			name:          "Refuse downgrade from SECMEC 4 to 3",
 			clientSecmec:  4,
+			password:      "",
 			serverSecmec:  3,
 			expectedError: "db2: server rejected security mechanism 4 and offered 3; refusing downgrade",
 		},
 		{
 			name:          "Refuse downgrade from SECMEC 9 to 3",
 			clientSecmec:  9,
+			password:      "pass",
 			serverSecmec:  3,
 			expectedError: "db2: server rejected security mechanism 9 and offered 3; refusing downgrade",
 		},
 		{
 			name:          "Refuse unsolicited change from SECMEC 3 to 9",
 			clientSecmec:  3,
+			password:      "pass",
 			serverSecmec:  9,
 			expectedError: "db2: server rejected security mechanism 3 and offered 9; refusing downgrade",
 		},
@@ -803,7 +807,7 @@ func TestSession_Handshake_RefuseDowngrade(t *testing.T) {
 				Port:               port,
 				Database:           "SAMPLE",
 				User:               "user",
-				Password:           "pass",
+				Password:           tc.password,
 				SecurityMechanism:  tc.clientSecmec,
 				AllowPlaintextAuth: true,
 				Timeout:            2 * time.Second,
@@ -1051,5 +1055,670 @@ func TestSession_SwitchUser_PlaintextBlocked(t *testing.T) {
 	}
 	if session.CurrentUser() != "OLDUSER" {
 		t.Fatalf("user was updated despite error: %q", session.CurrentUser())
+	}
+}
+
+func TestSession_USRIDONL_AndWhitelistValidation(t *testing.T) {
+	const secretPass = "SecretPassword123!"
+
+	t.Run("Connect blocks USRIDONL with password before network dial", func(t *testing.T) {
+		s := NewSession(SessionConfig{
+			Host:              "127.0.0.1",
+			Port:              1, // closed port: pre-connect validation must fail before dial
+			Database:          "SAMPLE",
+			User:              "USER1",
+			Password:          secretPass,
+			SecurityMechanism: SecMecUSRIDONL,
+			Timeout:           time.Second,
+		})
+		err := s.Connect(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "USRIDONL (4) does not allow a password") {
+			t.Fatalf("expected USRIDONL password error before dial, got: %v", err)
+		}
+		if strings.Contains(err.Error(), secretPass) {
+			t.Fatalf("error leaked password: %v", err)
+		}
+	})
+
+	t.Run("Connect blocks unsupported security mechanisms before network dial", func(t *testing.T) {
+		for _, secmec := range []uint16{6, 99} {
+			s := NewSession(SessionConfig{
+				Host:              "127.0.0.1",
+				Port:              1,
+				Database:          "SAMPLE",
+				User:              "USER1",
+				Password:          secretPass,
+				SecurityMechanism: secmec,
+				Timeout:           time.Second,
+			})
+			err := s.Connect(context.Background())
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("unsupported security mechanism %d", secmec)) {
+				t.Fatalf("secmec %d: expected unsupported error before dial, got: %v", secmec, err)
+			}
+			if strings.Contains(err.Error(), secretPass) {
+				t.Fatalf("secmec %d: error leaked password: %v", secmec, err)
+			}
+		}
+	})
+
+	t.Run("SwitchUser blocks USRIDONL with password and unsupported or disabled mechanisms", func(t *testing.T) {
+		cases := []struct {
+			name       string
+			secmec     uint16
+			wantErrSub string
+		}{
+			{
+				name:       "USRIDONL (4) with password",
+				secmec:     SecMecUSRIDONL,
+				wantErrSub: "USRIDONL (4) does not allow a password",
+			},
+			{
+				name:       "unsupported 0 with password",
+				secmec:     0,
+				wantErrSub: "unsupported security mechanism 0",
+			},
+			{
+				name:       "unsupported 6 with password",
+				secmec:     6,
+				wantErrSub: "unsupported security mechanism 6",
+			},
+			{
+				name:       "unsupported 99 with password",
+				secmec:     99,
+				wantErrSub: "unsupported security mechanism 99",
+			},
+			{
+				name:       "disabled Kerberos 7 with password",
+				secmec:     7,
+				wantErrSub: "Kerberos security mechanism (SECMEC 7/11) is disabled",
+			},
+			{
+				name:       "disabled Kerberos 11 with password",
+				secmec:     11,
+				wantErrSub: "Kerberos security mechanism (SECMEC 7/11) is disabled",
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				clientConn, serverConn := net.Pipe()
+				defer clientConn.Close()
+				defer serverConn.Close()
+
+				s := &Session{
+					conn:     clientConn,
+					secmec:   tc.secmec,
+					encoding: EncodingCP500,
+					cfg: SessionConfig{
+						Database:           "SAMPLE",
+						User:               "OLDUSER",
+						AllowPlaintextAuth: true,
+					},
+				}
+
+				err := s.SwitchUser(context.Background(), "NEWUSER", secretPass)
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Fatalf("expected error containing %q, got: %v", tc.wantErrSub, err)
+				}
+				if strings.Contains(err.Error(), secretPass) {
+					t.Fatalf("error leaked password: %v", err)
+				}
+				if s.CurrentUser() != "OLDUSER" {
+					t.Fatalf("CurrentUser mutated on error: %q", s.CurrentUser())
+				}
+			})
+		}
+	})
+}
+
+func TestSession_USRIDONL_OmitsPasswordAndToken_And_SwitchUserSQLFastPath(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	type capturedResult struct {
+		sawUSRID     bool
+		sawSECMEC    bool
+		secMecVal    uint16
+		sawPassword  bool
+		sawSecTkn    bool
+		switchHadSec bool
+		err          error
+	}
+	resCh := make(chan capturedResult, 1)
+
+	go func() {
+		var res capturedResult
+		conn, err := ln.Accept()
+		if err != nil {
+			res.err = err
+			resCh <- res
+			return
+		}
+		defer conn.Close()
+
+		// 1. Read EXCSAT + ACCSEC
+		for {
+			hdr, cp, _, _, err := ReadDSS(conn)
+			if err != nil {
+				res.err = err
+				resCh <- res
+				return
+			}
+			if cp == CodePointACCSEC || !hdr.Chained {
+				break
+			}
+		}
+
+		// 2. Reply ACCSECRD (SECMEC = 4)
+		accsecRdObj := PackDDMObject(CodePointACCSECRD, PackUint16(CodePointSECMEC, SecMecUSRIDONL))
+		dssHdr := BuildDSSHeader(len(accsecRdObj), DSSTypeReply, false, false, false, 1)
+		if _, err := conn.Write(append(dssHdr, accsecRdObj...)); err != nil {
+			res.err = err
+			resCh <- res
+			return
+		}
+
+		// 3. Read SECCHK + ACCRDB and inspect SECCHK DDM child parameters
+		for {
+			hdr, cp, data, _, err := ReadDSS(conn)
+			if err != nil {
+				res.err = err
+				resCh <- res
+				return
+			}
+			if cp == CodePointSECCHK {
+				for off := 0; off+4 <= len(data); {
+					pLen := int(binary.BigEndian.Uint16(data[off : off+2]))
+					pCP := CodePoint(binary.BigEndian.Uint16(data[off+2 : off+4]))
+					if pLen < 4 || off+pLen > len(data) {
+						res.err = fmt.Errorf("invalid DDM param len=%d off=%d total=%d", pLen, off, len(data))
+						resCh <- res
+						return
+					}
+					switch pCP {
+					case CodePointUSRID:
+						res.sawUSRID = true
+					case CodePointSECMEC:
+						res.sawSECMEC = true
+						if pLen >= 6 {
+							res.secMecVal = binary.BigEndian.Uint16(data[off+4 : off+6])
+						}
+					case CodePointPASSWORD:
+						res.sawPassword = true
+					case CodePointSECTKN:
+						res.sawSecTkn = true
+					}
+					off += pLen
+				}
+			}
+			if cp == CodePointACCRDB || !hdr.Chained {
+				break
+			}
+		}
+
+		// 4. Reply SECCHKRM (SECCHKCD = 0) + ACCRDBRM
+		secchkRmObj := PackDDMObject(CodePointSECCHKRM, PackBytes(CodePointSECCHKCD, []byte{0x00}))
+		accrdbRmObj := PackDDMObject(CodePointACCRDBRM, nil)
+		hdr1 := BuildDSSHeader(len(secchkRmObj), DSSTypeReply, true, false, false, 1)
+		hdr2 := BuildDSSHeader(len(accrdbRmObj), DSSTypeReply, false, false, false, 1)
+		var resp bytes.Buffer
+		resp.Write(hdr1)
+		resp.Write(secchkRmObj)
+		resp.Write(hdr2)
+		resp.Write(accrdbRmObj)
+		if _, err := conn.Write(resp.Bytes()); err != nil {
+			res.err = err
+			resCh <- res
+			return
+		}
+
+		// 5. Read post-connect setup (RDBCMM / EXCSAT) and reply SQLCARD (0)
+		for {
+			hdr, cp, _, _, err := ReadDSS(conn)
+			if err != nil {
+				res.err = err
+				resCh <- res
+				return
+			}
+			if cp == CodePointRDBCMM || !hdr.Chained {
+				break
+			}
+		}
+		if _, err := conn.Write(replyChain(sqlcard(0, "00000"))); err != nil {
+			res.err = err
+			resCh <- res
+			return
+		}
+
+		// 6. Handle SwitchUser (empty password) -> must receive EXCSQLIMM + SQLSTT (not SECCHK)
+		for {
+			hdr, cp, _, _, err := ReadDSS(conn)
+			if err != nil {
+				res.err = err
+				resCh <- res
+				return
+			}
+			if cp == CodePointSECCHK {
+				res.switchHadSec = true
+			}
+			if !hdr.Chained {
+				break
+			}
+		}
+		_, _ = conn.Write(replyChain(sqlcard(0, "00000")))
+		resCh <- res
+	}()
+
+	addr := ln.Addr().(*net.TCPAddr)
+	s := NewSession(SessionConfig{
+		Host:               "127.0.0.1",
+		Port:               addr.Port,
+		Database:           "SAMPLE",
+		User:               "OLDUSER",
+		Password:           "",
+		SecurityMechanism:  SecMecUSRIDONL,
+		AllowPlaintextAuth: false, // USRIDONL with no password works without AllowPlaintextAuth
+		Timeout:            2 * time.Second,
+	})
+	if err := s.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect with USRIDONL failed: %v", err)
+	}
+	defer s.Close()
+
+	if err := s.SwitchUser(context.Background(), "NEWUSER", ""); err != nil {
+		t.Fatalf("SwitchUser without password failed: %v", err)
+	}
+	if s.CurrentUser() != "NEWUSER" {
+		t.Fatalf("CurrentUser = %q, want NEWUSER", s.CurrentUser())
+	}
+
+	res := <-resCh
+	if res.err != nil {
+		t.Fatalf("mock server error: %v", res.err)
+	}
+	if !res.sawUSRID || !res.sawSECMEC || res.secMecVal != SecMecUSRIDONL {
+		t.Fatalf("expected USRID=%v SECMEC=%v (val=%d), got mismatch", res.sawUSRID, res.sawSECMEC, res.secMecVal)
+	}
+	if res.sawPassword || res.sawSecTkn {
+		t.Fatalf("USRIDONL SECCHK must omit PASSWORD and SECTKN (sawPassword=%v sawSecTkn=%v)", res.sawPassword, res.sawSecTkn)
+	}
+	if res.switchHadSec {
+		t.Fatalf("SwitchUser without password unexpectedly sent SECCHK instead of SQL fast-path")
+	}
+}
+
+func TestSession_ReplyChainLimit_ReadReplyChain(t *testing.T) {
+	prev := MaxReplyChainSize()
+	defer SetMaxReplyChainSize(prev)
+	SetMaxReplyChainSize(256)
+
+	s, server := pipeSession(t)
+	go func() {
+		p1 := PackDDMObject(CodePointSQLCARD, make([]byte, 120))
+		p2 := PackDDMObject(CodePointSQLCARD, make([]byte, 120))
+		p3 := PackDDMObject(CodePointSQLCARD, make([]byte, 120))
+		_, _ = server.Write(replyChain(p1, p2, p3))
+	}()
+
+	_, err := s.readReplyChain()
+	assertErrReplyChainTooLarge(t, "readReplyChain", err)
+	if !s.Broken() {
+		t.Fatalf("expected session.Broken() == true after ErrReplyChainTooLarge")
+	}
+}
+
+func TestSession_ReplyChainLimit_HasOnlyDARD(t *testing.T) {
+	prev := MaxReplyChainSize()
+	defer SetMaxReplyChainSize(prev)
+	SetMaxReplyChainSize(300)
+
+	cases := []struct {
+		name string
+		call func(s *Session) error
+	}{
+		{
+			name: "ExecWithParams",
+			call: func(s *Session) error {
+				_, _, err := s.ExecWithParams(context.Background(), ReservedDirectSec, nil, nil)
+				return err
+			},
+		},
+		{
+			name: "QueryCallDirect",
+			call: func(s *Session) error {
+				_, err := s.QueryCallDirect(context.Background(), "CALL TEST_PROC()")
+				return err
+			},
+		},
+		{
+			name: "QueryCallWithParams",
+			call: func(s *Session) error {
+				_, _, err := s.QueryCallWithParams(context.Background(), ReservedDirectSec, nil, nil)
+				return err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, server := pipeSession(t)
+			go func() {
+				for {
+					hdr, _, _, _, err := ReadDSS(server)
+					if err != nil {
+						return
+					}
+					if !hdr.Chained {
+						break
+					}
+				}
+				// First chain: only SQLDARD (180 bytes <= 300), triggers second readReplyChainBudget(180)
+				chain1 := replyChain(PackDDMObject(CodePointSQLDARD, make([]byte, 180)))
+				if _, err := server.Write(chain1); err != nil {
+					return
+				}
+				// Second chain: SQLCARD (160 bytes) -> combined 340 > 300
+				chain2 := replyChain(PackDDMObject(CodePointSQLCARD, make([]byte, 160)))
+				_, _ = server.Write(chain2)
+			}()
+
+			err := tc.call(s)
+			assertErrReplyChainTooLarge(t, tc.name, err)
+			if !s.Broken() {
+				t.Fatalf("%s: expected session.Broken() == true", tc.name)
+			}
+		})
+	}
+}
+
+func TestSession_ReplyChainLimit_FetchQuery(t *testing.T) {
+	prev := MaxReplyChainSize()
+	defer SetMaxReplyChainSize(prev)
+	SetMaxReplyChainSize(450)
+
+	s, server := pipeSession(t)
+	cntqrys := make(chan int, 1)
+
+	block := integerRows(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) // 60 bytes per QRYDTA
+	continues := make([][][]byte, 0, 8)
+	for i := 0; i < 7; i++ {
+		continues = append(continues, [][]byte{qrydta(block)})
+	}
+	continues = append(continues, [][]byte{qrydta(block), endqryrm(), sqlcard(100, "02000")})
+
+	go serveQuery(t, server, queryScript{
+		open:      [][]byte{opnqryrm(), qrydscInteger()},
+		continues: continues,
+	}, cntqrys)
+
+	_, _, err := s.QueryDirect(context.Background(), "SELECT N FROM T")
+	assertErrReplyChainTooLarge(t, "fetchQuery", err)
+	if !s.Broken() {
+		t.Fatalf("expected session.Broken() == true after fetchQuery overflow")
+	}
+	_ = s.Close()
+}
+
+func TestSession_ReplyChainLimit_QueryStream(t *testing.T) {
+	prev := MaxReplyChainSize()
+	defer SetMaxReplyChainSize(prev)
+
+	t.Run("tailBuf spanning across CNTQRY cycles exceeds limit", func(t *testing.T) {
+		SetMaxReplyChainSize(650)
+
+		// 70 non-nullable INT4 columns: 2 row/SQLCA bytes (0xFF, 0x00) + 70*4 = 282 bytes per row
+		const numCols = 70
+		dscBody := make([]byte, 0, 3+numCols*3+6)
+		dscBody = append(dscBody, byte((1+numCols)*3), 0x76, 0xD0)
+		for i := 0; i < numCols; i++ {
+			dscBody = append(dscBody, 0x02, 0x00, 0x04)
+		}
+		dscBody = append(dscBody, 0x06, 0x71, 0xF0, 0xE0, 0x00, 0x00)
+		qrydsc70 := PackDDMObject(CodePointQRYDSC, dscBody)
+
+		// Initial QRYDTA: 1 complete 282-byte row (starts with 0xFF, 0x00) + 60-byte prefix of row 2 (starts with 0xFF, 0x00)
+		openQryDta := make([]byte, 282+60)
+		openQryDta[0] = 0xFF
+		openQryDta[282] = 0xFF
+
+		s, server := pipeSession(t)
+		cntqrys := make(chan int, 1)
+		go serveQuery(t, server, queryScript{
+			open: [][]byte{opnqryrm(), qrydsc70, qrydta(openQryDta)},
+			continues: [][][]byte{
+				{qrydta(make([]byte, 200))},                                    // tailBuf grows 60 -> 260 (< 282, still incomplete)
+				{qrydta(make([]byte, 400)), endqryrm(), sqlcard(100, "02000")}, // 260 + 400 = 660 > 650
+			},
+		}, cntqrys)
+
+		_, initialRows, qs, err := s.QueryStreamDirect(context.Background(), "SELECT * FROM WIDE_T")
+		if err != nil {
+			t.Fatalf("QueryStreamDirect unexpected error: %v", err)
+		}
+		if len(initialRows) != 1 {
+			t.Fatalf("expected 1 initial complete row, got %d", len(initialRows))
+		}
+
+		// FetchNextBatch issues CNTQRY #1 (260 <= 650) then loops to CNTQRY #2 (260 + 400 = 660 > 650)
+		_, err = qs.FetchNextBatch(context.Background())
+		assertErrReplyChainTooLarge(t, "FetchNextBatch", err)
+		if !s.Broken() {
+			t.Fatalf("expected session.Broken() == true")
+		}
+		_ = s.Close()
+	})
+
+	qrydscXML := PackDDMObject(CodePointQRYDSC, []byte{0x06, 0x76, 0xD0, 0xC6, 0x00, 0x00, 0x06, 0x71, 0xF0, 0xE0, 0x00, 0x00})
+	xmlRowDta := []byte{0xFF, 0x00, 0x00, 0x00, 0x00, 0x00}
+	smallExt := PackDDMObject(CodePointEXTDTA, []byte{0x00, 'a'})
+
+	t.Run("pendingRows awaiting EXTDTA across CNTQRY cycles exceeds limit", func(t *testing.T) {
+		SetMaxReplyChainSize(350)
+
+		s, server := pipeSession(t)
+		cntqrys := make(chan int, 1)
+		go serveQuery(t, server, queryScript{
+			// 1 completed initial row (xmlRowDta + smallExt) + 2 pendingRows awaiting EXTDTA
+			open: [][]byte{opnqryrm(), qrydscXML, qrydta(xmlRowDta), smallExt, qrydta(xmlRowDta), qrydta(xmlRowDta)},
+			continues: [][][]byte{
+				{qrydta(xmlRowDta), qrydta(xmlRowDta)},
+				{qrydta(xmlRowDta), qrydta(xmlRowDta)},
+			},
+		}, cntqrys)
+
+		_, initialRows, qs, err := s.QueryStreamDirect(context.Background(), "SELECT X FROM T")
+		if err != nil {
+			t.Fatalf("QueryStreamDirect failed: %v", err)
+		}
+		if len(initialRows) != 1 {
+			t.Fatalf("expected 1 initial complete row, got %d", len(initialRows))
+		}
+
+		// FetchNextBatch drives CNTQRY #1 (4 pending rows -> 280 <= 350) then CNTQRY #2 (6 pending rows -> 420 > 350)
+		_, err = qs.FetchNextBatch(context.Background())
+		assertErrReplyChainTooLarge(t, "FetchNextBatch", err)
+		if !s.Broken() {
+			t.Fatalf("expected session.Broken() == true")
+		}
+		_ = s.Close()
+	})
+
+	t.Run("pendingExt awaiting QRYDTA across CNTQRY cycles exceeds limit", func(t *testing.T) {
+		SetMaxReplyChainSize(250)
+
+		extChunk := PackDDMObject(CodePointEXTDTA, make([]byte, 140))
+		s, server := pipeSession(t)
+		cntqrys := make(chan int, 1)
+		go serveQuery(t, server, queryScript{
+			// 1 completed initial row so QueryStreamDirect returns qs before CNTQRY
+			open: [][]byte{opnqryrm(), qrydscXML, qrydta(xmlRowDta), smallExt},
+			continues: [][][]byte{
+				{extChunk},
+				{extChunk},
+			},
+		}, cntqrys)
+
+		_, initialRows, qs, err := s.QueryStreamDirect(context.Background(), "SELECT X FROM T")
+		if err != nil {
+			t.Fatalf("QueryStreamDirect failed: %v", err)
+		}
+		if len(initialRows) != 1 {
+			t.Fatalf("expected 1 initial complete row, got %d", len(initialRows))
+		}
+
+		// FetchNextBatch drives CNTQRY #1 (140 <= 250) then CNTQRY #2 (140 + 140 = 280 > 250)
+		_, err = qs.FetchNextBatch(context.Background())
+		assertErrReplyChainTooLarge(t, "FetchNextBatch", err)
+		if !s.Broken() {
+			t.Fatalf("expected session.Broken() == true")
+		}
+		_ = s.Close()
+	})
+}
+
+func TestSession_ReplyChainLimit_ParseCallResultSets(t *testing.T) {
+	prev := MaxReplyChainSize()
+	defer SetMaxReplyChainSize(prev)
+	SetMaxReplyChainSize(300)
+
+	t.Run("parseCallResultSets enforces cumulative limit across multiple result sets", func(t *testing.T) {
+		s := NewSession(SessionConfig{Host: "mock", Database: "TESTDB"})
+		qrydscBody := []byte{0x06, 0x76, 0xD0, 0x02, 0x00, 0x04, 0x06, 0x71, 0xF0, 0xE0, 0x00, 0x00}
+		rowChunk := integerRows(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20) // 120 bytes
+
+		var replies []ReplyPacket
+		for i := 0; i < 3; i++ {
+			replies = append(replies,
+				ReplyPacket{CodePoint: CodePointQRYDSC, Data: qrydscBody},
+				ReplyPacket{CodePoint: CodePointQRYDTA, Data: rowChunk},
+			)
+		}
+
+		_, _, err := s.parseCallResultSets(replies)
+		assertErrReplyChainTooLarge(t, "parseCallResultSets", err)
+		if !s.Broken() {
+			t.Fatalf("expected session.Broken() == true")
+		}
+	})
+
+	t.Run("QueryCallDirect fails when multi-result-set chain exceeds limit", func(t *testing.T) {
+		s, server := pipeSession(t)
+		rowChunk := integerRows(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)
+		go func() {
+			for {
+				hdr, _, _, _, err := ReadDSS(server)
+				if err != nil {
+					return
+				}
+				if !hdr.Chained {
+					break
+				}
+			}
+			_, _ = server.Write(replyChain(
+				opnqryrm(),
+				qrydscInteger(), qrydta(rowChunk),
+				qrydscInteger(), qrydta(rowChunk),
+				qrydscInteger(), qrydta(rowChunk),
+				sqlcard(0, "00000"),
+			))
+		}()
+
+		_, err := s.QueryCallDirect(context.Background(), "CALL MULTI_PROC()")
+		assertErrReplyChainTooLarge(t, "QueryCallDirect", err)
+		if !s.Broken() {
+			t.Fatalf("expected session.Broken() == true")
+		}
+	})
+}
+
+type benchSliceConn struct {
+	data    []byte
+	off     int
+	onWrite func(c *benchSliceConn)
+}
+
+func (c *benchSliceConn) Read(p []byte) (int, error) {
+	if c.off >= len(c.data) {
+		return 0, fmt.Errorf("EOF")
+	}
+	n := copy(p, c.data[c.off:])
+	c.off += n
+	return n, nil
+}
+
+func (c *benchSliceConn) Write(p []byte) (int, error) {
+	if c.onWrite != nil {
+		c.onWrite(c)
+	}
+	return len(p), nil
+}
+
+func (c *benchSliceConn) Close() error                       { return nil }
+func (c *benchSliceConn) LocalAddr() net.Addr                { return nil }
+func (c *benchSliceConn) RemoteAddr() net.Addr               { return nil }
+func (c *benchSliceConn) SetDeadline(t time.Time) error      { return nil }
+func (c *benchSliceConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *benchSliceConn) SetWriteDeadline(t time.Time) error { return nil }
+
+func BenchmarkReadReplyChain(b *testing.B) {
+	chain := replyChain(
+		opnqryrm(),
+		qrydscInteger(),
+		qrydta(integerRows(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
+		sqlcard(100, "02000"),
+	)
+	conn := &benchSliceConn{data: chain}
+	s := NewSession(SessionConfig{Host: "mock", Database: "TESTDB"})
+	s.conn = conn
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		conn.off = 0
+		replies, err := s.readReplyChain()
+		if err != nil {
+			b.Fatalf("readReplyChain failed: %v", err)
+		}
+		if len(replies) == 0 {
+			b.Fatal("empty replies")
+		}
+	}
+}
+
+func BenchmarkQueryStream_FetchNextBatch(b *testing.B) {
+	openReply := replyChain(opnqryrm(), qrydscInteger(), qrydta(integerRows(1)))
+	contReply := replyChain(qrydta(integerRows(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)))
+
+	conn := &benchSliceConn{data: openReply}
+	s := NewSession(SessionConfig{Host: "mock", Database: "TESTDB"})
+	s.conn = conn
+
+	ctx := context.Background()
+	_, _, qs, err := s.QueryStreamDirect(ctx, "SELECT N FROM T")
+	if err != nil {
+		b.Fatalf("QueryStreamDirect failed: %v", err)
+	}
+
+	conn.data = contReply
+	conn.off = len(contReply)
+	conn.onWrite = func(c *benchSliceConn) {
+		if c.off >= len(c.data) {
+			c.off = 0
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		batch, err := qs.FetchNextBatch(ctx)
+		if err != nil {
+			b.Fatalf("FetchNextBatch failed: %v", err)
+		}
+		if len(batch) != 10 {
+			b.Fatalf("batch len = %d, want 10", len(batch))
+		}
 	}
 }

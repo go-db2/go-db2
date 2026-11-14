@@ -131,6 +131,13 @@ func drainQueryStream(firstBatch [][]driver.Value, qs *QueryStream) ([][]driver.
 	}
 }
 
+func assertErrReplyChainTooLarge(t *testing.T, context string, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrReplyChainTooLarge) {
+		t.Fatalf("%s: expected errors.Is(err, ErrReplyChainTooLarge), got: %v", context, err)
+	}
+}
+
 func queryPaths() map[string]func(s *Session) ([][]driver.Value, error) {
 	return map[string]func(s *Session) ([][]driver.Value, error){
 		"QueryDirect": func(s *Session) ([][]driver.Value, error) {

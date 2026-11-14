@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-db2/go-db2/internal/auth"
 	"github.com/go-db2/go-db2/internal/drda"
 )
 
@@ -152,11 +153,28 @@ func ParseDSN(dsn string) (*Config, error) {
 		}
 	}
 
-	if (cfg.SecurityMechanism == 0 || cfg.SecurityMechanism == 3) && !cfg.UseSSL && !cfg.AllowPlaintextAuth && cfg.Password != "" {
+	if cfg.SecurityMechanism != 0 && !isSupportedSecurityMechanism(cfg.SecurityMechanism) {
+		return nil, &redactedError{err: fmt.Errorf("db2: unsupported security mechanism: %d", cfg.SecurityMechanism)}
+	}
+
+	if cfg.SecurityMechanism == drda.SecMecUSRIDONL && cfg.Password != "" {
+		return nil, &redactedError{err: errors.New("db2: security mechanism USRIDONL (4) does not allow a password")}
+	}
+
+	if (cfg.SecurityMechanism == 0 || cfg.SecurityMechanism == drda.SecMecUSRIDPWD) && !cfg.UseSSL && !cfg.AllowPlaintextAuth && cfg.Password != "" {
 		return nil, &redactedError{err: errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")}
 	}
 
 	return cfg, nil
+}
+
+func isSupportedSecurityMechanism(code uint16) bool {
+	switch code {
+	case drda.SecMecUSRIDPWD, drda.SecMecUSRIDONL, auth.SecMecKERBEROS, drda.SecMecEUSRIDPWD, auth.SecMecEUSERIDKERBEROS:
+		return true
+	default:
+		return false
+	}
 }
 
 func parseURL(dsn string) (*Config, error) {
@@ -319,23 +337,21 @@ func applyParam(cfg *Config, key, val string) error {
 		lowerVal := strings.ToLower(val)
 		switch lowerVal {
 		case "dh_encrypted_password", "encrypted_password", "encrypted-password", "secmec9", "9":
-			cfg.SecurityMechanism = 9
+			cfg.SecurityMechanism = drda.SecMecEUSRIDPWD
 		case "plain", "plaintext", "secmec3", "3":
-			cfg.SecurityMechanism = 3
+			cfg.SecurityMechanism = drda.SecMecUSRIDPWD
 		case "kerberos", "gssapi", "7":
-			cfg.SecurityMechanism = 7
+			cfg.SecurityMechanism = auth.SecMecKERBEROS
 		case "encrypted_kerberos", "11":
-			cfg.SecurityMechanism = 11
+			cfg.SecurityMechanism = auth.SecMecEUSERIDKERBEROS
 		case "user_only", "secmec4", "4":
-			cfg.SecurityMechanism = 4
-		case "secmec6", "6":
-			cfg.SecurityMechanism = 6
+			cfg.SecurityMechanism = drda.SecMecUSRIDONL
 		default:
-			if code, err := strconv.Atoi(val); err == nil && code > 0 {
-				cfg.SecurityMechanism = uint16(code)
-			} else {
-				return fmt.Errorf("db2: invalid security mechanism: %q", val)
+			code, err := strconv.ParseUint(val, 10, 16)
+			if err != nil || !isSupportedSecurityMechanism(uint16(code)) {
+				return fmt.Errorf("db2: unsupported or invalid security mechanism: %q", val)
 			}
+			cfg.SecurityMechanism = uint16(code)
 		}
 	case "spn", "service_principal", "server_principal":
 		cfg.KerberosSPN = val

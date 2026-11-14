@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 )
 
 // DSS Magic and Constants
@@ -24,6 +25,10 @@ const (
 
 	// MaxDSSPayloadSize defines the cumulative maximum allowed payload size for a DSS packet (128 MiB).
 	MaxDSSPayloadSize = 128 * 1024 * 1024
+
+	// DefaultMaxReplyChainSize defines the default cumulative byte budget across chained DSS
+	// replies or buffered query/LOB chunks within a single operation (256 MiB).
+	DefaultMaxReplyChainSize int64 = 256 * 1024 * 1024
 )
 
 var (
@@ -33,7 +38,25 @@ var (
 	ErrTruncatedDSS = errors.New("truncated DSS packet received")
 	// ErrDSSPayloadTooLarge is returned when a DSS packet (single or continued) exceeds MaxDSSPayloadSize.
 	ErrDSSPayloadTooLarge = errors.New("db2: DSS packet payload exceeds maximum limit of 128MB")
+	// ErrReplyChainTooLarge is returned when a reply chain or buffered query stream exceeds MaxReplyChainSize.
+	ErrReplyChainTooLarge = errors.New("db2: DRDA reply chain or query buffer exceeds maximum allowed size")
+
+	maxReplyChainSize atomic.Int64
 )
+
+func init() {
+	maxReplyChainSize.Store(DefaultMaxReplyChainSize)
+}
+
+// MaxReplyChainSize returns the active cumulative reply chain / query buffer byte limit.
+func MaxReplyChainSize() int64 {
+	return maxReplyChainSize.Load()
+}
+
+// SetMaxReplyChainSize overrides the cumulative byte limit (intended for testing) and returns the previous value.
+func SetMaxReplyChainSize(limit int64) int64 {
+	return maxReplyChainSize.Swap(limit)
+}
 
 // DSSHeader represents the 6-byte DRDA Data Stream Structure header.
 type DSSHeader struct {

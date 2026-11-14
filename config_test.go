@@ -517,6 +517,107 @@ func TestParseDSN_SecurityMechanismZeroPlaintextPolicy(t *testing.T) {
 	}
 }
 
+func TestParseDSN_SecurityMechanismWhitelistAndUSRIDONL(t *testing.T) {
+	const secretPass = "SuperSecret123!"
+
+	t.Run("Rejects invalid, overflow, and non-whitelisted values in URL and KV forms", func(t *testing.T) {
+		invalidCases := []struct {
+			name string
+			val  string
+		}{
+			{name: "uint16 overflow to 3 (65539)", val: "65539"},
+			{name: "uint16 overflow to 4 (65540)", val: "65540"},
+			{name: "zero numeric", val: "0"},
+			{name: "legacy secmec 6 numeric", val: "6"},
+			{name: "legacy secmec6 alias", val: "secmec6"},
+			{name: "unsupported numeric 99", val: "99"},
+			{name: "negative -1", val: "-1"},
+			{name: "unknown alias", val: "unknown"},
+		}
+
+		for _, tc := range invalidCases {
+			urlDSN := "db2://user:" + secretPass + "@localhost:50000/SAMPLE?security_mechanism=" + tc.val
+			if _, err := ParseDSN(urlDSN); err == nil {
+				t.Errorf("%s (URL): expected error, got nil", tc.name)
+			}
+
+			kvDSN := "HOST=localhost;PORT=50000;DATABASE=SAMPLE;UID=user;PWD=" + secretPass + ";SecurityMechanism=" + tc.val
+			if _, err := ParseDSN(kvDSN); err == nil {
+				t.Errorf("%s (KV): expected error, got nil", tc.name)
+			}
+		}
+	})
+
+	t.Run("Rejects USRIDONL (4) with non-empty password without leaking password", func(t *testing.T) {
+		cases := []struct {
+			name string
+			dsn  string
+		}{
+			{
+				name: "URL numeric 4 with password",
+				dsn:  "db2://user:" + secretPass + "@localhost:50000/SAMPLE?security_mechanism=4",
+			},
+			{
+				name: "URL user_only with password",
+				dsn:  "db2://user:" + secretPass + "@localhost:50000/SAMPLE?security_mechanism=user_only",
+			},
+			{
+				name: "KV numeric 4 with password",
+				dsn:  "HOST=localhost;PORT=50000;DATABASE=SAMPLE;UID=user;PWD=" + secretPass + ";security_mechanism=4",
+			},
+			{
+				name: "KV user_only with password",
+				dsn:  "HOST=localhost;PORT=50000;DATABASE=SAMPLE;UID=user;PWD=" + secretPass + ";security_mechanism=user_only",
+			},
+		}
+
+		for _, tc := range cases {
+			_, err := ParseDSN(tc.dsn)
+			if err == nil {
+				t.Errorf("%s: expected error, got nil", tc.name)
+				continue
+			}
+			if !strings.Contains(err.Error(), "USRIDONL (4) does not allow a password") {
+				t.Errorf("%s: unexpected error message: %v", tc.name, err)
+			}
+			if strings.Contains(err.Error(), secretPass) {
+				t.Errorf("%s: error leaked password: %v", tc.name, err)
+			}
+		}
+	})
+
+	t.Run("Allows USRIDONL (4) without password and supported mechanisms", func(t *testing.T) {
+		validNoPass := []string{
+			"db2://user@localhost:50000/SAMPLE?security_mechanism=4",
+			"db2://user@localhost:50000/SAMPLE?security_mechanism=user_only",
+			"HOST=localhost;PORT=50000;DATABASE=SAMPLE;UID=user;security_mechanism=4",
+			"HOST=localhost;PORT=50000;DATABASE=SAMPLE;UID=user;security_mechanism=user_only",
+		}
+		for _, dsn := range validNoPass {
+			cfg, err := ParseDSN(dsn)
+			if err != nil {
+				t.Errorf("ParseDSN(%q) unexpected error: %v", dsn, err)
+				continue
+			}
+			if cfg.SecurityMechanism != 4 {
+				t.Errorf("ParseDSN(%q) SecurityMechanism = %d, want 4", dsn, cfg.SecurityMechanism)
+			}
+		}
+
+		// Supported numeric mechanisms with password
+		for _, code := range []string{"3", "7", "9"} {
+			dsn := "db2://user:" + secretPass + "@localhost:50000/SAMPLE?allow_plaintext_auth=true&security_mechanism=" + code
+			if _, err := ParseDSN(dsn); err != nil {
+				t.Errorf("ParseDSN(secmec=%s) unexpected error: %v", code, err)
+			}
+		}
+		// Supported Kerberos (11) without password
+		if _, err := ParseDSN("db2://@localhost:50000/SAMPLE?security_mechanism=11"); err != nil {
+			t.Errorf("ParseDSN(secmec=11) unexpected error: %v", err)
+		}
+	})
+}
+
 func BenchmarkParseDSN(b *testing.B) {
 	dsn := "db2://myuser:secretpassword@db2host.corp.internal:50000/PRODUCTION?timeout=30s&block_size=65535&allow_plaintext_auth=true"
 	b.ReportAllocs()

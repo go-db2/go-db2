@@ -270,6 +270,15 @@ func (s *Session) Connect(ctx context.Context) error {
 	return nil
 }
 
+func isSupportedRuntimeSecMec(secmec uint16) bool {
+	switch secmec {
+	case SecMecUSRIDPWD, SecMecUSRIDONL, auth.SecMecKERBEROS, SecMecEUSRIDPWD, auth.SecMecEUSERIDKERBEROS:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Session) connectRaw(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -278,7 +287,13 @@ func (s *Session) connectRaw(ctx context.Context) error {
 		return errors.New("db2: session already connected")
 	}
 
-	if (s.secmec == SecMecUSRIDPWD || s.secmec == 3) && len(s.cfg.Password) > 0 && !s.cfg.UseSSL && !s.cfg.AllowPlaintextAuth {
+	if !isSupportedRuntimeSecMec(s.secmec) {
+		return fmt.Errorf("db2: unsupported security mechanism %d", s.secmec)
+	}
+	if s.secmec == SecMecUSRIDONL && len(s.cfg.Password) > 0 {
+		return errors.New("db2: security mechanism USRIDONL (4) does not allow a password")
+	}
+	if s.secmec == SecMecUSRIDPWD && len(s.cfg.Password) > 0 && !s.cfg.UseSSL && !s.cfg.AllowPlaintextAuth {
 		return errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")
 	}
 
@@ -398,16 +413,15 @@ func (s *Session) handshake(ctx context.Context) error {
 	// AC-1: Store server security token on session for subsequent re-authentication (SwitchUser)
 	s.secTkn = secTkn
 
-	// AC-2: Defense-in-depth check against plaintext authentication before packing SECCHK
-	if (s.secmec == SecMecUSRIDPWD || s.secmec == 3) && len(s.cfg.Password) > 0 && !s.cfg.UseSSL && !s.cfg.AllowPlaintextAuth {
-		return errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")
-	}
-
-	// 3. Pack SECCHK (supporting Kerberos SECMEC 7/11, and SECMEC 9 with DH key exchange & DES encryption)
+	// 3. Pack SECCHK using an explicit whitelist switch (no plaintext fallback for unknown/USRIDONL mechanisms)
 	var secchk []byte
-	if s.secmec == auth.SecMecKERBEROS || s.secmec == auth.SecMecEUSERIDKERBEROS || s.secmec == 7 || s.secmec == 11 {
+	switch s.secmec {
+	case auth.SecMecKERBEROS, auth.SecMecEUSERIDKERBEROS:
 		return errors.New("db2: Kerberos security mechanism (SECMEC 7/11) is disabled until a safe, compliant RFC 4120 AP-REQ subpackage is integrated")
-	} else if (s.secmec == SecMecEUSRIDPWD || s.secmec == 9) && len(secTkn) >= 20 {
+	case SecMecEUSRIDPWD:
+		if len(secTkn) < 20 {
+			return errors.New("db2: ACCSEC negotiation failed: invalid server security token")
+		}
 		clientPriv, privErr := auth.GenerateDHPrivateKey()
 		if privErr != nil {
 			return fmt.Errorf("failed to generate DH private key: %w", privErr)
@@ -418,8 +432,18 @@ func (s *Session) handshake(ctx context.Context) error {
 			return fmt.Errorf("failed to encrypt password with SECMEC 9: %w", encErr)
 		}
 		secchk, err = PackSECCHKWithBytes(s.secmec, clientPub, s.cfg.Database, s.cfg.User, encPassword, true, s.encoding)
-	} else {
+	case SecMecUSRIDPWD:
+		if len(s.cfg.Password) > 0 && !s.cfg.UseSSL && !s.cfg.AllowPlaintextAuth {
+			return errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")
+		}
 		secchk, err = PackSECCHK(s.secmec, secTkn, s.cfg.Database, s.cfg.User, s.cfg.Password, s.encoding)
+	case SecMecUSRIDONL:
+		if len(s.cfg.Password) > 0 {
+			return errors.New("db2: security mechanism USRIDONL (4) does not allow a password")
+		}
+		secchk, err = PackSECCHKWithBytes(s.secmec, nil, s.cfg.Database, s.cfg.User, nil, false, s.encoding)
+	default:
+		return fmt.Errorf("db2: unsupported security mechanism %d", s.secmec)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to pack SECCHK: %w", err)
@@ -553,16 +577,35 @@ func (s *Session) parseACCSECRD() (uint16, []byte, error) {
 
 // readReplyChain reads all chained DSS reply packets until the end of the chain.
 func (s *Session) readReplyChain() ([]ReplyPacket, error) {
+	packets, _, err := s.readReplyChainBudget(0)
+	return packets, err
+}
+
+// readReplyChainBudget reads a DSS reply chain while enforcing a cumulative payload size budget
+// starting from initialBytes across chained replies (including split SQLDARD continuations).
+func (s *Session) readReplyChainBudget(initialBytes int64) ([]ReplyPacket, int64, error) {
 	var packets []ReplyPacket
 	chained := true
+	totalBytes := initialBytes
+	limit := MaxReplyChainSize()
+	if totalBytes > limit {
+		s.broken.Store(true)
+		return nil, totalBytes, ErrReplyChainTooLarge
+	}
 
 	for chained {
 		hdr, cp, data, moreData, err := ReadDSS(s.conn)
 		if err != nil {
 			// A frame that failed to parse may be only partly consumed.
 			s.broken.Store(true)
-			return nil, err
+			return nil, totalBytes, err
 		}
+		add := int64(len(data))
+		if add > limit-totalBytes {
+			s.broken.Store(true)
+			return nil, totalBytes, ErrReplyChainTooLarge
+		}
+		totalBytes += add
 		packets = append(packets, ReplyPacket{
 			Header:    hdr,
 			CodePoint: cp,
@@ -572,7 +615,7 @@ func (s *Session) readReplyChain() ([]ReplyPacket, error) {
 		chained = hdr.Chained
 	}
 
-	return packets, nil
+	return packets, totalBytes, nil
 }
 
 // Ping checks if the database session is responsive without affecting active transactions.
@@ -955,7 +998,7 @@ func (s *Session) ExecWithParams(ctx context.Context, pkgsn uint16, paramCols []
 		}
 	}
 
-	replies, err := s.readReplyChain()
+	replies, usedBytes, err := s.readReplyChainBudget(0)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -969,10 +1012,11 @@ func (s *Session) ExecWithParams(ctx context.Context, pkgsn uint16, paramCols []
 		}
 	}
 	if hasOnlyDARD {
-		replies2, err := s.readReplyChain()
-		if err == nil {
-			replies = append(replies, replies2...)
+		replies2, _, err := s.readReplyChainBudget(usedBytes)
+		if err != nil {
+			return 0, nil, err
 		}
+		replies = append(replies, replies2...)
 	}
 
 	var affectedRows int64
@@ -1113,6 +1157,8 @@ type queryResult struct {
 	// one block and end in the next.
 	rowData  bytes.Buffer
 	extdta   [][]byte
+	extBytes int64
+	maxBytes int64
 	open     bool // OPNQRYRM seen: the cursor is open on the server
 	ended    bool // ENDQRYRM or SQLCODE +100 seen: the server closed it
 	qryinsid uint64
@@ -1140,10 +1186,21 @@ func (q *queryResult) consume(replies []ReplyPacket, endian binary.ByteOrder) (b
 			}
 			q.fields = flds
 		case CodePointQRYDTA:
+			add := int64(len(r.Data))
+			used := int64(q.rowData.Len()) + q.extBytes
+			if used > q.maxBytes || add > q.maxBytes-used {
+				return progress, ErrReplyChainTooLarge
+			}
 			q.rowData.Write(r.Data)
 			progress = true
 		case CodePointEXTDTA:
+			add := int64(len(r.Data))
+			used := int64(q.rowData.Len()) + q.extBytes
+			if used > q.maxBytes || add > q.maxBytes-used {
+				return progress, ErrReplyChainTooLarge
+			}
 			q.extdta = append(q.extdta, r.Data)
+			q.extBytes += add
 			progress = true
 		case CodePointOPNQRYRM:
 			sub, _ := ParseDDMReply(r.Data)
@@ -1175,8 +1232,11 @@ func (q *queryResult) consume(replies []ReplyPacket, endian binary.ByteOrder) (b
 // fetchQuery reads a query's result from the replies to OPNQRY, continuing
 // the query with CNTQRY, one query block at a time, until the server ends it.
 func (s *Session) fetchQuery(replies []ReplyPacket, columns []ColumnDescription, pkgsn uint16) ([]ColumnDescription, [][]driver.Value, error) {
-	q := &queryResult{columns: columns, cntqryID: 1}
+	q := &queryResult{columns: columns, cntqryID: 1, maxBytes: MaxReplyChainSize()}
 	if _, err := q.consume(replies, s.endian); err != nil {
+		if errors.Is(err, ErrReplyChainTooLarge) {
+			s.broken.Store(true)
+		}
 		return nil, nil, err
 	}
 
@@ -1191,6 +1251,9 @@ func (s *Session) fetchQuery(replies []ReplyPacket, columns []ColumnDescription,
 		}
 		progress, err := q.consume(cntReplies, s.endian)
 		if err != nil {
+			if errors.Is(err, ErrReplyChainTooLarge) {
+				s.broken.Store(true)
+			}
 			return nil, nil, err
 		}
 		if !progress && !q.ended {
@@ -1390,10 +1453,10 @@ func isDBCLOBType(t uint8) bool {
 }
 
 func stitchEXTDTA(fields []FieldDescriptor, rows [][]driver.Value, extdtaList [][]byte) {
-	_, _, _ = stitchReadyRows(fields, rows, extdtaList, true)
+	_, _, _, _ = stitchReadyRows(fields, rows, extdtaList, true)
 }
 
-func stitchReadyRows(fields []FieldDescriptor, rows [][]driver.Value, extdtaList [][]byte, ended bool) ([][]driver.Value, [][]driver.Value, [][]byte) {
+func stitchReadyRows(fields []FieldDescriptor, rows [][]driver.Value, extdtaList [][]byte, ended bool) ([][]driver.Value, [][]driver.Value, [][]byte, int64) {
 	var lobIndices []int
 	for i, f := range fields {
 		if isLOBType(f.Type) {
@@ -1401,10 +1464,11 @@ func stitchReadyRows(fields []FieldDescriptor, rows [][]driver.Value, extdtaList
 		}
 	}
 	if len(lobIndices) == 0 {
-		return rows, nil, nil
+		return rows, nil, nil, 0
 	}
 
 	extIdx := 0
+	var consumedExtBytes int64
 	for rowIdx := range rows {
 		needed := 0
 		for _, colIdx := range lobIndices {
@@ -1413,11 +1477,12 @@ func stitchReadyRows(fields []FieldDescriptor, rows [][]driver.Value, extdtaList
 			}
 		}
 		if !ended && extIdx+needed > len(extdtaList) {
-			return rows[:rowIdx], rows[rowIdx:], extdtaList[extIdx:]
+			return rows[:rowIdx], rows[rowIdx:], extdtaList[extIdx:], consumedExtBytes
 		}
 		for _, colIdx := range lobIndices {
 			if rows[rowIdx][colIdx] != nil && extIdx < len(extdtaList) {
 				data := extdtaList[extIdx]
+				consumedExtBytes += int64(len(data))
 				// EXTDTA data starts with a 1-byte status flag (0x00 = valid data)
 				if len(data) > 0 && data[0] == 0x00 {
 					data = data[1:]
@@ -1434,7 +1499,7 @@ func stitchReadyRows(fields []FieldDescriptor, rows [][]driver.Value, extdtaList
 			}
 		}
 	}
-	return rows, nil, extdtaList[extIdx:]
+	return rows, nil, extdtaList[extIdx:], consumedExtBytes
 }
 
 // decodeRowsPartial decodes complete QRYDTA rows from data and returns rows, consumed bytes, and error.
@@ -1511,22 +1576,26 @@ func decodeRowsPartial(fields []FieldDescriptor, data []byte, endian binary.Byte
 	return rows, consumed, nil
 }
 
+const estimatedRowRetentionOverhead int64 = 64
+
 // QueryStream streams query result sets on demand using DRDA CNTQRY / CLSQRY.
 type QueryStream struct {
-	session     *Session
-	ctx         context.Context
-	pkgsn       uint16
-	columns     []ColumnDescription
-	fields      []FieldDescriptor
-	qryinsid    uint64
-	cntqryID    uint16
-	open        bool
-	ended       bool
-	committed   bool
-	closed      bool
-	tailBuf     []byte
-	pendingRows [][]driver.Value
-	pendingExt  [][]byte
+	session         *Session
+	ctx             context.Context
+	pkgsn           uint16
+	columns         []ColumnDescription
+	fields          []FieldDescriptor
+	qryinsid        uint64
+	cntqryID        uint16
+	open            bool
+	ended           bool
+	committed       bool
+	closed          bool
+	tailBuf         []byte
+	pendingRows     [][]driver.Value
+	pendingExt      [][]byte
+	pendingQryBytes int64
+	pendingExtBytes int64
 }
 
 // FetchNextBatch requests the next QRYDTA block via CNTQRY and decodes complete rows.
@@ -1559,9 +1628,11 @@ func (qs *QueryStream) fetchNextBatchLocked() ([][]driver.Value, error) {
 	for {
 		if !qs.open || qs.ended {
 			if len(qs.pendingRows) > 0 {
-				ready, _, _ := stitchReadyRows(qs.fields, qs.pendingRows, qs.pendingExt, true)
+				ready, _, _, _ := stitchReadyRows(qs.fields, qs.pendingRows, qs.pendingExt, true)
 				qs.pendingRows = nil
 				qs.pendingExt = nil
+				qs.pendingQryBytes = 0
+				qs.pendingExtBytes = 0
 				if qs.session.autoCommit && !qs.committed && !qs.session.Broken() {
 					_ = qs.session.commitLocked()
 					qs.committed = true
@@ -1590,6 +1661,22 @@ func (qs *QueryStream) fetchNextBatchLocked() ([][]driver.Value, error) {
 		cntReplies, err := qs.session.readReplyChain()
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CNTQRY response: %w", err)
+		}
+
+		limit := MaxReplyChainSize()
+		var batchQryBytes, batchExtBytes int64
+		for _, r := range cntReplies {
+			switch r.CodePoint {
+			case CodePointQRYDTA:
+				batchQryBytes += int64(len(r.Data))
+			case CodePointEXTDTA:
+				batchExtBytes += int64(len(r.Data))
+			}
+		}
+		retainedBase := qs.pendingQryBytes + qs.pendingExtBytes + int64(len(qs.pendingRows))*estimatedRowRetentionOverhead
+		if retainedBase > limit || batchQryBytes > limit-retainedBase || batchExtBytes > limit-(retainedBase+batchQryBytes) {
+			qs.session.broken.Store(true)
+			return nil, ErrReplyChainTooLarge
 		}
 
 		var newQryDta bytes.Buffer
@@ -1640,9 +1727,33 @@ func (qs *QueryStream) fetchNextBatchLocked() ([][]driver.Value, error) {
 
 		allRows := append(qs.pendingRows, decodedRows...)
 		allExt := append(qs.pendingExt, newExtdta...)
-		readyRows, pendingRows, unusedExt := stitchReadyRows(qs.fields, allRows, allExt, !qs.open || qs.ended)
+		readyRows, pendingRows, unusedExt, consumedExtBytes := stitchReadyRows(qs.fields, allRows, allExt, !qs.open || qs.ended)
 		qs.pendingRows = pendingRows
 		qs.pendingExt = unusedExt
+
+		if len(pendingRows) == 0 {
+			qs.pendingQryBytes = int64(len(qs.tailBuf))
+		} else if totalRows := len(allRows); totalRows > 0 {
+			totalBeforeTail := qs.pendingQryBytes + batchQryBytes - int64(len(qs.tailBuf))
+			if totalBeforeTail < 0 {
+				totalBeforeTail = 0
+			}
+			qs.pendingQryBytes = int64(len(qs.tailBuf)) + (totalBeforeTail*int64(len(pendingRows)))/int64(totalRows)
+		}
+		if len(unusedExt) == 0 {
+			qs.pendingExtBytes = 0
+		} else {
+			qs.pendingExtBytes = (qs.pendingExtBytes + batchExtBytes) - consumedExtBytes
+			if qs.pendingExtBytes < 0 {
+				qs.pendingExtBytes = 0
+			}
+		}
+
+		retainedAfter := qs.pendingQryBytes + qs.pendingExtBytes + int64(len(qs.pendingRows))*estimatedRowRetentionOverhead
+		if retainedAfter > limit {
+			qs.session.broken.Store(true)
+			return nil, ErrReplyChainTooLarge
+		}
 
 		if (!qs.open || qs.ended) && len(qs.pendingRows) == 0 && qs.session.autoCommit && !qs.committed && !qs.session.Broken() {
 			_ = qs.session.commitLocked()
@@ -1786,8 +1897,12 @@ func (s *Session) QueryStreamWithParams(ctx context.Context, pkgsn uint16, outpu
 }
 
 func (s *Session) initStreamFromReplies(ctx context.Context, replies []ReplyPacket, outputCols []ColumnDescription, pkgsn uint16) ([]ColumnDescription, [][]driver.Value, *QueryStream, error) {
-	q := &queryResult{columns: outputCols, cntqryID: 1}
+	limit := MaxReplyChainSize()
+	q := &queryResult{columns: outputCols, cntqryID: 1, maxBytes: limit}
 	if _, err := q.consume(replies, s.endian); err != nil {
+		if errors.Is(err, ErrReplyChainTooLarge) {
+			s.broken.Store(true)
+		}
 		return nil, nil, nil, err
 	}
 
@@ -1796,7 +1911,7 @@ func (s *Session) initStreamFromReplies(ctx context.Context, replies []ReplyPack
 		return nil, nil, nil, err
 	}
 
-	readyRows, pendingRows, unusedExt := stitchReadyRows(q.fields, decodedRows, q.extdta, !q.open || q.ended)
+	readyRows, pendingRows, unusedExt, consumedExtBytes := stitchReadyRows(q.fields, decodedRows, q.extdta, !q.open || q.ended)
 
 	if len(q.columns) == 0 && len(q.fields) > 0 {
 		q.columns = make([]ColumnDescription, len(q.fields))
@@ -1809,21 +1924,41 @@ func (s *Session) initStreamFromReplies(ctx context.Context, replies []ReplyPack
 	}
 
 	tail := append([]byte(nil), q.rowData.Bytes()[consumed:]...)
+	var pendingExtBytes int64
+	if len(unusedExt) > 0 {
+		pendingExtBytes = q.extBytes - consumedExtBytes
+		if pendingExtBytes < 0 {
+			pendingExtBytes = 0
+		}
+	}
+	var pendingQryBytes int64
+	if len(pendingRows) == 0 {
+		pendingQryBytes = int64(len(tail))
+	} else if len(decodedRows) > 0 {
+		pendingQryBytes = int64(len(tail)) + (int64(consumed)*int64(len(pendingRows)))/int64(len(decodedRows))
+	}
+	if pendingQryBytes > limit || pendingExtBytes > limit-pendingQryBytes ||
+		int64(len(pendingRows))*estimatedRowRetentionOverhead > limit-(pendingQryBytes+pendingExtBytes) {
+		s.broken.Store(true)
+		return nil, nil, nil, ErrReplyChainTooLarge
+	}
 
 	qs := &QueryStream{
-		session:     s,
-		ctx:         ctx,
-		pkgsn:       pkgsn,
-		columns:     q.columns,
-		fields:      q.fields,
-		qryinsid:    q.qryinsid,
-		cntqryID:    q.cntqryID,
-		open:        q.open,
-		ended:       q.ended,
-		tailBuf:     tail,
-		pendingRows: pendingRows,
-		pendingExt:  unusedExt,
-		committed:   false,
+		session:         s,
+		ctx:             ctx,
+		pkgsn:           pkgsn,
+		columns:         q.columns,
+		fields:          q.fields,
+		qryinsid:        q.qryinsid,
+		cntqryID:        q.cntqryID,
+		open:            q.open,
+		ended:           q.ended,
+		tailBuf:         tail,
+		pendingRows:     pendingRows,
+		pendingExt:      unusedExt,
+		pendingQryBytes: pendingQryBytes,
+		pendingExtBytes: pendingExtBytes,
+		committed:       false,
 	}
 
 	if len(readyRows) == 0 && qs.open && !qs.ended {
@@ -1884,7 +2019,7 @@ func (s *Session) QueryCallDirect(ctx context.Context, sql string) ([]CallResult
 		}
 	}
 
-	replies, err := s.readReplyChain()
+	replies, usedBytes, err := s.readReplyChainBudget(0)
 	if err != nil {
 		return nil, err
 	}
@@ -1898,10 +2033,11 @@ func (s *Session) QueryCallDirect(ctx context.Context, sql string) ([]CallResult
 			}
 		}
 		if hasOnlyDARD {
-			replies2, err := s.readReplyChain()
-			if err == nil {
-				replies = append(replies, replies2...)
+			replies2, _, err := s.readReplyChainBudget(usedBytes)
+			if err != nil {
+				return nil, err
 			}
+			replies = append(replies, replies2...)
 		}
 	}
 
@@ -1964,7 +2100,7 @@ func (s *Session) QueryCallWithParams(ctx context.Context, pkgsn uint16, paramCo
 		}
 	}
 
-	replies, err := s.readReplyChain()
+	replies, usedBytes, err := s.readReplyChainBudget(0)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1977,10 +2113,11 @@ func (s *Session) QueryCallWithParams(ctx context.Context, pkgsn uint16, paramCo
 		}
 	}
 	if hasOnlyDARD {
-		replies2, err := s.readReplyChain()
-		if err == nil {
-			replies = append(replies, replies2...)
+		replies2, _, err := s.readReplyChainBudget(usedBytes)
+		if err != nil {
+			return nil, nil, err
 		}
+		replies = append(replies, replies2...)
 	}
 
 	return s.parseCallResultSets(replies)
@@ -1994,6 +2131,9 @@ func (s *Session) parseCallResultSets(replies []ReplyPacket) ([]CallResultSet, [
 	var currentFields []FieldDescriptor
 	var currentData bytes.Buffer
 	var currentExt [][]byte
+	var currentExtBytes int64
+	var retainedBytes int64
+	limit := MaxReplyChainSize()
 
 	flushSet := func() error {
 		if len(currentFields) > 0 && currentData.Len() > 0 {
@@ -2015,9 +2155,11 @@ func (s *Session) parseCallResultSets(replies []ReplyPacket) ([]CallResultSet, [
 			}
 			sets = append(sets, CallResultSet{Columns: currentCols, Data: rows})
 		}
+		retainedBytes += int64(currentData.Len()) + currentExtBytes
 		currentFields = nil
 		currentData.Reset()
 		currentExt = nil
+		currentExtBytes = 0
 		currentCols = nil
 		return nil
 	}
@@ -2049,9 +2191,22 @@ func (s *Session) parseCallResultSets(replies []ReplyPacket) ([]CallResultSet, [
 			}
 			currentFields = flds
 		case CodePointQRYDTA:
+			add := int64(len(r.Data))
+			used := retainedBytes + int64(currentData.Len()) + currentExtBytes
+			if used > limit || add > limit-used {
+				s.broken.Store(true)
+				return nil, nil, ErrReplyChainTooLarge
+			}
 			currentData.Write(r.Data)
 		case CodePointEXTDTA:
+			add := int64(len(r.Data))
+			used := retainedBytes + int64(currentData.Len()) + currentExtBytes
+			if used > limit || add > limit-used {
+				s.broken.Store(true)
+				return nil, nil, ErrReplyChainTooLarge
+			}
 			currentExt = append(currentExt, r.Data)
+			currentExtBytes += add
 		case CodePointSQLDTARD:
 			vals, err := codec.ParseSQLDTARD(r.Data, s.endian)
 			if err == nil && len(vals) > 0 {
@@ -2166,7 +2321,10 @@ func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...st
 	var secchk []byte
 	var err error
 
-	if s.secmec == SecMecEUSRIDPWD || s.secmec == 9 {
+	switch s.secmec {
+	case auth.SecMecKERBEROS, auth.SecMecEUSERIDKERBEROS:
+		return errors.New("db2: Kerberos security mechanism (SECMEC 7/11) is disabled until a safe, compliant RFC 4120 AP-REQ subpackage is integrated")
+	case SecMecEUSRIDPWD:
 		// AC-4: Require DH token and encrypt password with SECMEC 9
 		if len(s.secTkn) < 20 {
 			return errors.New("db2: ACCSEC negotiation token is missing or invalid for SECMEC 9")
@@ -2181,14 +2339,19 @@ func (s *Session) SwitchUser(ctx context.Context, newUser string, password ...st
 			return fmt.Errorf("failed to encrypt password with SECMEC 9: %w", encErr)
 		}
 		secchk, err = PackSECCHKWithBytes(s.secmec, clientPub, s.cfg.Database, trimmedUser, encPassword, true, s.encoding)
-	} else if s.secmec == SecMecUSRIDPWD || s.secmec == 3 {
+	case SecMecUSRIDPWD:
 		// AC-6: Block plaintext password switch if unencrypted and not explicitly allowed
 		if hasPassword && !s.cfg.UseSSL && !s.cfg.AllowPlaintextAuth {
 			return errors.New("db2: plaintext authentication over unencrypted connection is disabled by default; set allow_plaintext_auth=true to override")
 		}
 		secchk, err = PackSECCHKWithBytes(s.secmec, nil, s.cfg.Database, trimmedUser, pwdBytes, false, s.encoding)
-	} else {
-		secchk, err = PackSECCHKWithBytes(s.secmec, nil, s.cfg.Database, trimmedUser, pwdBytes, false, s.encoding)
+	case SecMecUSRIDONL:
+		if hasPassword {
+			return errors.New("db2: security mechanism USRIDONL (4) does not allow a password")
+		}
+		secchk, err = PackSECCHKWithBytes(s.secmec, nil, s.cfg.Database, trimmedUser, nil, false, s.encoding)
+	default:
+		return fmt.Errorf("db2: unsupported security mechanism %d", s.secmec)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to pack SECCHK for user switch: %w", err)
