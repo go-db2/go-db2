@@ -8,6 +8,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -234,6 +236,11 @@ func TestNewConnector_NilAndDefensiveClone(t *testing.T) {
 		if c.cfg.Host != "localhost" || c.cfg.Port != 50000 || c.cfg.Params == nil {
 			t.Fatalf("unexpected default config from NewConnector(nil): %+v", c.cfg)
 		}
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := c.Connect(canceledCtx); err == nil {
+			t.Fatal("expected error calling Connect with canceled context, not nil-pointer panic")
+		}
 	})
 
 	t.Run("MutatingCallerConfigDoesNotAffectConnector", func(t *testing.T) {
@@ -278,5 +285,66 @@ func TestNewConnector_NilAndDefensiveClone(t *testing.T) {
 		if _, err := zeroConn.Connect(context.Background()); err == nil {
 			t.Fatal("expected error calling Connect on zero Connector with nil cfg")
 		}
+	})
+
+	t.Run("ConcurrentMutationAndConnect", func(t *testing.T) {
+		srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
+			return writeSQLCARDOK(c)
+		})
+		host, portStr, err := net.SplitHostPort(srv.addr)
+		if err != nil {
+			t.Fatalf("SplitHostPort failed: %v", err)
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			t.Fatalf("Atoi failed: %v", err)
+		}
+
+		cfg := NewConfig()
+		cfg.Host = host
+		cfg.Port = port
+		cfg.Database = "TESTDB"
+		cfg.User = "orig_user"
+		cfg.Password = "secret"
+		cfg.AllowPlaintextAuth = true
+		cfg.Params = map[string]string{"app": "v1"}
+		cfg.TLSConfig = &tls.Config{ServerName: "orig.db2.local", MinVersion: tls.VersionTLS12}
+
+		connector := NewConnector(cfg)
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				cfg.User = fmt.Sprintf("mutated_%d", i)
+				cfg.Params["app"] = fmt.Sprintf("v_%d", i)
+				cfg.Params["injected"] = "evil"
+				cfg.TLSConfig.ServerName = fmt.Sprintf("evil_%d.db2.local", i)
+			}
+		}()
+
+		for g := 0; g < 4; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < 5; i++ {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					dConn, err := connector.Connect(ctx)
+					cancel()
+					if err != nil {
+						t.Errorf("concurrent Connect failed: %v", err)
+						return
+					}
+					c := dConn.(*Conn)
+					if c.cfg.User != "orig_user" || c.cfg.Params["app"] != "v1" || c.cfg.TLSConfig.ServerName != "orig.db2.local" {
+						t.Errorf("concurrent mutation leaked into opened Conn: %+v", c.cfg)
+					}
+					_ = dConn.Close()
+				}
+			}()
+		}
+
+		wg.Wait()
 	})
 }

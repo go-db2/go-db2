@@ -194,10 +194,12 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		}
 		if len(outTargets) > 0 && len(outValues) > 0 {
 			for _, target := range outTargets {
-				mappedIdx, ok := indexMap[target.index]
-				if ok && mappedIdx < len(outValues) {
-					if err := assignOutParam(target.dest, outValues[mappedIdx]); err != nil {
-						return nil, err
+				if target.index >= 0 && target.index < len(indexMap) {
+					mappedIdx := indexMap[target.index]
+					if mappedIdx >= 0 && mappedIdx < len(outValues) {
+						if err := assignOutParam(target.dest, outValues[mappedIdx]); err != nil {
+							return nil, err
+						}
 					}
 				}
 			}
@@ -421,11 +423,14 @@ func rewriteBinaryParams(query string, paramCols []drda.ColumnDescription, args 
 	return rewrittenQuery, rewrittenCols, rewrittenArgs
 }
 
-func rewriteBinaryParamsMapped(query string, paramCols []drda.ColumnDescription, args []any, outIndices map[int]bool) (string, []drda.ColumnDescription, []any, map[int]int) {
+func rewriteBinaryParamsMapped(query string, paramCols []drda.ColumnDescription, args []any, outIndices map[int]bool) (string, []drda.ColumnDescription, []any, []int) {
 	var rewrittenQuery strings.Builder
 	var rewrittenCols []drda.ColumnDescription
 	var rewrittenArgs []any
-	indexMap := make(map[int]int)
+	indexMap := make([]int, len(paramCols))
+	for i := range indexMap {
+		indexMap[i] = -1
+	}
 
 	paramIdx := 0
 	inSingleQuote := false

@@ -410,7 +410,7 @@ func (c *Conn) ResetSession(ctx context.Context) error {
 	// Descarta qualquer transação pendente antes de resetar isolamento, usuário ou metadados de cliente
 	if !c.session.AutoCommit() {
 		if err := c.session.Rollback(ctx); err != nil {
-			return err
+			return driver.ErrBadConn
 		}
 		c.session.SetAutoCommit(true)
 	}
@@ -497,37 +497,27 @@ func checkNamedValueCommon(nv *driver.NamedValue) error {
 	}
 
 	// 4. Normalização de arrays fixos de bytes ([N]byte, *[N]byte e tipos nomeados)
-	switch v := nv.Value.(type) {
+	switch nv.Value.(type) {
 	case nil, int, int64, int32, int16, int8,
 		uint, uint64, uint32, uint16, uint8,
 		float64, float32, bool, string, []byte, time.Time:
 		return driver.ErrSkip
-	case [16]byte:
-		b := make([]byte, 16)
-		copy(b, v[:])
-		nv.Value = b
-		return nil
-	case *[16]byte:
-		if v == nil {
+	}
+
+	val := reflect.ValueOf(nv.Value)
+	if val.IsValid() && val.Kind() == reflect.Ptr && val.Type().Elem().Kind() == reflect.Array &&
+		val.Type().Elem().Elem().Kind() == reflect.Uint8 && val.Type().Elem().Elem().Bits() == 8 {
+		if val.IsNil() {
 			nv.Value = nil
 			return nil
 		}
-		b := make([]byte, 16)
-		copy(b, v[:])
+		val = val.Elem()
+	}
+	if b, ok := copyFixedByteArray(val); ok {
 		nv.Value = b
 		return nil
 	}
-
-	rv := reflect.ValueOf(nv.Value)
-	if b, ok := copyFixedByteArray(rv); ok {
-		if b == nil {
-			nv.Value = nil
-		} else {
-			nv.Value = b
-		}
-		return nil
-	}
-	if rv.IsValid() && rv.Kind() == reflect.Slice && isFixedByteArrayType(rv.Type().Elem()) {
+	if val.IsValid() && val.Kind() == reflect.Slice && isFixedByteArrayType(val.Type().Elem()) {
 		return nil
 	}
 
@@ -539,7 +529,7 @@ func isFixedByteArrayType(t reflect.Type) bool {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
-	return t.Kind() == reflect.Array && t.Elem().Kind() == reflect.Uint8
+	return t.Kind() == reflect.Array && t.Elem().Kind() == reflect.Uint8 && t.Elem().Bits() == 8
 }
 
 // copyFixedByteArray safely copies [N]byte, *[N]byte, or named fixed-byte-array values into a new []byte.
@@ -550,7 +540,7 @@ func copyFixedByteArray(v reflect.Value) ([]byte, bool) {
 	}
 	if v.Kind() == reflect.Ptr {
 		elemType := v.Type().Elem()
-		if elemType.Kind() != reflect.Array || elemType.Elem().Kind() != reflect.Uint8 {
+		if elemType.Kind() != reflect.Array || elemType.Elem().Kind() != reflect.Uint8 || elemType.Elem().Bits() != 8 {
 			return nil, false
 		}
 		if v.IsNil() {
@@ -558,19 +548,14 @@ func copyFixedByteArray(v reflect.Value) ([]byte, bool) {
 		}
 		v = v.Elem()
 	}
-	if v.Kind() != reflect.Array || v.Type().Elem().Kind() != reflect.Uint8 {
+	if v.Kind() != reflect.Array || v.Type().Elem().Kind() != reflect.Uint8 || v.Type().Elem().Bits() != 8 {
 		return nil, false
 	}
-	n := v.Len()
-	out := make([]byte, n)
-	if v.CanAddr() {
-		copy(out, v.Slice(0, n).Bytes())
-	} else {
-		for i := 0; i < n; i++ {
-			out[i] = byte(v.Index(i).Uint())
-		}
+	b := make([]byte, v.Len())
+	for i := 0; i < len(b); i++ {
+		b[i] = byte(v.Index(i).Uint())
 	}
-	return out, true
+	return b, true
 }
 
 var (

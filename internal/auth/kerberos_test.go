@@ -199,6 +199,9 @@ func TestAcquireKerberosToken_Keytab(t *testing.T) {
 	if token != nil {
 		t.Fatalf("expected nil token when returning error, got len=%d", len(token))
 	}
+	if !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("expected error mentioning disabled keytab exchange, got: %v", err)
+	}
 	if strings.Contains(err.Error(), "KRB5_KEYTAB_TOKEN") || strings.Contains(err.Error(), "super_secret") {
 		t.Fatalf("unexpected synthetic token marker or secret in error: %v", err)
 	}

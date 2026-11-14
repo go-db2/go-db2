@@ -3,7 +3,6 @@ package db2
 import (
 	"context"
 	"database/sql/driver"
-	"errors"
 	"maps"
 
 	"github.com/go-db2/go-db2/internal/drda"
@@ -41,7 +40,7 @@ func NewConnector(cfg *Config) *Connector {
 // Connect returns a new active connection to the database.
 func (c *Connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if c == nil || c.cfg == nil {
-		return nil, errors.New("db2: nil connector or configuration")
+		return nil, ErrInvalidConnectionStr
 	}
 	sessionCfg := c.cfg.toSessionConfig()
 	session := drda.NewSession(sessionCfg)

@@ -338,17 +338,7 @@ func AcquireKerberosToken(cfg KerberosConfig) ([]byte, error) {
 			return nil, fmt.Errorf("db2/kerberos: keytab file %q contains no valid entries", cfg.KeytabFile)
 		}
 
-		// Find matching principal or confirm entries exist before refusing synthetic token issuance
-		matched := false
-		for _, ent := range entries {
-			if strings.EqualFold(ent.Principal, spn) || strings.EqualFold(ent.Principal, cfg.Username) {
-				matched = true
-				break
-			}
-		}
-		_ = matched
-
-		return nil, fmt.Errorf("db2/kerberos: keytab AS-REQ/TGS-REQ exchange is disabled until a safe, compliant RFC 4120 subpackage is integrated; keytab %q validated (%d entries for SPN %q) — provide a pre-acquired GSSAPI RawToken", cfg.KeytabFile, len(entries), spn)
+		return nil, fmt.Errorf("db2/kerberos: native keytab AS-REQ/TGS-REQ exchange is disabled until a safe, compliant RFC 4120 AP-REQ subpackage is integrated; pass RawToken explicitly")
 	}
 
 	return nil, fmt.Errorf("db2/kerberos: no authentic Kerberos credentials found for SPN %q (specify a valid krb5_keytab, krb5_ccache, or GSSAPI token)", spn)

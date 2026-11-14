@@ -650,11 +650,8 @@ func TestStmt_RewriteBinaryParamsAndOutMapping(t *testing.T) {
 		if len(keptCols) != 3 || len(keptArgs) != 3 {
 			t.Fatalf("expected 3 remaining params (sql.Out BLOB, sql.Out INT, oversize BLOB), got %d cols / %d args", len(keptCols), len(keptArgs))
 		}
-		if idxMap[1] != 0 || idxMap[2] != 1 || idxMap[3] != 2 {
+		if len(idxMap) != 4 || idxMap[0] != -1 || idxMap[1] != 0 || idxMap[2] != 1 || idxMap[3] != 2 {
 			t.Fatalf("unexpected indexMap: %#v", idxMap)
-		}
-		if _, inlinedExists := idxMap[0]; inlinedExists {
-			t.Fatalf("inlined param 0 should not be in indexMap: %#v", idxMap)
 		}
 	})
 

@@ -899,11 +899,12 @@ func TestSecurity_BeginTx_ContextMetadataAndBrokenCheck_And_ResetSessionRollback
 	var mu sync.Mutex
 	var cpOrder []drda.CodePoint
 	dropOnIMM := false
+	dropOnRLLBCK := false
 
 	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		mu.Lock()
 		cpOrder = append(cpOrder, cp)
-		shouldDrop := dropOnIMM && cp == drda.CodePointEXCSQLIMM
+		shouldDrop := (dropOnIMM && cp == drda.CodePointEXCSQLIMM) || (dropOnRLLBCK && cp == drda.CodePointRDBRLLBCK)
 		mu.Unlock()
 
 		if shouldDrop {
@@ -1003,6 +1004,31 @@ func TestSecurity_BeginTx_ContextMetadataAndBrokenCheck_And_ResetSessionRollback
 	}
 	if _, err := conn.BeginTx(ctx, driver.TxOptions{}); err != driver.ErrBadConn {
 		t.Fatalf("expected driver.ErrBadConn from BeginTx on broken session, got %v", err)
+	}
+
+	// 5. ResetSession returns driver.ErrBadConn when RDBRLLBCK fails
+	sqlConn2, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("second db.Conn failed: %v", err)
+	}
+	defer sqlConn2.Close()
+
+	var conn2 *Conn
+	if err := sqlConn2.Raw(func(raw any) error {
+		conn2 = raw.(*Conn)
+		return nil
+	}); err != nil || conn2 == nil {
+		t.Fatalf("failed to extract second *Conn: %v", err)
+	}
+	conn2.session.SetAutoCommit(false)
+
+	mu.Lock()
+	dropOnIMM = false
+	dropOnRLLBCK = true
+	mu.Unlock()
+
+	if err := conn2.ResetSession(ctx); err != driver.ErrBadConn {
+		t.Fatalf("expected driver.ErrBadConn from ResetSession when Rollback fails, got %v", err)
 	}
 }
 
