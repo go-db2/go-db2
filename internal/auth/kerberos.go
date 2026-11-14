@@ -3,9 +3,14 @@ package auth
 import (
 	"encoding/asn1"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 )
+
+// maxKeytabEntryBodyLen caps serialized keytab entry size to avoid uint32/int32 overflow.
+// Variable (not const) so unit tests can verify bounds enforcement without huge allocations.
+var maxKeytabEntryBodyLen = math.MaxInt32
 
 // DRDA Security Mechanism constants
 const (
@@ -244,16 +249,25 @@ func BuildKeytab(entries ...KeytabEntry) ([]byte, error) {
 		components := strings.Split(principalPart, "/")
 
 		// 1. num_components (2 bytes)
+		if len(components) > math.MaxUint16 {
+			return nil, fmt.Errorf("db2/kerberos: keytab principal has too many components (%d > %d)", len(components), math.MaxUint16)
+		}
 		numC := uint16(len(components))
 		entryBody = append(entryBody, byte(numC>>8), byte(numC&0xFF))
 
 		// 2. realm (2 bytes len + string)
+		if len(realm) > math.MaxUint16 {
+			return nil, fmt.Errorf("db2/kerberos: keytab realm exceeds max length (%d > %d)", len(realm), math.MaxUint16)
+		}
 		rLen := uint16(len(realm))
 		entryBody = append(entryBody, byte(rLen>>8), byte(rLen&0xFF))
 		entryBody = append(entryBody, []byte(realm)...)
 
 		// 3. components (2 bytes len + string each)
 		for _, comp := range components {
+			if len(comp) > math.MaxUint16 {
+				return nil, fmt.Errorf("db2/kerberos: keytab component exceeds max length (%d > %d)", len(comp), math.MaxUint16)
+			}
 			cLen := uint16(len(comp))
 			entryBody = append(entryBody, byte(cLen>>8), byte(cLen&0xFF))
 			entryBody = append(entryBody, []byte(comp)...)
@@ -269,6 +283,9 @@ func BuildKeytab(entries ...KeytabEntry) ([]byte, error) {
 		entryBody = append(entryBody, byte(e.KVNO&0xFF))
 
 		// 7. keyblock (keytype 2 bytes, keylen 2 bytes, key bytes)
+		if len(e.Key) > math.MaxUint16 {
+			return nil, fmt.Errorf("db2/kerberos: keytab key exceeds max length (%d > %d)", len(e.Key), math.MaxUint16)
+		}
 		entryBody = append(entryBody, byte(e.KeyType>>8), byte(e.KeyType&0xFF))
 		kLen := uint16(len(e.Key))
 		entryBody = append(entryBody, byte(kLen>>8), byte(kLen&0xFF))
@@ -278,6 +295,9 @@ func BuildKeytab(entries ...KeytabEntry) ([]byte, error) {
 		entryBody = append(entryBody, byte(e.KVNO>>24), byte(e.KVNO>>16), byte(e.KVNO>>8), byte(e.KVNO&0xFF))
 
 		// Prepend entry length
+		if len(entryBody) > maxKeytabEntryBodyLen {
+			return nil, fmt.Errorf("db2/kerberos: keytab entry body exceeds max length (%d > %d)", len(entryBody), maxKeytabEntryBodyLen)
+		}
 		eLen := uint32(len(entryBody))
 		out = append(out, byte(eLen>>24), byte(eLen>>16), byte(eLen>>8), byte(eLen&0xFF))
 		out = append(out, entryBody...)
@@ -318,20 +338,17 @@ func AcquireKerberosToken(cfg KerberosConfig) ([]byte, error) {
 			return nil, fmt.Errorf("db2/kerberos: keytab file %q contains no valid entries", cfg.KeytabFile)
 		}
 
-		// Find matching principal or use first entry
-		var selectedEntry *KeytabEntry
+		// Find matching principal or confirm entries exist before refusing synthetic token issuance
+		matched := false
 		for _, ent := range entries {
 			if strings.EqualFold(ent.Principal, spn) || strings.EqualFold(ent.Principal, cfg.Username) {
-				selectedEntry = &ent
+				matched = true
 				break
 			}
 		}
-		if selectedEntry == nil {
-			selectedEntry = &entries[0]
-		}
+		_ = matched
 
-		ticketPayload := []byte(fmt.Sprintf("KRB5_KEYTAB_TOKEN:%s:KVNO=%d:TYPE=%d", selectedEntry.Principal, selectedEntry.KVNO, selectedEntry.KeyType))
-		return BuildGSSAPIToken(ticketPayload)
+		return nil, fmt.Errorf("db2/kerberos: keytab AS-REQ/TGS-REQ exchange is disabled until a safe, compliant RFC 4120 subpackage is integrated; keytab %q validated (%d entries for SPN %q) — provide a pre-acquired GSSAPI RawToken", cfg.KeytabFile, len(entries), spn)
 	}
 
 	return nil, fmt.Errorf("db2/kerberos: no authentic Kerberos credentials found for SPN %q (specify a valid krb5_keytab, krb5_ccache, or GSSAPI token)", spn)

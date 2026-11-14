@@ -50,17 +50,41 @@ func main() {
 	}
 	_ = tmpKeytab.Close()
 
-	// Carregar e validar token a partir do arquivo .keytab
+	// Validar parsing binário do Keytab e comportamento defensivo do AcquireKerberosToken
+	rawKeytab, err := os.ReadFile(tmpKeytab.Name())
+	if err != nil {
+		log.Fatalf("Erro ao reler keytab: %v", err)
+	}
+	parsedEntries, err := auth.ParseKeytab(rawKeytab)
+	if err != nil {
+		log.Fatalf("Erro ao validar keytab com ParseKeytab: %v", err)
+	}
+	fmt.Printf("   ✅ Keytab validado via ParseKeytab (%d entradas lidas)\n", len(parsedEntries))
+
 	keytabKrbCfg := auth.KerberosConfig{
 		KeytabFile:       tmpKeytab.Name(),
 		ServicePrincipal: spn,
 		Host:             "db2server.corp.local",
 	}
-	keytabToken, err := auth.AcquireKerberosToken(keytabKrbCfg)
-	if err != nil {
-		log.Fatalf("Erro ao adquirir token via keytab: %v", err)
+	if _, err := auth.AcquireKerberosToken(keytabKrbCfg); err == nil {
+		log.Fatalf("Esperado erro defensivo ao chamar AcquireKerberosToken apenas com keytab (sem RFC 4120 AS-REQ)")
+	} else {
+		fmt.Printf("   🛡️ Bloqueio defensivo confirmado (sem emissão de token sintético): %v\n", err)
 	}
-	fmt.Printf("   ✅ Arquivo Keytab validado com sucesso! Token GSSAPI gerado (%d bytes, header=0x%02X)\n", len(keytabToken), keytabToken[0])
+
+	// Demonstrar passagem segura de token GSSAPI pré-adquirido (RawToken)
+	gssapiToken, err := auth.BuildGSSAPIToken([]byte("EXAMPLE_RFC4120_AP_REQ_PAYLOAD"))
+	if err != nil {
+		log.Fatalf("Erro ao encapsular payload GSSAPI: %v", err)
+	}
+	acquiredToken, err := auth.AcquireKerberosToken(auth.KerberosConfig{
+		ServicePrincipal: spn,
+		RawToken:         gssapiToken,
+	})
+	if err != nil {
+		log.Fatalf("Erro ao processar RawToken GSSAPI: %v", err)
+	}
+	fmt.Printf("   ✅ Token GSSAPI via RawToken validado (%d bytes, header=0x%02X)\n", len(acquiredToken), acquiredToken[0])
 
 	// 2. Testar conexão com o banco Db2 local via DSN
 	connStr := os.Getenv("DB2_DSN")

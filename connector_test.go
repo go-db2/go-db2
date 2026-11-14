@@ -3,6 +3,7 @@ package db2
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/binary"
 	"fmt"
@@ -25,8 +26,11 @@ func TestNewConnectorAndDriver(t *testing.T) {
 		t.Fatal("NewConnector returned nil")
 	}
 
-	if connector.cfg != cfg {
-		t.Errorf("expected cfg to be %v, got %v", cfg, connector.cfg)
+	if connector.cfg == cfg {
+		t.Fatal("expected NewConnector to clone Config defensively, got same pointer")
+	}
+	if connector.cfg.Host != cfg.Host || connector.cfg.Port != cfg.Port || connector.cfg.Database != cfg.Database || connector.cfg.User != cfg.User {
+		t.Errorf("expected cloned cfg fields to match %+v, got %+v", cfg, connector.cfg)
 	}
 
 	if connector.driver == nil {
@@ -219,4 +223,60 @@ func TestConnectorOpenDB_Success(t *testing.T) {
 	if err := db.PingContext(ctx); err != nil {
 		t.Fatalf("db.PingContext() using sql.OpenDB(connector) failed: %v", err)
 	}
+}
+
+func TestNewConnector_NilAndDefensiveClone(t *testing.T) {
+	t.Run("NilConfigUsesDefaults", func(t *testing.T) {
+		c := NewConnector(nil)
+		if c == nil || c.cfg == nil {
+			t.Fatal("expected NewConnector(nil) to initialize default Config")
+		}
+		if c.cfg.Host != "localhost" || c.cfg.Port != 50000 || c.cfg.Params == nil {
+			t.Fatalf("unexpected default config from NewConnector(nil): %+v", c.cfg)
+		}
+	})
+
+	t.Run("MutatingCallerConfigDoesNotAffectConnector", func(t *testing.T) {
+		cfg := NewConfig()
+		cfg.Host = "127.0.0.1"
+		cfg.User = "orig_user"
+		cfg.Params = map[string]string{"app": "v1"}
+		cfg.TLSConfig = &tls.Config{ServerName: "orig.db2.local", MinVersion: tls.VersionTLS12}
+
+		c := NewConnector(cfg)
+
+		// Mutate caller-owned structs after NewConnector returns
+		cfg.User = "mutated_user"
+		cfg.Params["app"] = "mutated"
+		cfg.Params["injected"] = "evil"
+		cfg.TLSConfig.ServerName = "evil.db2.local"
+
+		if c.cfg.User != "orig_user" {
+			t.Fatalf("expected cloned User 'orig_user', got %q", c.cfg.User)
+		}
+		if c.cfg.Params["app"] != "v1" {
+			t.Fatalf("expected cloned Params['app'] 'v1', got %q", c.cfg.Params["app"])
+		}
+		if _, exists := c.cfg.Params["injected"]; exists {
+			t.Fatal("mutating caller Params map leaked into connector")
+		}
+		if c.cfg.TLSConfig == nil || c.cfg.TLSConfig == cfg.TLSConfig {
+			t.Fatal("expected cloned TLSConfig pointer")
+		}
+		if c.cfg.TLSConfig.ServerName != "orig.db2.local" {
+			t.Fatalf("expected cloned TLSConfig.ServerName 'orig.db2.local', got %q", c.cfg.TLSConfig.ServerName)
+		}
+	})
+
+	t.Run("NilConnectorOrNilCfgConnectReturnsError", func(t *testing.T) {
+		var nilConn *Connector
+		if _, err := nilConn.Connect(context.Background()); err == nil {
+			t.Fatal("expected error calling Connect on nil *Connector")
+		}
+
+		zeroConn := &Connector{}
+		if _, err := zeroConn.Connect(context.Background()); err == nil {
+			t.Fatal("expected error calling Connect on zero Connector with nil cfg")
+		}
+	})
 }

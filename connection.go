@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -333,6 +334,13 @@ func (c *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 	if c.closed || c.session == nil {
 		return nil, ErrConnectionClosed
 	}
+	if c.session.Broken() {
+		return nil, driver.ErrBadConn
+	}
+
+	if err := c.applyContextMetadata(ctx); err != nil {
+		return nil, err
+	}
 
 	if opts.ReadOnly {
 		return nil, errors.New("db2: read-only transactions are not supported")
@@ -397,6 +405,14 @@ func (c *Conn) ResetSession(ctx context.Context) error {
 
 	if c.closed || c.session == nil || c.session.Broken() {
 		return driver.ErrBadConn
+	}
+
+	// Descarta qualquer transação pendente antes de resetar isolamento, usuário ou metadados de cliente
+	if !c.session.AutoCommit() {
+		if err := c.session.Rollback(ctx); err != nil {
+			return err
+		}
+		c.session.SetAutoCommit(true)
 	}
 
 	// Garante que o isolamento foi restaurado ao padrão (CS) caso tenha permanecido alterado
@@ -474,13 +490,87 @@ func checkNamedValueCommon(nv *driver.NamedValue) error {
 	switch nv.Value.(type) {
 	case []int, []int64, []int32, []int16, []int8,
 		[]uint, []uint64, []uint32, []uint16, []uint8,
+		[][]byte,
 		[]string, []float64, []float32, []bool, []time.Time,
 		[]any, []driver.Value:
 		return nil
 	}
 
-	// 4. Delegar conversão de tipos escalares básicos e ponteiros para o database/sql
+	// 4. Normalização de arrays fixos de bytes ([N]byte, *[N]byte e tipos nomeados)
+	switch v := nv.Value.(type) {
+	case nil, int, int64, int32, int16, int8,
+		uint, uint64, uint32, uint16, uint8,
+		float64, float32, bool, string, []byte, time.Time:
+		return driver.ErrSkip
+	case [16]byte:
+		b := make([]byte, 16)
+		copy(b, v[:])
+		nv.Value = b
+		return nil
+	case *[16]byte:
+		if v == nil {
+			nv.Value = nil
+			return nil
+		}
+		b := make([]byte, 16)
+		copy(b, v[:])
+		nv.Value = b
+		return nil
+	}
+
+	rv := reflect.ValueOf(nv.Value)
+	if b, ok := copyFixedByteArray(rv); ok {
+		if b == nil {
+			nv.Value = nil
+		} else {
+			nv.Value = b
+		}
+		return nil
+	}
+	if rv.IsValid() && rv.Kind() == reflect.Slice && isFixedByteArrayType(rv.Type().Elem()) {
+		return nil
+	}
+
+	// 5. Delegar conversão de tipos escalares básicos e ponteiros para o database/sql
 	return driver.ErrSkip
+}
+
+func isFixedByteArrayType(t reflect.Type) bool {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	return t.Kind() == reflect.Array && t.Elem().Kind() == reflect.Uint8
+}
+
+// copyFixedByteArray safely copies [N]byte, *[N]byte, or named fixed-byte-array values into a new []byte.
+// Typed nil *[N]byte returns (nil, true) so callers can normalize it to untyped nil (SQL NULL).
+func copyFixedByteArray(v reflect.Value) ([]byte, bool) {
+	if !v.IsValid() {
+		return nil, false
+	}
+	if v.Kind() == reflect.Ptr {
+		elemType := v.Type().Elem()
+		if elemType.Kind() != reflect.Array || elemType.Elem().Kind() != reflect.Uint8 {
+			return nil, false
+		}
+		if v.IsNil() {
+			return nil, true
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Array || v.Type().Elem().Kind() != reflect.Uint8 {
+		return nil, false
+	}
+	n := v.Len()
+	out := make([]byte, n)
+	if v.CanAddr() {
+		copy(out, v.Slice(0, n).Bytes())
+	} else {
+		for i := 0; i < n; i++ {
+			out[i] = byte(v.Index(i).Uint())
+		}
+	}
+	return out, true
 }
 
 var (

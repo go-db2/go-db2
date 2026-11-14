@@ -2,7 +2,9 @@ package auth
 
 import (
 	"bytes"
+	"math"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -191,16 +193,14 @@ func TestAcquireKerberosToken_Keytab(t *testing.T) {
 	}
 
 	token, err := AcquireKerberosToken(cfg)
-	if err != nil {
-		t.Fatalf("AcquireKerberosToken() error: %v", err)
+	if err == nil {
+		t.Fatalf("expected AcquireKerberosToken(KeytabFile) to fail defensively without RFC 4120 client, got token len=%d", len(token))
 	}
-
-	if token[0] != 0x60 {
-		t.Fatalf("Expected GSSAPI tag 0x60, got 0x%02X", token[0])
+	if token != nil {
+		t.Fatalf("expected nil token when returning error, got len=%d", len(token))
 	}
-
-	if !bytes.Contains(token, []byte("KRB5_KEYTAB_TOKEN:db2/db2server.corp.local@CORP.LOCAL:KVNO=3:TYPE=18")) {
-		t.Fatal("Token does not contain expected Keytab metadata")
+	if strings.Contains(err.Error(), "KRB5_KEYTAB_TOKEN") || strings.Contains(err.Error(), "super_secret") {
+		t.Fatalf("unexpected synthetic token marker or secret in error: %v", err)
 	}
 }
 
@@ -421,4 +421,73 @@ func TestAcquireKerberosToken_MalformedKeytabNoSecretLeak(t *testing.T) {
 	if bytes.Contains(token, secretMaterial) {
 		t.Fatal("SECURITY LEAK: GSSAPI token returned raw keytab secret bytes")
 	}
+}
+
+func TestBuildKeytab_BoundsValidation(t *testing.T) {
+	t.Run("TooManyComponents", func(t *testing.T) {
+		principal := strings.Repeat("c/", math.MaxUint16+1) + "end@REALM"
+		_, err := BuildKeytab(KeytabEntry{
+			Principal: principal,
+			KeyType:   18,
+			KVNO:      1,
+			Key:       []byte("0123456789abcdef"),
+		})
+		if err == nil {
+			t.Fatal("expected error for > math.MaxUint16 components")
+		}
+	})
+
+	t.Run("RealmTooLong", func(t *testing.T) {
+		principal := "user@" + strings.Repeat("R", math.MaxUint16+1)
+		_, err := BuildKeytab(KeytabEntry{
+			Principal: principal,
+			KeyType:   18,
+			KVNO:      1,
+			Key:       []byte("0123456789abcdef"),
+		})
+		if err == nil {
+			t.Fatal("expected error for realm > math.MaxUint16")
+		}
+	})
+
+	t.Run("ComponentTooLong", func(t *testing.T) {
+		principal := strings.Repeat("a", math.MaxUint16+1) + "@REALM"
+		_, err := BuildKeytab(KeytabEntry{
+			Principal: principal,
+			KeyType:   18,
+			KVNO:      1,
+			Key:       []byte("0123456789abcdef"),
+		})
+		if err == nil {
+			t.Fatal("expected error for component > math.MaxUint16")
+		}
+	})
+
+	t.Run("KeyTooLong", func(t *testing.T) {
+		_, err := BuildKeytab(KeytabEntry{
+			Principal: "user@REALM",
+			KeyType:   18,
+			KVNO:      1,
+			Key:       make([]byte, math.MaxUint16+1),
+		})
+		if err == nil {
+			t.Fatal("expected error for key > math.MaxUint16")
+		}
+	})
+
+	t.Run("EntryBodyExceedsMax", func(t *testing.T) {
+		orig := maxKeytabEntryBodyLen
+		maxKeytabEntryBodyLen = 64
+		defer func() { maxKeytabEntryBodyLen = orig }()
+
+		_, err := BuildKeytab(KeytabEntry{
+			Principal: strings.Repeat("x", 80) + "@REALM",
+			KeyType:   18,
+			KVNO:      1,
+			Key:       make([]byte, 16),
+		})
+		if err == nil {
+			t.Fatal("expected error when entryBody exceeds maxKeytabEntryBodyLen")
+		}
+	})
 }

@@ -110,11 +110,16 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		dest  any
 	}
 	var outTargets []outInfo
+	var outIndices map[int]bool
 
 	for i, arg := range args {
 		switch v := arg.Value.(type) {
 		case sql.Out:
 			outTargets = append(outTargets, outInfo{index: i, dest: v.Dest})
+			if outIndices == nil {
+				outIndices = make(map[int]bool)
+			}
+			outIndices[i] = true
 			if v.Dest != nil {
 				val := reflect.ValueOf(v.Dest)
 				if val.Kind() == reflect.Ptr && !val.IsNil() {
@@ -128,6 +133,10 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		case *sql.Out:
 			if v != nil {
 				outTargets = append(outTargets, outInfo{index: i, dest: v.Dest})
+				if outIndices == nil {
+					outIndices = make(map[int]bool)
+				}
+				outIndices[i] = true
 				if v.Dest != nil {
 					val := reflect.ValueOf(v.Dest)
 					if val.Kind() == reflect.Ptr && !val.IsNil() {
@@ -152,6 +161,9 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 	}
 
 	if isBatch {
+		if err := s.restoreOriginalQueryIfRewrittenLocked(ctx); err != nil {
+			return nil, err
+		}
 		totalAffected, err := s.conn.session.ExecBatchWithParams(ctx, s.pkgsn, s.paramCols, batchRows)
 		if err != nil {
 			return nil, err
@@ -159,9 +171,8 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		return newResult(totalAffected, 0), nil
 	}
 
-	if hasBlobParams(s.paramCols, rawArgs) {
-		s.rewrittenOnServer = true
-		newQuery, _, newArgs := rewriteBinaryParams(s.query, s.paramCols, rawArgs)
+	if hasBlobInParams(s.paramCols, rawArgs, outIndices) {
+		newQuery, newCols, newArgs, indexMap := rewriteBinaryParamsMapped(s.query, s.paramCols, rawArgs, outIndices)
 		if len(newArgs) == 0 {
 			affected, err := s.conn.session.ExecDirect(ctx, newQuery)
 			if err != nil {
@@ -169,9 +180,13 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 			}
 			return newResult(affected, 0), nil
 		}
+		s.rewrittenOnServer = true
 		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, newQuery, s.pkgsn)
 		if err != nil {
 			return nil, err
+		}
+		if len(newParamCols) == 0 && len(newCols) > 0 {
+			newParamCols = newCols
 		}
 		affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.pkgsn, newParamCols, newArgs)
 		if err != nil {
@@ -179,8 +194,9 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		}
 		if len(outTargets) > 0 && len(outValues) > 0 {
 			for _, target := range outTargets {
-				if target.index < len(outValues) {
-					if err := assignOutParam(target.dest, outValues[target.index]); err != nil {
+				mappedIdx, ok := indexMap[target.index]
+				if ok && mappedIdx < len(outValues) {
+					if err := assignOutParam(target.dest, outValues[mappedIdx]); err != nil {
 						return nil, err
 					}
 				}
@@ -189,13 +205,8 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		return newResult(affected, 0), nil
 	}
 
-	if s.rewrittenOnServer {
-		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query, s.pkgsn)
-		if err != nil {
-			return nil, err
-		}
-		s.paramCols = newParamCols
-		s.rewrittenOnServer = false
+	if err := s.restoreOriginalQueryIfRewrittenLocked(ctx); err != nil {
+		return nil, err
 	}
 
 	affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.pkgsn, s.paramCols, rawArgs)
@@ -257,6 +268,13 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 			_ = s.Close()
 		}
 		return nil, fmt.Errorf("db2: expected %d arguments, got %d", len(s.paramCols), len(args))
+	}
+
+	if err := s.restoreOriginalQueryIfRewrittenLocked(ctx); err != nil {
+		if s.isTemp {
+			_ = s.Close()
+		}
+		return nil, err
 	}
 
 	sQuery := stripLeadingCommentsAndSpaces(s.query)
@@ -360,8 +378,33 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 	return newStreamingRows(cols, initialRows, stream, onClose), nil
 }
 
+func (s *Stmt) restoreOriginalQueryIfRewrittenLocked(ctx context.Context) error {
+	if !s.rewrittenOnServer {
+		return nil
+	}
+	newOutCols, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query, s.pkgsn)
+	if err != nil {
+		return err
+	}
+	if len(newOutCols) > 0 {
+		s.outputCols = newOutCols
+	}
+	if len(newParamCols) > 0 {
+		s.paramCols = newParamCols
+	}
+	s.rewrittenOnServer = false
+	return nil
+}
+
 func hasBlobParams(paramCols []drda.ColumnDescription, args []any) bool {
+	return hasBlobInParams(paramCols, args, nil)
+}
+
+func hasBlobInParams(paramCols []drda.ColumnDescription, args []any, outIndices map[int]bool) bool {
 	for i, c := range paramCols {
+		if outIndices[i] {
+			continue
+		}
 		if (codec.SQLType(c.SQLType) == codec.SQLTypeBlob || codec.SQLType(c.SQLType) == codec.SQLTypeNBlob) && i < len(args) {
 			if b, ok := args[i].([]byte); ok && len(b) > 0 && len(b) <= 16383 {
 				return true
@@ -374,9 +417,15 @@ func hasBlobParams(paramCols []drda.ColumnDescription, args []any) bool {
 // rewriteBinaryParams rewrites '?' for BLOB parameters while safely ignoring '?' within
 // string literals ('...'), identifiers ("..."), line comments (--...) and block comments (/*...*/).
 func rewriteBinaryParams(query string, paramCols []drda.ColumnDescription, args []any) (string, []drda.ColumnDescription, []any) {
+	rewrittenQuery, rewrittenCols, rewrittenArgs, _ := rewriteBinaryParamsMapped(query, paramCols, args, nil)
+	return rewrittenQuery, rewrittenCols, rewrittenArgs
+}
+
+func rewriteBinaryParamsMapped(query string, paramCols []drda.ColumnDescription, args []any, outIndices map[int]bool) (string, []drda.ColumnDescription, []any, map[int]int) {
 	var rewrittenQuery strings.Builder
 	var rewrittenCols []drda.ColumnDescription
 	var rewrittenArgs []any
+	indexMap := make(map[int]int)
 
 	paramIdx := 0
 	inSingleQuote := false
@@ -466,13 +515,14 @@ func rewriteBinaryParams(query string, paramCols []drda.ColumnDescription, args 
 		if ch == '?' {
 			if paramIdx < len(paramCols) && paramIdx < len(args) {
 				c := paramCols[paramIdx]
-				if codec.SQLType(c.SQLType) == codec.SQLTypeBlob || codec.SQLType(c.SQLType) == codec.SQLTypeNBlob {
-					if b, ok := args[paramIdx].([]byte); ok && len(b) > 0 {
+				if !outIndices[paramIdx] && (codec.SQLType(c.SQLType) == codec.SQLTypeBlob || codec.SQLType(c.SQLType) == codec.SQLTypeNBlob) {
+					if b, ok := args[paramIdx].([]byte); ok && len(b) > 0 && len(b) <= 16383 {
 						rewrittenQuery.WriteString(fmt.Sprintf("BLOB(X'%x')", b))
 						paramIdx++
 						continue
 					}
 				}
+				indexMap[paramIdx] = len(rewrittenArgs)
 				rewrittenQuery.WriteByte(ch)
 				rewrittenCols = append(rewrittenCols, paramCols[paramIdx])
 				rewrittenArgs = append(rewrittenArgs, args[paramIdx])
@@ -486,7 +536,7 @@ func rewriteBinaryParams(query string, paramCols []drda.ColumnDescription, args 
 		rewrittenQuery.WriteByte(ch)
 	}
 
-	return rewrittenQuery.String(), rewrittenCols, rewrittenArgs
+	return rewrittenQuery.String(), rewrittenCols, rewrittenArgs, indexMap
 }
 
 func assignOutParam(dest any, val any) error {
@@ -525,7 +575,7 @@ func (s *Stmt) CheckNamedValue(nv *driver.NamedValue) error {
 
 func getSliceLen(arg any) (int, bool) {
 	switch v := arg.(type) {
-	case nil, int, int64, int32, int16, int8, uint, uint64, uint32, uint16, string, float64, float32, bool, time.Time, []byte, [16]byte:
+	case nil, int, int64, int32, int16, int8, uint, uint64, uint32, uint16, string, float64, float32, bool, time.Time, []byte, [16]byte, *[16]byte:
 		return 0, false
 
 	case []int:
@@ -546,6 +596,8 @@ func getSliceLen(arg any) (int, bool) {
 		return len(v), true
 	case []uint16:
 		return len(v), true
+	case [][]byte:
+		return len(v), true
 	case []string:
 		return len(v), true
 	case []float64:
@@ -562,6 +614,11 @@ func getSliceLen(arg any) (int, bool) {
 		return len(v), true
 	default:
 		val := reflect.ValueOf(arg)
+		if val.Kind() == reflect.Ptr {
+			if elem := val.Type().Elem(); elem.Kind() == reflect.Array && elem.Elem().Kind() == reflect.Uint8 {
+				return 0, false
+			}
+		}
 		// Arrays fixos de uint8 (ex: UUID) são escalares, não batches
 		if val.Kind() == reflect.Array && val.Type().Elem().Kind() == reflect.Uint8 {
 			return 0, false
@@ -654,6 +711,27 @@ func detectAndExtractBatch(rawArgs []any) (bool, [][]any, error) {
 			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
 				batchRows[rowIdx][colIdx] = v[rowIdx]
 			}
+		case [][]byte:
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = v[rowIdx]
+			}
+		case [16]byte:
+			b := make([]byte, 16)
+			copy(b, v[:])
+			var scalar any = b
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = scalar
+			}
+		case *[16]byte:
+			var b any
+			if v != nil {
+				buf := make([]byte, 16)
+				copy(buf, v[:])
+				b = buf
+			}
+			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+				batchRows[rowIdx][colIdx] = b
+			}
 		case []string:
 			for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
 				batchRows[rowIdx][colIdx] = v[rowIdx]
@@ -684,9 +762,28 @@ func detectAndExtractBatch(rawArgs []any) (bool, [][]any, error) {
 			}
 		default:
 			val := reflect.ValueOf(arg)
+			if b, ok := copyFixedByteArray(val); ok {
+				var scalar any
+				if b != nil {
+					scalar = b
+				}
+				for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
+					batchRows[rowIdx][colIdx] = scalar
+				}
+				continue
+			}
 			if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
 				for rowIdx := 0; rowIdx < batchSize; rowIdx++ {
-					batchRows[rowIdx][colIdx] = val.Index(rowIdx).Interface()
+					elem := val.Index(rowIdx)
+					if b, ok := copyFixedByteArray(elem); ok {
+						if b == nil {
+							batchRows[rowIdx][colIdx] = nil
+						} else {
+							batchRows[rowIdx][colIdx] = b
+						}
+					} else {
+						batchRows[rowIdx][colIdx] = elem.Interface()
+					}
 				}
 			} else {
 				for rowIdx := 0; rowIdx < batchSize; rowIdx++ {

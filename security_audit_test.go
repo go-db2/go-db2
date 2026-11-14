@@ -596,7 +596,7 @@ func TestSecurity_PasswordRedaction_DSNError(t *testing.T) {
 func TestSecurity_ResetSession_OptimizationAndErrorHandling(t *testing.T) {
 	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
 		switch cp {
-		case drda.CodePointEXCSQLSET, drda.CodePointRDBCMM:
+		case drda.CodePointEXCSQLSET, drda.CodePointRDBCMM, drda.CodePointRDBRLLBCK:
 			return writeSQLCARDOK(c)
 		}
 		return false
@@ -891,6 +891,118 @@ func TestSecurity_ParseSQLDTARD_ExtendedLengthAndBounds(t *testing.T) {
 	_, err = codec.ParseSQLDTARD(malformed, binary.BigEndian)
 	if err == nil {
 		t.Fatalf("expected error for malformed extended length payload, got nil")
+	}
+}
+
+// 24. SEC-11: BeginTx context metadata & broken check, plus ResetSession rollback order
+func TestSecurity_BeginTx_ContextMetadataAndBrokenCheck_And_ResetSessionRollbackOrder(t *testing.T) {
+	var mu sync.Mutex
+	var cpOrder []drda.CodePoint
+	dropOnIMM := false
+
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
+		mu.Lock()
+		cpOrder = append(cpOrder, cp)
+		shouldDrop := dropOnIMM && cp == drda.CodePointEXCSQLIMM
+		mu.Unlock()
+
+		if shouldDrop {
+			return false
+		}
+		switch cp {
+		case drda.CodePointEXCSQLSET, drda.CodePointEXCSQLIMM, drda.CodePointRDBCMM, drda.CodePointRDBRLLBCK:
+			return writeSQLCARDOK(c)
+		}
+		return false
+	})
+
+	db, err := sql.Open("db2", "db2://BASEUSER:password@"+srv.addr+"/TESTDB?ssl=false&client_applname=base_app&allow_plaintext_auth=true")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sqlConn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("db.Conn failed: %v", err)
+	}
+	defer sqlConn.Close()
+
+	var conn *Conn
+	if err := sqlConn.Raw(func(raw any) error {
+		conn = raw.(*Conn)
+		return nil
+	}); err != nil || conn == nil {
+		t.Fatalf("failed to extract *Conn: %v", err)
+	}
+
+	// 1. BeginTx rejects invalid WithUser before sending SET CURRENT ISOLATION
+	mu.Lock()
+	cpOrder = nil
+	mu.Unlock()
+
+	maliciousCtx := WithUser(ctx, "ADMIN; DROP TABLE USERS; --")
+	if _, err := conn.BeginTx(maliciousCtx, driver.TxOptions{Isolation: driver.IsolationLevel(sql.LevelSerializable)}); err == nil {
+		t.Fatal("expected BeginTx with invalid WithUser to fail before starting tx")
+	}
+	mu.Lock()
+	if len(cpOrder) != 0 {
+		t.Fatalf("expected 0 wire requests after rejected WithUser in BeginTx, got %v", cpOrder)
+	}
+	mu.Unlock()
+
+	// 2. BeginTx applies WithUser (SwitchUser) + WithClientInfo BEFORE SET CURRENT ISOLATION
+	metaCtx := WithUser(WithClientInfo(ctx, ClientInfo{ApplicationName: "tx_audit_app"}), "ALTUSER")
+	tx, err := conn.BeginTx(metaCtx, driver.TxOptions{Isolation: driver.IsolationLevel(sql.LevelSerializable)})
+	if err != nil {
+		t.Fatalf("BeginTx with valid metadata failed: %v", err)
+	}
+	if tx == nil {
+		t.Fatal("expected non-nil tx")
+	}
+
+	mu.Lock()
+	gotBegin := append([]drda.CodePoint(nil), cpOrder...)
+	cpOrder = nil
+	mu.Unlock()
+
+	// SwitchUser emits EXCSQLIMM (SET SESSION AUTHORIZATION), then SetClientInfo (EXCSQLSET), then SET CURRENT ISOLATION (EXCSQLIMM)
+	if len(gotBegin) < 3 || gotBegin[0] != drda.CodePointEXCSQLIMM || gotBegin[1] != drda.CodePointEXCSQLSET || gotBegin[2] != drda.CodePointEXCSQLIMM {
+		t.Fatalf("expected BeginTx order [EXCSQLIMM(SwitchUser), EXCSQLSET(ClientInfo), EXCSQLIMM(Isolation)], got %v", gotBegin)
+	}
+	if conn.CurrentUser() != "ALTUSER" {
+		t.Fatalf("expected CurrentUser 'ALTUSER' after BeginTx(WithUser), got %q", conn.CurrentUser())
+	}
+
+	// 3. ResetSession while !AutoCommit && hasCustomIso && dirty ClientInfo MUST emit RDBRLLBCK FIRST
+	if err := conn.ResetSession(ctx); err != nil {
+		t.Fatalf("ResetSession failed: %v", err)
+	}
+	mu.Lock()
+	gotReset := append([]drda.CodePoint(nil), cpOrder...)
+	cpOrder = nil
+	mu.Unlock()
+
+	if len(gotReset) < 2 || gotReset[0] != drda.CodePointRDBRLLBCK {
+		t.Fatalf("expected ResetSession to emit RDBRLLBCK first, got %v", gotReset)
+	}
+	if !conn.session.AutoCommit() {
+		t.Fatal("expected AutoCommit=true after ResetSession")
+	}
+
+	// 4. BeginTx on a broken session returns driver.ErrBadConn
+	mu.Lock()
+	dropOnIMM = true
+	mu.Unlock()
+	_, _ = conn.ExecContext(ctx, "SET CURRENT DEGREE = '1'", nil)
+	if !conn.session.Broken() {
+		t.Fatal("expected session to be marked broken after dropped EXCSQLIMM")
+	}
+	if _, err := conn.BeginTx(ctx, driver.TxOptions{}); err != driver.ErrBadConn {
+		t.Fatalf("expected driver.ErrBadConn from BeginTx on broken session, got %v", err)
 	}
 }
 
