@@ -67,7 +67,33 @@ func (s *Stmt) isClosed() bool {
 
 // NumInput returns the number of placeholder parameters.
 func (s *Stmt) NumInput() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return len(s.paramCols)
+}
+
+func (s *Stmt) snapshotState() (closed bool, paramCols []drda.ColumnDescription, outputCols []drda.ColumnDescription) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed, s.paramCols, s.outputCols
+}
+
+func (s *Stmt) getParamCols() []drda.ColumnDescription {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.paramCols
+}
+
+func (s *Stmt) getCols() (paramCols []drda.ColumnDescription, outputCols []drda.ColumnDescription) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.paramCols, s.outputCols
+}
+
+func (s *Stmt) setRewrittenOnServer(rewritten bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rewrittenOnServer = rewritten
 }
 
 // Exec executes a prepared statement with positional arguments (legacy interface).
@@ -92,7 +118,8 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 }
 
 func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	if s.isClosed() || s.conn == nil || s.conn.session == nil {
+	closed, paramCols, _ := s.snapshotState()
+	if closed || s.conn == nil || s.conn.session == nil {
 		return nil, ErrConnectionClosed
 	}
 
@@ -100,8 +127,8 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		return nil, err
 	}
 
-	if len(args) != len(s.paramCols) {
-		return nil, fmt.Errorf("db2: expected %d arguments, got %d", len(s.paramCols), len(args))
+	if len(args) != len(paramCols) {
+		return nil, fmt.Errorf("db2: expected %d arguments, got %d", len(paramCols), len(args))
 	}
 
 	rawArgs := make([]any, len(args))
@@ -164,15 +191,16 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		if err := s.restoreOriginalQueryIfRewrittenLocked(ctx); err != nil {
 			return nil, err
 		}
-		totalAffected, err := s.conn.session.ExecBatchWithParams(ctx, s.pkgsn, s.paramCols, batchRows)
+		paramCols = s.getParamCols()
+		totalAffected, err := s.conn.session.ExecBatchWithParams(ctx, s.pkgsn, paramCols, batchRows)
 		if err != nil {
 			return nil, err
 		}
 		return newResult(totalAffected, 0), nil
 	}
 
-	if hasBlobInParams(s.paramCols, rawArgs, outIndices) {
-		newQuery, newCols, newArgs, indexMap := rewriteBinaryParamsMapped(s.query, s.paramCols, rawArgs, outIndices)
+	if hasBlobInParams(paramCols, rawArgs, outIndices) {
+		newQuery, newCols, newArgs, indexMap := rewriteBinaryParamsMapped(s.query, paramCols, rawArgs, outIndices)
 		if len(newArgs) == 0 {
 			affected, err := s.conn.session.ExecDirect(ctx, newQuery)
 			if err != nil {
@@ -180,7 +208,7 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 			}
 			return newResult(affected, 0), nil
 		}
-		s.rewrittenOnServer = true
+		s.setRewrittenOnServer(true)
 		_, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, newQuery, s.pkgsn)
 		if err != nil {
 			return nil, err
@@ -211,7 +239,8 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 		return nil, err
 	}
 
-	affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.pkgsn, s.paramCols, rawArgs)
+	paramCols = s.getParamCols()
+	affected, outValues, err := s.conn.session.ExecWithParams(ctx, s.pkgsn, paramCols, rawArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +280,8 @@ func (s *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driv
 }
 
 func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	if s.isClosed() || s.conn == nil || s.conn.session == nil {
+	closed, paramCols, _ := s.snapshotState()
+	if closed || s.conn == nil || s.conn.session == nil {
 		if s.isTemp {
 			_ = s.Close()
 		}
@@ -265,11 +295,11 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		return nil, err
 	}
 
-	if len(args) != len(s.paramCols) {
+	if len(args) != len(paramCols) {
 		if s.isTemp {
 			_ = s.Close()
 		}
-		return nil, fmt.Errorf("db2: expected %d arguments, got %d", len(s.paramCols), len(args))
+		return nil, fmt.Errorf("db2: expected %d arguments, got %d", len(paramCols), len(args))
 	}
 
 	if err := s.restoreOriginalQueryIfRewrittenLocked(ctx); err != nil {
@@ -278,6 +308,8 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		}
 		return nil, err
 	}
+
+	paramCols, outputCols := s.getCols()
 
 	sQuery := stripLeadingCommentsAndSpaces(s.query)
 	if hasPrefixFold(sQuery, "CALL") {
@@ -313,7 +345,7 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 			}
 		}
 
-		sets, outValues, err := s.conn.session.QueryCallWithParams(ctx, s.pkgsn, s.paramCols, rawArgs)
+		sets, outValues, err := s.conn.session.QueryCallWithParams(ctx, s.pkgsn, paramCols, rawArgs)
 		if err != nil {
 			if s.isTemp {
 				_ = s.Close()
@@ -348,7 +380,7 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		return newMultiRows(resultSets), nil
 	}
 
-	if len(s.outputCols) == 0 {
+	if len(outputCols) == 0 {
 		_, err := s.execContextLocked(ctx, args)
 		if s.isTemp {
 			_ = s.Close()
@@ -364,7 +396,7 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 		rawArgs[i] = arg.Value
 	}
 
-	cols, initialRows, stream, err := s.conn.session.QueryStreamWithParams(ctx, s.pkgsn, s.outputCols, s.paramCols, rawArgs)
+	cols, initialRows, stream, err := s.conn.session.QueryStreamWithParams(ctx, s.pkgsn, outputCols, paramCols, rawArgs)
 	if err != nil {
 		if s.isTemp {
 			_ = s.Close()
@@ -381,13 +413,20 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 }
 
 func (s *Stmt) restoreOriginalQueryIfRewrittenLocked(ctx context.Context) error {
-	if !s.rewrittenOnServer {
+	s.mu.Lock()
+	rewritten := s.rewrittenOnServer
+	query := s.query
+	pkgsn := s.pkgsn
+	s.mu.Unlock()
+
+	if !rewritten {
 		return nil
 	}
-	newOutCols, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, s.query, s.pkgsn)
+	newOutCols, newParamCols, err := s.conn.session.PrepareAndDescribe(ctx, query, pkgsn)
 	if err != nil {
 		return err
 	}
+	s.mu.Lock()
 	if len(newOutCols) > 0 {
 		s.outputCols = newOutCols
 	}
@@ -395,6 +434,7 @@ func (s *Stmt) restoreOriginalQueryIfRewrittenLocked(ctx context.Context) error 
 		s.paramCols = newParamCols
 	}
 	s.rewrittenOnServer = false
+	s.mu.Unlock()
 	return nil
 }
 

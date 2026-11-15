@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // MaxLOBStreamSize defines the architectural maximum size limit for reading io.Reader streams in LOB parameters (2 GiB).
@@ -41,6 +42,24 @@ var (
 // FDODSC generates the FDODSC descriptor bytes for a column parameter.
 func FDODSC(sqlType SQLType, sqllen int64, prec, scale int) []byte {
 	return appendFDODSC(nil, sqlType, sqllen, prec, scale)
+}
+
+func appendFDODSCWithErr(dst []byte, sqlType SQLType, sqllen int64, prec, scale int) ([]byte, error) {
+	switch sqlType {
+	case SQLTypeGraphic, SQLTypeNGraphic:
+		if sqllen <= 0 || sqllen > 0x7FFF {
+			return nil, fmt.Errorf("db2: invalid GRAPHIC column length %d (must be in [1, %d])", sqllen, 0x7FFF)
+		}
+	case SQLTypeBinary, SQLTypeNBinary:
+		if sqllen <= 0 || sqllen > 0x7FFF {
+			return nil, fmt.Errorf("db2: invalid BINARY column length %d (must be in [1, %d])", sqllen, 0x7FFF)
+		}
+	case SQLTypeDecimal, SQLTypeNDecimal:
+		if prec < 1 || scale < 0 || prec > 31 || scale > prec {
+			return nil, fmt.Errorf("db2: invalid decimal precision (%d) or scale (%d)", prec, scale)
+		}
+	}
+	return appendFDODSC(dst, sqlType, sqllen, prec, scale), nil
 }
 
 func appendFDODSC(dst []byte, sqlType SQLType, sqllen int64, prec, scale int) []byte {
@@ -145,13 +164,21 @@ func appendFDODTA(dst []byte, sqlType SQLType, sqllen int64, prec, scale int, va
 		}
 
 	case SQLTypeGraphic, SQLTypeNGraphic:
-		str := fmt.Sprint(val)
-		utf16Bytes := EncodeUTF16BE(str)
-		targetChars := int(sqllen)
-		if targetChars <= 0 {
-			targetChars = len(utf16Bytes) / 2
+		if sqllen <= 0 || sqllen > 0x7FFF {
+			return nil, fmt.Errorf("db2: invalid GRAPHIC column length %d (must be in [1, %d])", sqllen, 0x7FFF)
 		}
-		padded := PadGraphicUTF16BE(utf16Bytes, targetChars)
+		str, err := toUTF8StringStrict(val, "GRAPHIC")
+		if err != nil {
+			return nil, err
+		}
+		if len(str) > math.MaxUint16 {
+			return nil, fmt.Errorf("db2: GRAPHIC parameter length %d exceeds maximum inline length %d", len(str), math.MaxUint16)
+		}
+		utf16Bytes := EncodeUTF16BE(str)
+		if len(utf16Bytes) > int(sqllen)*2 {
+			return nil, fmt.Errorf("db2: GRAPHIC parameter (%d UTF-16BE bytes) exceeds column length %d characters (%d bytes)", len(utf16Bytes), sqllen, int(sqllen)*2)
+		}
+		padded := PadGraphicUTF16BE(utf16Bytes, int(sqllen))
 		dst = append(dst, 0x00)
 		return append(dst, padded...), nil
 
@@ -192,9 +219,15 @@ func appendFDODTA(dst []byte, sqlType SQLType, sqllen int64, prec, scale int, va
 		return dst, nil
 
 	case SQLTypeFloat, SQLTypeNFloat:
-		f := toFloat64(val)
+		f, err := toFloat64Strict(val)
+		if err != nil {
+			return nil, err
+		}
 		origLen := len(dst)
 		if sqllen == 4 {
+			if math.Abs(f) > math.MaxFloat32 {
+				return nil, fmt.Errorf("db2: float64 value %g overflows REAL (float32)", f)
+			}
 			dst = append(dst, 0x00, 0, 0, 0, 0)
 			endian.PutUint32(dst[origLen+1:origLen+5], math.Float32bits(float32(f)))
 		} else {
@@ -204,7 +237,10 @@ func appendFDODTA(dst []byte, sqlType SQLType, sqllen int64, prec, scale int, va
 		return dst, nil
 
 	case SQLTypeBoolean, SQLTypeNBoolean:
-		bVal := toBool(val)
+		bVal, err := toBoolStrict(val)
+		if err != nil {
+			return nil, err
+		}
 		if sqllen == 2 {
 			origLen := len(dst)
 			dst = append(dst, 0x00, 0, 0)
@@ -245,26 +281,39 @@ func appendFDODTA(dst []byte, sqlType SQLType, sqllen int64, prec, scale int, va
 		return append(dst, "      "...), nil
 
 	case SQLTypeBinary, SQLTypeNBinary:
-		b := toBytes(val)
+		if sqllen <= 0 {
+			return nil, fmt.Errorf("db2: invalid BINARY column length %d (must be > 0)", sqllen)
+		}
+		if sqllen > 0x7FFF {
+			return nil, fmt.Errorf("db2: BINARY column length %d exceeds FDODSC maximum %d", sqllen, 0x7FFF)
+		}
+		b, err := toBytesStrict(val)
+		if err != nil {
+			return nil, err
+		}
+		if len(b) > int(sqllen) {
+			return nil, fmt.Errorf("db2: binary value length %d exceeds column length %d", len(b), sqllen)
+		}
 		dst = append(dst, 0x00)
 		origLen := len(dst)
-		if int(sqllen) > 0 {
-			needed := int(sqllen)
-			if cap(dst)-origLen < needed {
-				newBuf := make([]byte, origLen, origLen+needed)
-				copy(newBuf, dst)
-				dst = newBuf
-			}
-			dst = dst[:origLen+needed]
-			for i := origLen; i < origLen+needed; i++ {
-				dst[i] = 0
-			}
-			copy(dst[origLen:], b)
+		needed := int(sqllen)
+		if cap(dst)-origLen < needed {
+			newBuf := make([]byte, origLen, origLen+needed)
+			copy(newBuf, dst)
+			dst = newBuf
 		}
+		dst = dst[:origLen+needed]
+		for i := origLen; i < origLen+needed; i++ {
+			dst[i] = 0
+		}
+		copy(dst[origLen:], b)
 		return dst, nil
 
 	case SQLTypeVarBinary, SQLTypeNVarBinary, SQLTypeBlob, SQLTypeNBlob:
-		b := toBytes(val)
+		b, err := toBytesStrict(val)
+		if err != nil {
+			return nil, err
+		}
 		if len(b) > math.MaxUint16 {
 			return nil, fmt.Errorf("db2: parameter length %d exceeds maximum inline length %d", len(b), math.MaxUint16)
 		}
@@ -289,23 +338,38 @@ func appendFDODTA(dst []byte, sqlType SQLType, sqllen int64, prec, scale int, va
 		return append(dst, dfpBytes...), nil
 
 	case SQLTypeXML, SQLTypeNXML:
-		str := fmt.Sprint(val)
+		str, err := toUTF8StringStrict(val, "XML")
+		if err != nil {
+			return nil, err
+		}
+		if len(str) > math.MaxUint16 {
+			return nil, fmt.Errorf("db2: XML parameter length %d exceeds maximum inline length %d", len(str), math.MaxUint16)
+		}
 		origLen := len(dst)
 		dst = append(dst, 0x00, 0, 0)
 		encodedStart := len(dst)
 		dst = AppendUTF16BE(dst, str)
 		byteLen := len(dst) - encodedStart
+		if byteLen > math.MaxUint16 {
+			return nil, fmt.Errorf("db2: encoded XML length %d bytes exceeds maximum inline length %d", byteLen, math.MaxUint16)
+		}
 		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(byteLen))
 		return dst, nil
 
 	default:
 		// Fallback as UTF-16 string
 		str := fmt.Sprint(val)
+		if len(str) > math.MaxUint16 {
+			return nil, fmt.Errorf("db2: parameter length %d exceeds maximum inline length %d", len(str), math.MaxUint16)
+		}
 		origLen := len(dst)
 		dst = append(dst, 0x00, 0, 0)
 		encodedStart := len(dst)
 		dst = AppendUTF16BE(dst, str)
 		byteLen := len(dst) - encodedStart
+		if byteLen > math.MaxUint16 {
+			return nil, fmt.Errorf("db2: encoded parameter length %d bytes exceeds maximum inline length %d", byteLen, math.MaxUint16)
+		}
 		binary.BigEndian.PutUint16(dst[origLen+1:origLen+3], uint16(byteLen))
 		return dst, nil
 	}
@@ -366,14 +430,37 @@ func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, err
 	var stackBuf [64]byte
 	var buf []byte
 	var str string
+	useStr := false
 
 	switch v := val.(type) {
 	case string:
 		str = v
+		useStr = true
 	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return dst, fmt.Errorf("db2: cannot encode non-finite float64 into DECIMAL(%d,%d)", prec, scale)
+		}
+		absV := math.Abs(v)
+		if absV >= 1e32 {
+			return dst, fmt.Errorf("db2: float64 value overflows DECIMAL(%d,%d)", prec, scale)
+		}
+		if v != 0 && absV < 1e-32 {
+			return dst, fmt.Errorf("db2: float64 value fractional precision exceeds scale %d of DECIMAL(%d,%d)", scale, prec, scale)
+		}
 		buf = strconv.AppendFloat(stackBuf[:0], v, 'f', -1, 64)
 	case float32:
-		buf = strconv.AppendFloat(stackBuf[:0], float64(v), 'f', -1, 32)
+		f64 := float64(v)
+		if math.IsNaN(f64) || math.IsInf(f64, 0) {
+			return dst, fmt.Errorf("db2: cannot encode non-finite float32 into DECIMAL(%d,%d)", prec, scale)
+		}
+		absV := math.Abs(f64)
+		if absV >= 1e32 {
+			return dst, fmt.Errorf("db2: float32 value overflows DECIMAL(%d,%d)", prec, scale)
+		}
+		if v != 0 && absV < 1e-32 {
+			return dst, fmt.Errorf("db2: float32 value fractional precision exceeds scale %d of DECIMAL(%d,%d)", scale, prec, scale)
+		}
+		buf = strconv.AppendFloat(stackBuf[:0], f64, 'f', -1, 32)
 	case int:
 		buf = strconv.AppendInt(stackBuf[:0], int64(v), 10)
 	case int64:
@@ -395,37 +482,81 @@ func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, err
 	case uint8:
 		buf = strconv.AppendUint(stackBuf[:0], uint64(v), 10)
 	default:
-		str = fmt.Sprint(val)
+		return dst, fmt.Errorf("db2: cannot convert %T to DECIMAL(%d,%d)", val, prec, scale)
 	}
 
 	var negative bool
 	var intPartStr, fracPartStr string
 	var intPartBuf, fracPartBuf []byte
 
-	if buf != nil {
-		negative = len(buf) > 0 && buf[0] == '-'
-		if negative {
-			buf = buf[1:]
+	if useStr {
+		str = strings.TrimSpace(str)
+		if len(str) == 0 {
+			return dst, fmt.Errorf("db2: invalid empty string for DECIMAL(%d,%d)", prec, scale)
 		}
-		dotIdx := bytes.IndexByte(buf, '.')
-		if dotIdx >= 0 {
-			intPartBuf = buf[:dotIdx]
-			fracPartBuf = buf[dotIdx+1:]
-		} else {
-			intPartBuf = buf
-		}
-	} else {
-		negative = len(str) > 0 && str[0] == '-'
-		if negative {
+		if str[0] == '-' {
+			negative = true
+			str = str[1:]
+		} else if str[0] == '+' {
 			str = str[1:]
 		}
-		dotIdx := strings.IndexByte(str, '.')
-		if dotIdx >= 0 {
+		if dotIdx := strings.IndexByte(str, '.'); dotIdx >= 0 {
 			intPartStr = str[:dotIdx]
 			fracPartStr = str[dotIdx+1:]
 		} else {
 			intPartStr = str
 		}
+		if len(intPartStr)+len(fracPartStr) == 0 {
+			return dst, fmt.Errorf("db2: invalid decimal literal for DECIMAL(%d,%d)", prec, scale)
+		}
+		for i := 0; i < len(intPartStr); i++ {
+			if intPartStr[i] < '0' || intPartStr[i] > '9' {
+				return dst, fmt.Errorf("db2: invalid digit in decimal literal for DECIMAL(%d,%d)", prec, scale)
+			}
+		}
+		for i := 0; i < len(fracPartStr); i++ {
+			if fracPartStr[i] < '0' || fracPartStr[i] > '9' {
+				return dst, fmt.Errorf("db2: invalid digit in fractional part for DECIMAL(%d,%d)", prec, scale)
+			}
+		}
+		for len(intPartStr) > 0 && intPartStr[0] == '0' {
+			intPartStr = intPartStr[1:]
+		}
+		for len(fracPartStr) > scale && fracPartStr[len(fracPartStr)-1] == '0' {
+			fracPartStr = fracPartStr[:len(fracPartStr)-1]
+		}
+	} else {
+		if len(buf) > 0 && buf[0] == '-' {
+			negative = true
+			buf = buf[1:]
+		}
+		if dotIdx := bytes.IndexByte(buf, '.'); dotIdx >= 0 {
+			intPartBuf = buf[:dotIdx]
+			fracPartBuf = buf[dotIdx+1:]
+		} else {
+			intPartBuf = buf
+		}
+		for len(intPartBuf) > 0 && intPartBuf[0] == '0' {
+			intPartBuf = intPartBuf[1:]
+		}
+		for len(fracPartBuf) > scale && fracPartBuf[len(fracPartBuf)-1] == '0' {
+			fracPartBuf = fracPartBuf[:len(fracPartBuf)-1]
+		}
+	}
+
+	intDigitsNeeded := prec - scale
+	lenInt := len(intPartBuf)
+	lenFrac := len(fracPartBuf)
+	if useStr {
+		lenInt = len(intPartStr)
+		lenFrac = len(fracPartStr)
+	}
+
+	if lenInt > intDigitsNeeded {
+		return dst, fmt.Errorf("db2: decimal integer digits (%d) exceed capacity (%d) for DECIMAL(%d,%d)", lenInt, intDigitsNeeded, prec, scale)
+	}
+	if lenFrac > scale {
+		return dst, fmt.Errorf("db2: decimal fractional digits (%d) exceed scale (%d) for DECIMAL(%d,%d)", lenFrac, scale, prec, scale)
 	}
 
 	byteLen := (prec + 2) / 2
@@ -446,56 +577,38 @@ func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, err
 	totalNibbles := byteLen * 2
 	startIdx := (totalNibbles - 1) - prec
 
-	intDigitsNeeded := prec - scale
-	lenInt := len(intPartBuf)
-	if buf == nil {
-		lenInt = len(intPartStr)
-	}
-	lenFrac := len(fracPartBuf)
-	if buf == nil {
-		lenFrac = len(fracPartStr)
-	}
-
 	// Optimization: Direct nibble placement for integer and fraction digits, bypassing leading/trailing zero digit loops and inner conditionals.
 	for idx := 0; idx < lenInt; idx++ {
 		d := intDigitsNeeded - lenInt + idx
-		if d >= 0 && d < intDigitsNeeded {
-			var c byte
-			if buf != nil {
-				c = intPartBuf[idx]
-			} else {
-				c = intPartStr[idx]
-			}
-			if c >= '0' && c <= '9' {
-				nibblePos := startIdx + d
-				byteIdx := 1 + (nibblePos >> 1)
-				if nibblePos&1 == 0 {
-					out[byteIdx] |= (c - '0') << 4
-				} else {
-					out[byteIdx] |= c - '0'
-				}
-			}
+		var c byte
+		if useStr {
+			c = intPartStr[idx]
+		} else {
+			c = intPartBuf[idx]
+		}
+		nibblePos := startIdx + d
+		byteIdx := 1 + (nibblePos >> 1)
+		if nibblePos&1 == 0 {
+			out[byteIdx] |= (c - '0') << 4
+		} else {
+			out[byteIdx] |= c - '0'
 		}
 	}
 
 	for idx := 0; idx < lenFrac; idx++ {
 		d := intDigitsNeeded + idx
-		if d < prec {
-			var c byte
-			if buf != nil {
-				c = fracPartBuf[idx]
-			} else {
-				c = fracPartStr[idx]
-			}
-			if c >= '0' && c <= '9' {
-				nibblePos := startIdx + d
-				byteIdx := 1 + (nibblePos >> 1)
-				if nibblePos&1 == 0 {
-					out[byteIdx] |= (c - '0') << 4
-				} else {
-					out[byteIdx] |= c - '0'
-				}
-			}
+		var c byte
+		if useStr {
+			c = fracPartStr[idx]
+		} else {
+			c = fracPartBuf[idx]
+		}
+		nibblePos := startIdx + d
+		byteIdx := 1 + (nibblePos >> 1)
+		if nibblePos&1 == 0 {
+			out[byteIdx] |= (c - '0') << 4
+		} else {
+			out[byteIdx] |= c - '0'
 		}
 	}
 
@@ -552,64 +665,116 @@ func toInt64Strict(v any) (int64, error) {
 	}
 }
 
-func toInt64(val any) int64 {
+func toUTF8StringStrict(val any, typeName string) (string, error) {
 	switch v := val.(type) {
+	case string:
+		if !utf8.ValidString(v) {
+			return "", fmt.Errorf("db2: invalid UTF-8 string for %s parameter", typeName)
+		}
+		return v, nil
+	case []byte:
+		if !utf8.Valid(v) {
+			return "", fmt.Errorf("db2: invalid UTF-8 bytes for %s parameter", typeName)
+		}
+		return string(v), nil
+	default:
+		return "", fmt.Errorf("db2: cannot convert %T to %s (expected string or UTF-8 []byte)", val, typeName)
+	}
+}
+
+func toFloat64Strict(val any) (float64, error) {
+	var f float64
+	switch v := val.(type) {
+	case float64:
+		f = v
+	case float32:
+		f = float64(v)
 	case int:
-		return int64(v)
+		f = float64(v)
 	case int8:
-		return int64(v)
+		f = float64(v)
 	case int16:
-		return int64(v)
+		f = float64(v)
 	case int32:
-		return int64(v)
+		f = float64(v)
 	case int64:
-		return v
+		f = float64(v)
 	case uint:
-		return int64(v)
+		f = float64(v)
 	case uint8:
-		return int64(v)
+		f = float64(v)
 	case uint16:
-		return int64(v)
+		f = float64(v)
 	case uint32:
-		return int64(v)
+		f = float64(v)
 	case uint64:
-		return int64(v)
-	case float32:
-		return int64(v)
-	case float64:
-		return int64(v)
+		f = float64(v)
 	default:
-		return 0
+		return 0, fmt.Errorf("db2: cannot convert %T to float64 (unsupported type)", val)
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("db2: cannot encode non-finite float value %v", f)
+	}
+	return f, nil
+}
+
+func boolFromSigned(n int64) (bool, error) {
+	switch n {
+	case 0:
+		return false, nil
+	case 1:
+		return true, nil
+	default:
+		return false, fmt.Errorf("db2: integer value %d out of range for BOOLEAN (expected 0 or 1)", n)
 	}
 }
 
-func toFloat64(val any) float64 {
-	switch v := val.(type) {
-	case float64:
-		return v
-	case float32:
-		return float64(v)
-	case int:
-		return float64(v)
-	case int64:
-		return float64(v)
+func boolFromUnsigned(n uint64) (bool, error) {
+	switch n {
+	case 0:
+		return false, nil
+	case 1:
+		return true, nil
 	default:
-		return 0
+		return false, fmt.Errorf("db2: integer value %d out of range for BOOLEAN (expected 0 or 1)", n)
 	}
 }
 
-func toBool(val any) bool {
+func toBoolStrict(val any) (bool, error) {
 	switch v := val.(type) {
 	case bool:
-		return v
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return toInt64(val) != 0
-	case float32, float64:
-		return toFloat64(val) != 0
+		return v, nil
+	case int:
+		return boolFromSigned(int64(v))
+	case int8:
+		return boolFromSigned(int64(v))
+	case int16:
+		return boolFromSigned(int64(v))
+	case int32:
+		return boolFromSigned(int64(v))
+	case int64:
+		return boolFromSigned(v)
+	case uint:
+		return boolFromUnsigned(uint64(v))
+	case uint8:
+		return boolFromUnsigned(uint64(v))
+	case uint16:
+		return boolFromUnsigned(uint64(v))
+	case uint32:
+		return boolFromUnsigned(uint64(v))
+	case uint64:
+		return boolFromUnsigned(v)
 	case string:
-		return strings.EqualFold(v, "true") || v == "1"
+		trimmed := strings.TrimSpace(v)
+		if strings.EqualFold(trimmed, "true") || strings.EqualFold(trimmed, "t") || trimmed == "1" {
+			return true, nil
+		}
+		if strings.EqualFold(trimmed, "false") || strings.EqualFold(trimmed, "f") || trimmed == "0" {
+			return false, nil
+		}
+		return false, fmt.Errorf("db2: cannot parse %q as BOOLEAN", v)
 	default:
-		return false
+		return false, fmt.Errorf("db2: cannot convert %T to boolean (unsupported type)", val)
 	}
 }
 
@@ -643,14 +808,14 @@ func toTime(val any) (time.Time, error) {
 	}
 }
 
-func toBytes(val any) []byte {
+func toBytesStrict(val any) ([]byte, error) {
 	switch v := val.(type) {
 	case []byte:
-		return v
+		return v, nil
 	case string:
-		return []byte(v)
+		return []byte(v), nil
 	default:
-		return fmt.Append(nil, v)
+		return nil, fmt.Errorf("db2: cannot convert %T to binary bytes (expected []byte or string)", val)
 	}
 }
 
@@ -725,7 +890,11 @@ func BuildSQLDTAWithEXTDTA(colTypes []SQLType, colLens []int64, precs, scales []
 			if (ct == SQLTypeClob || ct == SQLTypeNClob || ct == SQLTypeDbClob || ct == SQLTypeNDbClob) && !shouldExternalizeLOB(ct, args[idx]) {
 				fdodscSlice = append(fdodscSlice, fdodscVarChar...)
 			} else {
-				fdodscSlice = appendFDODSC(fdodscSlice, ct, colLens[idx], precs[idx], scales[idx])
+				var err error
+				fdodscSlice, err = appendFDODSCWithErr(fdodscSlice, ct, colLens[idx], precs[idx], scales[idx])
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to encode descriptor for parameter %d: %w", idx+1, err)
+				}
 			}
 		}
 
@@ -772,17 +941,28 @@ func BuildSQLDTAWithEXTDTA(colTypes []SQLType, colLens []int64, precs, scales []
 			}
 
 			var payload []byte
-			switch v := rawVal.(type) {
-			case []byte:
-				payload = v
-			case string:
-				if colType == SQLTypeDbClob || colType == SQLTypeNDbClob {
-					payload = EncodeUTF16BE(v)
-				} else {
-					payload = []byte(v)
+			if colType == SQLTypeBlob || colType == SQLTypeNBlob {
+				var err error
+				payload, err = toBytesStrict(rawVal)
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to encode parameter %d: %w", i+1, err)
 				}
-			default:
-				payload = fmt.Append(nil, v)
+			} else {
+				switch v := rawVal.(type) {
+				case []byte:
+					payload = v
+				case string:
+					if colType == SQLTypeDbClob || colType == SQLTypeNDbClob {
+						if !utf8.ValidString(v) {
+							return nil, nil, fmt.Errorf("db2: parameter %d contains invalid UTF-8 for DBCLOB", i+1)
+						}
+						payload = EncodeUTF16BE(v)
+					} else {
+						payload = []byte(v)
+					}
+				default:
+					return nil, nil, fmt.Errorf("db2: cannot convert %T to LOB for parameter %d (expected []byte or string)", rawVal, i+1)
+				}
 			}
 
 			if uint64(len(payload)) > math.MaxUint32 {

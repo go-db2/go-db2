@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -493,4 +494,85 @@ func TestBuildKeytab_BoundsValidation(t *testing.T) {
 			t.Fatal("expected error when entryBody exceeds maxKeytabEntryBodyLen")
 		}
 	})
+}
+
+func TestKerberosStructs_RedactionAndSanitization(t *testing.T) {
+	cfg := KerberosConfig{
+		ServicePrincipal: "db2/host.corp\r\nFAKE@CORP",
+		Host:             "db2host\nINJ",
+		Realm:            "CORP\x00.LOCAL",
+		ConfigFile:       "/etc/krb5.conf\x7f",
+		KeytabFile:       "/etc/db2.keytab\r",
+		CCacheFile:       "/tmp/krb5cc\n",
+		Username:         "user\x1b[31m",
+		Password:         "TopSecretKrbPassword!",
+		RawToken:         []byte("SECRET_AP_REQ_TOKEN_BYTES"),
+	}
+
+	formats := []struct {
+		name string
+		out  string
+	}{
+		{"value_%v", fmt.Sprintf("%v", cfg)},
+		{"value_%+v", fmt.Sprintf("%+v", cfg)},
+		{"value_%#v", fmt.Sprintf("%#v", cfg)},
+		{"ptr_%v", fmt.Sprintf("%v", &cfg)},
+		{"ptr_%+v", fmt.Sprintf("%+v", &cfg)},
+		{"ptr_%#v", fmt.Sprintf("%#v", &cfg)},
+	}
+
+	for _, f := range formats {
+		t.Run("KerberosConfig_"+f.name, func(t *testing.T) {
+			if strings.Contains(f.out, "TopSecretKrbPassword!") {
+				t.Fatalf("leaked KerberosConfig Password: %s", f.out)
+			}
+			if strings.Contains(f.out, "SECRET_AP_REQ_TOKEN_BYTES") {
+				t.Fatalf("leaked KerberosConfig RawToken: %s", f.out)
+			}
+			if !strings.Contains(f.out, `Password:"******"`) || !strings.Contains(f.out, "<redacted 25 bytes>") {
+				t.Fatalf("missing expected redaction markers: %s", f.out)
+			}
+			if strings.ContainsAny(f.out, "\r\n\x00\x7f\x1b") {
+				t.Fatalf("unsanitized control characters remain in %q", f.out)
+			}
+		})
+	}
+
+	emptyCfg := KerberosConfig{Username: "u"}
+	if s := emptyCfg.String(); !strings.Contains(s, "RawToken:<empty>") {
+		t.Fatalf("expected RawToken:<empty> for nil token, got: %s", s)
+	}
+
+	entry := KeytabEntry{
+		Principal: "db2/srv\r\nFAKE@REALM",
+		KeyType:   18,
+		KVNO:      2,
+		Key:       []byte("RAW_AES256_KEYTAB_SECRET"),
+	}
+
+	entryFormats := []struct {
+		name string
+		out  string
+	}{
+		{"value_%v", fmt.Sprintf("%v", entry)},
+		{"value_%+v", fmt.Sprintf("%+v", entry)},
+		{"value_%#v", fmt.Sprintf("%#v", entry)},
+		{"ptr_%v", fmt.Sprintf("%v", &entry)},
+		{"ptr_%+v", fmt.Sprintf("%+v", &entry)},
+		{"ptr_%#v", fmt.Sprintf("%#v", &entry)},
+	}
+
+	for _, f := range entryFormats {
+		t.Run("KeytabEntry_"+f.name, func(t *testing.T) {
+			if strings.Contains(f.out, "RAW_AES256_KEYTAB_SECRET") || strings.Contains(f.out, "82 65 87") {
+				t.Fatalf("leaked KeytabEntry Key: %s", f.out)
+			}
+			if !strings.Contains(f.out, `Key:"******"`) {
+				t.Fatalf("missing Key redaction marker: %s", f.out)
+			}
+			if strings.ContainsAny(f.out, "\r\n\x00\x7f") {
+				t.Fatalf("unsanitized control characters remain in %q", f.out)
+			}
+		})
+	}
 }

@@ -55,7 +55,7 @@ func main() {
 	for i := 1; i <= 20; i++ {
 		_, err := db.ExecContext(ctx,
 			"INSERT INTO test_admin_orders (order_id, customer_name, order_total, order_date) VALUES (?, ?, ?, CURRENT DATE)",
-			i, fmt.Sprintf("Cliente #%03d", i), float64(i)*49.90,
+			i, fmt.Sprintf("Cliente #%03d", i), fmt.Sprintf("%.2f", float64(i)*49.90),
 		)
 		if err != nil {
 			log.Fatalf("Erro ao inserir linha %d: %v", i, err)

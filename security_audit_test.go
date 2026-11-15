@@ -241,6 +241,164 @@ func TestSecurity_Stmt_And_Result_Concurrency(t *testing.T) {
 	_ = stmt.Close()
 }
 
+// 8b. SEC-06: Concurrent Stmt.NumInput(), ExecContext (BLOB rewrite + scalar restore), QueryContext, and Close under -race
+func TestSecurity_Stmt_ConcurrentNumInputAndInlineLOB(t *testing.T) {
+	// Build a valid LittleEndian input-parameter SQLDARD payload describing 2 params: [BLOB(1024), INTEGER(4)]
+	var sqldard []byte
+	sqldard = append(sqldard, 0xFF, 0xFF) // input paramCols indicator + unnamed header marker
+	sqldard = binary.LittleEndian.AppendUint16(sqldard, 2)
+	for _, col := range []struct {
+		sqlType uint16
+		length  uint64
+	}{
+		{uint16(codec.SQLTypeBlob), 1024},
+		{uint16(codec.SQLTypeInteger), 4},
+	} {
+		sqldard = binary.LittleEndian.AppendUint16(sqldard, 0) // precision
+		sqldard = binary.LittleEndian.AppendUint16(sqldard, 0) // scale
+		sqldard = binary.LittleEndian.AppendUint64(sqldard, col.length)
+		sqldard = binary.LittleEndian.AppendUint16(sqldard, col.sqlType)
+		sqldard = append(sqldard, 0x00, 0x00)
+		sqldard = append(sqldard, make([]byte, 29)...)
+	}
+
+	sqlcardOK := make([]byte, 20)
+	binary.LittleEndian.PutUint32(sqlcardOK[1:5], 0)
+	copy(sqlcardOK[5:10], "00000")
+
+	srv := startMockServer(t, func(c net.Conn, cp drda.CodePoint) bool {
+		switch cp {
+		case drda.CodePointPRPSQLSTT:
+			cardObj := drda.PackDDMObject(drda.CodePointSQLCARD, sqlcardOK)
+			dardObj := drda.PackDDMObject(drda.CodePointSQLDARD, sqldard)
+			var resp []byte
+			resp = append(resp, drda.BuildDSSHeader(len(cardObj), drda.DSSTypeReply, true, false, false, 1)...)
+			resp = append(resp, cardObj...)
+			resp = append(resp, drda.BuildDSSHeader(len(dardObj), drda.DSSTypeReply, false, false, false, 1)...)
+			resp = append(resp, dardObj...)
+			_, err := c.Write(resp)
+			return err == nil
+		case drda.CodePointOPNQRY:
+			_, err := c.Write(buildReplyChain(
+				mockOpnqryrm(),
+				mockQrydscInteger(),
+				mockQrydta(mockIntegerRows(42)),
+				mockSqlcard(0, "00000"),
+			))
+			return err == nil
+		case drda.CodePointEXCSQLIMM, drda.CodePointEXCSQLSTT, drda.CodePointRDBCMM, drda.CodePointRDBRLLBCK, drda.CodePointCLSQRY:
+			return writeSQLCARDOK(c)
+		}
+		return true
+	})
+
+	db, err := sql.Open("db2", "db2://user:pass@"+srv.addr+"/TESTDB?ssl=false&allow_plaintext_auth=true")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sqlConn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("db.Conn failed: %v", err)
+	}
+	defer sqlConn.Close()
+
+	var conn *Conn
+	if err := sqlConn.Raw(func(raw any) error {
+		conn = raw.(*Conn)
+		return nil
+	}); err != nil || conn == nil {
+		t.Fatalf("failed to extract *Conn: %v", err)
+	}
+
+	stmt := newStmt(conn, "UPDATE T SET B = ? WHERE ID = ?", nil, []drda.ColumnDescription{
+		{SQLType: uint16(codec.SQLTypeBlob), Length: 1024},
+		{SQLType: uint16(codec.SQLTypeInteger), Length: 4},
+	}, 1)
+
+	sec2, err := conn.sections.Acquire()
+	if err != nil {
+		t.Fatalf("failed to acquire section for qStmt: %v", err)
+	}
+	qStmt := newStmt(conn, "SELECT ID FROM T WHERE ID = ?", []drda.ColumnDescription{
+		{Name: "ID", SQLType: uint16(codec.SQLTypeInteger), Length: 4},
+	}, []drda.ColumnDescription{
+		{SQLType: uint16(codec.SQLTypeInteger), Length: 4},
+	}, sec2)
+
+	var wg sync.WaitGroup
+	triggerClose := make(chan struct{})
+	var closeOnce sync.Once
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-triggerClose
+		_ = stmt.Close()
+		_ = qStmt.Close()
+	}()
+
+	// Concurrent NumInput readers
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				_ = stmt.NumInput()
+				_ = qStmt.NumInput()
+			}
+		}()
+	}
+
+	// Concurrent ExecContext (alternating BLOB inline rewrite and batch/scalar restore) and QueryContext (both exec-path and streaming outputCols path)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			if worker == 0 {
+				defer closeOnce.Do(func() { close(triggerClose) })
+			}
+			for j := 0; j < 20; j++ {
+				if worker == 0 && j == 12 {
+					closeOnce.Do(func() { close(triggerClose) })
+				}
+				if j%2 == 0 {
+					_, _ = stmt.ExecContext(ctx, []driver.NamedValue{
+						{Ordinal: 1, Value: []byte{0xde, 0xad, 0xbe, 0xef}},
+						{Ordinal: 2, Value: int64(worker*100 + j)},
+					})
+				} else {
+					rows, qErr := stmt.QueryContext(ctx, []driver.NamedValue{
+						{Ordinal: 1, Value: []byte{}},
+						{Ordinal: 2, Value: int64(j)},
+					})
+					if qErr == nil && rows != nil {
+						_ = rows.Close()
+					}
+					qRows, qsErr := qStmt.QueryContext(ctx, []driver.NamedValue{
+						{Ordinal: 1, Value: int64(worker*100 + j)},
+					})
+					if qsErr == nil && qRows != nil {
+						_ = qRows.Close()
+					}
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	if err := stmt.Close(); err != nil {
+		t.Fatalf("stmt.Close failed: %v", err)
+	}
+	if err := qStmt.Close(); err != nil {
+		t.Fatalf("qStmt.Close failed: %v", err)
+	}
+}
+
 // 9. SEC-02: ReadDSS bounds checking on malformed frame length
 func TestSecurity_ReadDSS_MalformedFrameLength(t *testing.T) {
 	// Construct a 20-byte DSS frame claiming to have a 50-byte DDM object

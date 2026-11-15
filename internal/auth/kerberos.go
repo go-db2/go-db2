@@ -35,6 +35,54 @@ type KerberosConfig struct {
 	RawToken         []byte // Direct pre-generated AP-REQ / GSSAPI token
 }
 
+func sanitizeLogString(s string) string {
+	idx := -1
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 32 || c == 127 {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return s
+	}
+	var sb strings.Builder
+	sb.Grow(len(s))
+	sb.WriteString(s[:idx])
+	for i := idx; i < len(s); i++ {
+		c := s[i]
+		if c >= 32 && c != 127 {
+			sb.WriteByte(c)
+		}
+	}
+	return sb.String()
+}
+
+// String implements fmt.Stringer to redact sensitive credentials and strip control characters.
+func (k KerberosConfig) String() string {
+	rawTokenDesc := "<empty>"
+	if len(k.RawToken) > 0 {
+		rawTokenDesc = fmt.Sprintf("<redacted %d bytes>", len(k.RawToken))
+	}
+	return fmt.Sprintf(
+		"KerberosConfig{ServicePrincipal:%s, Host:%s, Realm:%s, ConfigFile:%s, KeytabFile:%s, CCacheFile:%s, Username:%s, Password:\"******\", RawToken:%s}",
+		sanitizeLogString(k.ServicePrincipal),
+		sanitizeLogString(k.Host),
+		sanitizeLogString(k.Realm),
+		sanitizeLogString(k.ConfigFile),
+		sanitizeLogString(k.KeytabFile),
+		sanitizeLogString(k.CCacheFile),
+		sanitizeLogString(k.Username),
+		rawTokenDesc,
+	)
+}
+
+// GoString implements fmt.GoStringer to redact sensitive credentials when formatted with %#v.
+func (k KerberosConfig) GoString() string {
+	return k.String()
+}
+
 // FormatServicePrincipal returns the normalized SPN for the Db2 service.
 // If SPN is provided, it is returned directly; otherwise it builds "db2/<host>" or "db2/<host>@<REALM>".
 func FormatServicePrincipal(spn, host, realm string) string {
@@ -102,6 +150,21 @@ type KeytabEntry struct {
 	KeyType   uint16
 	KVNO      uint32
 	Key       []byte
+}
+
+// String implements fmt.Stringer to redact key material and strip control characters.
+func (e KeytabEntry) String() string {
+	return fmt.Sprintf(
+		"KeytabEntry{Principal:%s, KeyType:%d, KVNO:%d, Key:\"******\"}",
+		sanitizeLogString(e.Principal),
+		e.KeyType,
+		e.KVNO,
+	)
+}
+
+// GoString implements fmt.GoStringer to redact key material when formatted with %#v.
+func (e KeytabEntry) GoString() string {
+	return e.String()
 }
 
 // ParseKeytab parses a standard binary Kerberos keytab (Keytab Version 2).

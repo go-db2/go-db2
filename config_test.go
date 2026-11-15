@@ -629,3 +629,250 @@ func BenchmarkParseDSN(b *testing.B) {
 		}
 	}
 }
+
+func TestRedactAndParseDSN_EdgeCases(t *testing.T) {
+	t.Run("redactDSNPassword masks special characters and preserves SPN", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			input    string
+			expected string
+			leaks    []string
+		}{
+			{
+				name:     "Password with @ and hash",
+				input:    "db2://admin:p@ss#word@localhost:50000/db",
+				expected: "db2://admin:******@localhost:50000/db",
+				leaks:    []string{"p@ss", "word", "p@ss#word"},
+			},
+			{
+				name:     "Password with @ and slash",
+				input:    "db2://admin:p@ss/123@localhost:50000/db?allow_plaintext_auth=true",
+				expected: "db2://admin:******@localhost:50000/db?allow_plaintext_auth=true",
+				leaks:    []string{"p@ss", "123", "p@ss/123"},
+			},
+			{
+				name:     "Password with question mark and no port/db",
+				input:    "db2://admin:sec?ret@localhost",
+				expected: "db2://admin:******@localhost",
+				leaks:    []string{"sec", "ret", "sec?ret"},
+			},
+			{
+				name:     "Password with slash and no port/db",
+				input:    "db2://admin:sec/ret@localhost",
+				expected: "db2://admin:******@localhost",
+				leaks:    []string{"sec", "ret", "sec/ret"},
+			},
+			{
+				name:     "Password with hash and space in bad host",
+				input:    "db2://admin:sec#ret@bad host:50000/db",
+				expected: "db2://admin:******@bad host:50000/db",
+				leaks:    []string{"sec", "ret", "sec#ret"},
+			},
+			{
+				name:     "Password with ?, /, # and ! in bad host",
+				input:    "db2://admin:p?a/s#w@bad!host:50000/db",
+				expected: "db2://admin:******@bad!host:50000/db",
+				leaks:    []string{"p?a/s#w", "a/s#w"},
+			},
+			{
+				name:     "Query password param with spn containing @",
+				input:    "db2://user@localhost:50000/TESTDB?password=secret&spn=db2/a@B",
+				expected: "db2://user@localhost:50000/TESTDB?password=******&spn=db2/a@B",
+				leaks:    []string{"secret"},
+			},
+			{
+				name:     "Passwordless URL with spn containing @ is preserved",
+				input:    "db2://localhost:50000/TESTDB?spn=db2/server.corp.local@CORP.LOCAL",
+				expected: "db2://localhost:50000/TESTDB?spn=db2/server.corp.local@CORP.LOCAL",
+			},
+			{
+				name:     "Password with @ plus query spn containing @",
+				input:    "db2://user:SecretP@ss123@localhost:50000/TESTDB?spn=db2/server.corp.local@CORP.LOCAL",
+				expected: "db2://user:******@localhost:50000/TESTDB?spn=db2/server.corp.local@CORP.LOCAL",
+				leaks:    []string{"SecretP@ss123", "ss123"},
+			},
+			{
+				name:     "Quoted error string from url.Parse",
+				input:    `parse "db2://admin:p@ss#word@bad host:50000/db": invalid character " " in host name`,
+				expected: `parse "db2://admin:******@bad host:50000/db": invalid character " " in host name`,
+				leaks:    []string{"p@ss#word", "ss#word"},
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				got := redactDSNPassword(tc.input)
+				if got != tc.expected {
+					t.Fatalf("redactDSNPassword(%q)\n  got:  %q\n  want: %q", tc.input, got, tc.expected)
+				}
+				for _, leak := range tc.leaks {
+					if strings.Contains(got, leak) {
+						t.Fatalf("redactDSNPassword leaked secret fragment %q in %q", leak, got)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("ParseDSN parses valid edge URLs and never leaks passwords on failure", func(t *testing.T) {
+		// Valid URL with @ and / in password
+		cfg, err := ParseDSN("db2://admin:p@ss/123@localhost:50000/db?allow_plaintext_auth=true")
+		if err != nil {
+			t.Fatalf("unexpected error parsing p@ss/123: %v", err)
+		}
+		if cfg.Host != "localhost" || cfg.Port != 50000 || cfg.Database != "db" || cfg.Password != "p@ss/123" || cfg.User != "admin" {
+			t.Fatalf("unexpected parsed config: %+v, Password=%q", cfg, cfg.Password)
+		}
+
+		// Valid URL with @ and # in password
+		cfg2, err := ParseDSN("db2://admin:p@ss#word@localhost:50000/db?allow_plaintext_auth=true")
+		if err != nil {
+			t.Fatalf("unexpected error parsing p@ss#word: %v", err)
+		}
+		if cfg2.Host != "localhost" || cfg2.Port != 50000 || cfg2.Database != "db" || cfg2.Password != "p@ss#word" {
+			t.Fatalf("unexpected parsed config2: %+v", cfg2)
+		}
+
+		// Valid explicitly empty password
+		cfgEmpty, err := ParseDSN("db2://admin:@localhost:50000/testdb")
+		if err != nil {
+			t.Fatalf("unexpected error parsing empty password DSN: %v", err)
+		}
+		if cfgEmpty.User != "admin" || cfgEmpty.Password != "" {
+			t.Fatalf("expected user=admin password=\"\", got user=%q password=%q", cfgEmpty.User, cfgEmpty.Password)
+		}
+
+		// Invalid URLs that fail at authority/host/port/percent-encoding MUST contain "******" and never leak secrets
+		invalidEchoCases := []struct {
+			dsn   string
+			leaks []string
+		}{
+			{
+				dsn:   "db2://admin:sec#ret@bad host:50000/db",
+				leaks: []string{"sec", "ret", "sec#ret"},
+			},
+			{
+				dsn:   "db2://admin:p?a/s#w@bad!host:50000/db",
+				leaks: []string{"p?a/s#w", "a/s#w"},
+			},
+			{
+				dsn:   "db2://admin:sec?ret@localhost:badport/db",
+				leaks: []string{"sec", "ret", "sec?ret"},
+			},
+			{
+				dsn:   "db2://admin:p@ss:word@localhost:badport/testdb",
+				leaks: []string{"p@ss", "word", "p@ss:word"},
+			},
+			{
+				dsn:   "db2://admin:my%zzpass@localhost:50000/testdb",
+				leaks: []string{"my%zzpass", "my", "pass"},
+			},
+		}
+
+		for _, tc := range invalidEchoCases {
+			_, err := ParseDSN(tc.dsn)
+			if err == nil {
+				t.Fatalf("expected ParseDSN(%q) to fail, got nil", tc.dsn)
+			}
+			if !errors.Is(err, ErrInvalidConnectionStr) {
+				t.Fatalf("expected ErrInvalidConnectionStr for %q, got %v", tc.dsn, err)
+			}
+			errMsg := err.Error()
+			if !strings.Contains(errMsg, "******") {
+				t.Fatalf("expected redacted placeholder ****** in error for %q, got: %s", tc.dsn, errMsg)
+			}
+			for _, leak := range tc.leaks {
+				if strings.Contains(errMsg, leak) {
+					t.Fatalf("ParseDSN(%q) error leaked fragment %q: %s", tc.dsn, leak, errMsg)
+				}
+			}
+		}
+
+		// Invalid URL without database name must fail cleanly without leaking password fragments as port/host
+		for _, noDB := range []struct {
+			dsn   string
+			leaks []string
+		}{
+			{dsn: "db2://admin:sec?ret@localhost", leaks: []string{"sec", "ret", "sec?ret"}},
+			{dsn: "db2://admin:sec/ret@localhost", leaks: []string{"sec", "ret", "sec/ret"}},
+		} {
+			_, err := ParseDSN(noDB.dsn)
+			if err == nil {
+				t.Fatalf("expected ParseDSN(%q) to fail, got nil", noDB.dsn)
+			}
+			if !errors.Is(err, ErrInvalidConnectionStr) {
+				t.Fatalf("expected ErrInvalidConnectionStr for %q, got %v", noDB.dsn, err)
+			}
+			errMsg := err.Error()
+			for _, leak := range noDB.leaks {
+				if strings.Contains(errMsg, leak) {
+					t.Fatalf("ParseDSN(%q) error leaked fragment %q: %s", noDB.dsn, leak, errMsg)
+				}
+			}
+		}
+	})
+}
+
+func TestParseDSN_HostValidation(t *testing.T) {
+	if !isValidDSNHost("fe80::1%eth0") {
+		t.Fatal("expected valid IPv6 zone ID to pass isValidDSNHost")
+	}
+	if !isValidDSNHost("2001:db8::1") {
+		t.Fatal("expected IPv6 literal to pass isValidDSNHost")
+	}
+	for _, invalid := range []string{"1.2.3.4%eth0", "fe80::1%bad!host", "bad!host", "bad host", "notip%eth0"} {
+		if isValidDSNHost(invalid) {
+			t.Fatalf("expected isValidDSNHost(%q) to return false", invalid)
+		}
+	}
+
+	// End-to-end URL parse with valid IPv6 + zone ID
+	cfg, err := ParseDSN("db2://user:pass@[fe80::1%25eth0]:50000/TESTDB?allow_plaintext_auth=true")
+	if err != nil {
+		t.Fatalf("expected IPv6 zone ID URL to parse cleanly, got: %v", err)
+	}
+	if cfg.Host != "fe80::1%eth0" {
+		t.Fatalf("expected Host=%q, got %q", "fe80::1%eth0", cfg.Host)
+	}
+
+	// End-to-end rejection of invalid host with zone-like suffix
+	if _, err := ParseDSN("db2://user:pass@1.2.3.4%25eth0:50000/TESTDB?allow_plaintext_auth=true"); err == nil {
+		t.Fatal("expected ParseDSN to reject IPv4 with zone ID")
+	}
+}
+
+func TestParseDSN_DocAlignment_SEC07(t *testing.T) {
+	// Parameters erroneously documented previously MUST fail
+	if _, err := ParseDSN("db2://u:p@localhost:50000/DB?ssl_insecure=true"); err == nil || !strings.Contains(err.Error(), `unknown DSN parameter: "ssl_insecure"`) {
+		t.Fatalf("expected unknown DSN parameter error for ssl_insecure, got: %v", err)
+	}
+	if _, err := ParseDSN("db2://u:p@localhost:50000/DB?security=9"); err == nil || !strings.Contains(err.Error(), `unknown DSN parameter: "security"`) {
+		t.Fatalf("expected unknown DSN parameter error for security, got: %v", err)
+	}
+
+	// Defaults & documented parameters match actual runtime behavior
+	cfgDefault, err := ParseDSN("db2://u@localhost/DB")
+	if err != nil {
+		t.Fatalf("ParseDSN failed: %v", err)
+	}
+	if cfgDefault.UseSSL {
+		t.Fatal("expected db2:// default UseSSL=false")
+	}
+	if cfgDefault.Port != 50000 {
+		t.Fatalf("expected db2:// default Port=50000, got %d", cfgDefault.Port)
+	}
+	if cfgDefault.Timeout != 30*time.Second {
+		t.Fatalf("expected default Timeout=30s, got %v", cfgDefault.Timeout)
+	}
+	if cfgDefault.BlockSize != 65535 {
+		t.Fatalf("expected default BlockSize=65535, got %d", cfgDefault.BlockSize)
+	}
+
+	cfgSSL, err := ParseDSN("db2s://u:p@localhost/DB?security_mechanism=9&client_userid=appusr&client_corr_token=corr-1")
+	if err != nil {
+		t.Fatalf("ParseDSN(db2s://...) failed: %v", err)
+	}
+	if !cfgSSL.UseSSL || cfgSSL.Port != 50001 || cfgSSL.SecurityMechanism != 9 || cfgSSL.ClientUserid != "appusr" || cfgSSL.ClientCorrToken != "corr-1" {
+		t.Fatalf("unexpected db2s config: %+v", cfgSSL)
+	}
+}
