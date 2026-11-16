@@ -4,7 +4,7 @@ go 1.23
 
 require (
 	github.com/go-db2/go-db2 v0.0.0
-	github.com/ibmdb/go_ibm_db v0.5.2
+	github.com/ibmdb/go_ibm_db v0.5.4
 )
 
 require github.com/ibmruntimes/go-recordio/v2 v2.0.0-20240416213906-ae0ad556db70 // indirect
