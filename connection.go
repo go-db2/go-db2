@@ -505,7 +505,7 @@ func checkNamedValueCommon(nv *driver.NamedValue) error {
 	}
 
 	val := reflect.ValueOf(nv.Value)
-	if val.IsValid() && val.Kind() == reflect.Ptr && val.Type().Elem().Kind() == reflect.Array &&
+	if val.IsValid() && val.Kind() == reflect.Pointer && val.Type().Elem().Kind() == reflect.Array &&
 		val.Type().Elem().Elem().Kind() == reflect.Uint8 && val.Type().Elem().Elem().Bits() == 8 {
 		if val.IsNil() {
 			nv.Value = nil
@@ -526,7 +526,7 @@ func checkNamedValueCommon(nv *driver.NamedValue) error {
 }
 
 func isFixedByteArrayType(t reflect.Type) bool {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	return t.Kind() == reflect.Array && t.Elem().Kind() == reflect.Uint8 && t.Elem().Bits() == 8
@@ -538,7 +538,7 @@ func copyFixedByteArray(v reflect.Value) ([]byte, bool) {
 	if !v.IsValid() {
 		return nil, false
 	}
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		elemType := v.Type().Elem()
 		if elemType.Kind() != reflect.Array || elemType.Elem().Kind() != reflect.Uint8 || elemType.Elem().Bits() != 8 {
 			return nil, false

@@ -117,14 +117,15 @@ func TestSessionMockHandshake(t *testing.T) {
 			serverErrChan <- err
 			return
 		}
-		if cp == CodePointEXCSAT {
+		switch cp {
+		case CodePointEXCSAT:
 			excsatRdObj := PackDDMObject(CodePointEXCSATRD, nil)
 			excsatRdHdr := BuildDSSHeader(len(excsatRdObj), DSSTypeReply, false, false, false, 1)
 			if _, err := conn.Write(append(excsatRdHdr, excsatRdObj...)); err != nil {
 				serverErrChan <- err
 				return
 			}
-		} else if cp == CodePointRDBCMM {
+		case CodePointRDBCMM:
 			if _, err := conn.Write(append(sqlcardHdr, sqlcardObj...)); err != nil {
 				serverErrChan <- err
 				return

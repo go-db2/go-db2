@@ -149,7 +149,7 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 			outIndices[i] = true
 			if v.Dest != nil {
 				val := reflect.ValueOf(v.Dest)
-				if val.Kind() == reflect.Ptr && !val.IsNil() {
+				if val.Kind() == reflect.Pointer && !val.IsNil() {
 					rawArgs[i] = val.Elem().Interface()
 				} else {
 					rawArgs[i] = 0
@@ -166,7 +166,7 @@ func (s *Stmt) execContextLocked(ctx context.Context, args []driver.NamedValue) 
 				outIndices[i] = true
 				if v.Dest != nil {
 					val := reflect.ValueOf(v.Dest)
-					if val.Kind() == reflect.Ptr && !val.IsNil() {
+					if val.Kind() == reflect.Pointer && !val.IsNil() {
 						rawArgs[i] = val.Elem().Interface()
 					} else {
 						rawArgs[i] = 0
@@ -326,7 +326,7 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 				outTargets = append(outTargets, outInfo{index: i, dest: v.Dest})
 				if v.Dest != nil {
 					val := reflect.ValueOf(v.Dest)
-					if val.Kind() == reflect.Ptr && !val.IsNil() {
+					if val.Kind() == reflect.Pointer && !val.IsNil() {
 						rawArgs[i] = val.Elem().Interface()
 					}
 				}
@@ -335,7 +335,7 @@ func (s *Stmt) queryContextLocked(ctx context.Context, args []driver.NamedValue)
 					outTargets = append(outTargets, outInfo{index: i, dest: v.Dest})
 					if v.Dest != nil {
 						val := reflect.ValueOf(v.Dest)
-						if val.Kind() == reflect.Ptr && !val.IsNil() {
+						if val.Kind() == reflect.Pointer && !val.IsNil() {
 							rawArgs[i] = val.Elem().Interface()
 						}
 					}
@@ -562,7 +562,7 @@ func rewriteBinaryParamsMapped(query string, paramCols []drda.ColumnDescription,
 				c := paramCols[paramIdx]
 				if !outIndices[paramIdx] && (codec.SQLType(c.SQLType) == codec.SQLTypeBlob || codec.SQLType(c.SQLType) == codec.SQLTypeNBlob) {
 					if b, ok := args[paramIdx].([]byte); ok && len(b) > 0 && len(b) <= 16383 {
-						rewrittenQuery.WriteString(fmt.Sprintf("BLOB(X'%x')", b))
+						_, _ = fmt.Fprintf(&rewrittenQuery, "BLOB(X'%x')", b)
 						paramIdx++
 						continue
 					}
@@ -589,7 +589,7 @@ func assignOutParam(dest any, val any) error {
 		return nil
 	}
 	destVal := reflect.ValueOf(dest)
-	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
+	if destVal.Kind() != reflect.Pointer || destVal.IsNil() {
 		return fmt.Errorf("db2: sql.Out destination must be a non-nil pointer, got %T", dest)
 	}
 	elem := destVal.Elem()
@@ -659,7 +659,7 @@ func getSliceLen(arg any) (int, bool) {
 		return len(v), true
 	default:
 		val := reflect.ValueOf(arg)
-		if val.Kind() == reflect.Ptr {
+		if val.Kind() == reflect.Pointer {
 			if elem := val.Type().Elem(); elem.Kind() == reflect.Array && elem.Elem().Kind() == reflect.Uint8 {
 				return 0, false
 			}

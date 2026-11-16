@@ -131,22 +131,23 @@ func main() {
 		fmt.Printf("   [ID: %d] Title: '%-20s' | BLOB: %d bytes | CLOB: %s\n", id, title, len(blobVal), clobStr)
 
 		// Validações de integridade
-		if id == 1 {
+		switch id {
+		case 1:
 			if !bytes.Equal(blobVal, blobSample1) {
 				log.Fatalf("❌ Erro de integridade: BLOB do ID 1 difere dos bytes inseridos!")
 			}
 			if clobVal == nil || *clobVal != clobSample1 {
 				log.Fatalf("❌ Erro de integridade: CLOB do ID 1 difere do texto inserido!")
 			}
-		} else if id == 2 {
+		case 2:
 			if !bytes.Equal(blobVal, blobSample2) {
 				log.Fatalf("❌ Erro de integridade: BLOB do ID 2 difere dos bytes inseridos!")
 			}
 			if clobVal == nil || *clobVal != clobSample2 {
 				log.Fatalf("❌ Erro de integridade: CLOB do ID 2 difere do texto inserido!")
 			}
-		} else if id == 3 {
-			if blobVal != nil && len(blobVal) > 0 {
+		case 3:
+			if len(blobVal) > 0 {
 				log.Fatalf("❌ Esperado BLOB NULL para ID 3, obtido %d bytes", len(blobVal))
 			}
 			if clobVal != nil {

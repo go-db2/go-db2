@@ -213,7 +213,8 @@ func TestSession_ExecBatchWithParams_Atomicity(t *testing.T) {
 					hdr = h
 				}
 
-				if cp == CodePointEXCSQLSTT {
+				switch cp {
+				case CodePointEXCSQLSTT:
 					rowCount++
 					if rowCount == 1 {
 						// Row 1 success
@@ -222,11 +223,11 @@ func TestSession_ExecBatchWithParams_Atomicity(t *testing.T) {
 						// Row 2 error (e.g., -803 unique constraint violation)
 						_, _ = server.Write(replyChain(sqlcard(-803, "23505")))
 					}
-				} else if cp == CodePointRDBRLLBCK {
+				case CodePointRDBRLLBCK:
 					rollbackSeen <- true
 					_, _ = server.Write(replyChain(sqlcard(0, "00000")))
 					return
-				} else if cp == CodePointRDBCMM {
+				case CodePointRDBCMM:
 					t.Errorf("unexpected RDBCMM received during failing batch!")
 					return
 				}
@@ -274,10 +275,11 @@ func TestSession_ExecBatchWithParams_Atomicity(t *testing.T) {
 					hdr = h
 				}
 
-				if cp == CodePointEXCSQLSTT {
+				switch cp {
+				case CodePointEXCSQLSTT:
 					// Return success for each row
 					_, _ = server.Write(replyChain(sqlcard(0, "00000")))
-				} else if cp == CodePointRDBCMM {
+				case CodePointRDBCMM:
 					commitSeen <- true
 					_, _ = server.Write(replyChain(sqlcard(0, "00000")))
 					return

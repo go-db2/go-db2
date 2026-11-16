@@ -62,7 +62,7 @@ END`
 
 	var sumVal int
 	var prodVal int
-	var msgVal string = "Operação Alpha"
+	var msgVal = "Operação Alpha"
 
 	_, err = stmt.ExecContext(ctx,
 		15,
@@ -88,7 +88,7 @@ END`
 	fmt.Println("\n4. Executando segunda chamada com valores diferentes...")
 	var sumVal2 int
 	var prodVal2 int
-	var msgVal2 string = "Cálculo Beta"
+	var msgVal2 = "Cálculo Beta"
 
 	_, err = stmt.ExecContext(ctx,
 		100,

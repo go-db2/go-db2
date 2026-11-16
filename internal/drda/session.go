@@ -913,7 +913,8 @@ func (s *Session) PrepareAndDescribe(ctx context.Context, sql string, pkgsn uint
 
 	var outputCols, paramCols []ColumnDescription
 	for _, r := range replies {
-		if r.CodePoint == CodePointSQLDARD {
+		switch r.CodePoint {
+		case CodePointSQLDARD:
 			cols, err := ParseSQLDARD(r.Data, s.endian)
 			if err != nil {
 				return nil, nil, err
@@ -923,7 +924,7 @@ func (s *Session) PrepareAndDescribe(ctx context.Context, sql string, pkgsn uint
 			} else {
 				outputCols = cols
 			}
-		} else if r.CodePoint == CodePointSQLCARD {
+		case CodePointSQLCARD:
 			code, state, msg, _, parseErr := ParseSQLCARD(r.Data, s.endian)
 			if parseErr != nil {
 				return nil, nil, parseErr
@@ -931,7 +932,7 @@ func (s *Session) PrepareAndDescribe(ctx context.Context, sql string, pkgsn uint
 			if code < 0 {
 				return nil, nil, NewError(code, state, msg, nil)
 			}
-		} else if r.CodePoint == CodePointSQLERRRM {
+		case CodePointSQLERRRM:
 			return nil, nil, parseSQLERRRM(r.Data, s.endian)
 		}
 	}
@@ -1022,12 +1023,13 @@ func (s *Session) ExecWithParams(ctx context.Context, pkgsn uint16, paramCols []
 	var affectedRows int64
 	var outValues []any
 	for _, r := range replies {
-		if r.CodePoint == CodePointSQLDTARD {
+		switch r.CodePoint {
+		case CodePointSQLDTARD:
 			vals, parseErr := codec.ParseSQLDTARD(r.Data, s.endian)
 			if parseErr == nil && len(vals) > 0 {
 				outValues = vals
 			}
-		} else if r.CodePoint == CodePointSQLCARD {
+		case CodePointSQLCARD:
 			code, state, msg, rows, parseErr := ParseSQLCARD(r.Data, s.endian)
 			if parseErr != nil {
 				return 0, nil, parseErr
@@ -1036,7 +1038,7 @@ func (s *Session) ExecWithParams(ctx context.Context, pkgsn uint16, paramCols []
 				return 0, nil, NewError(code, state, msg, nil)
 			}
 			affectedRows += rows
-		} else if r.CodePoint == CodePointSQLERRRM {
+		case CodePointSQLERRRM:
 			return 0, nil, parseSQLERRRM(r.Data, s.endian)
 		}
 	}

@@ -109,13 +109,14 @@ func TestDatabaseSqlOpenAndPing(t *testing.T) {
 					if err != nil {
 						return
 					}
-					if cp == drda.CodePointEXCSAT {
+					switch cp {
+					case drda.CodePointEXCSAT:
 						excsatRdObj := drda.PackDDMObject(drda.CodePointEXCSATRD, nil)
 						excsatRdHdr := drda.BuildDSSHeader(len(excsatRdObj), drda.DSSTypeReply, false, false, false, 1)
 						if _, err := c.Write(append(excsatRdHdr, excsatRdObj...)); err != nil {
 							return
 						}
-					} else if cp == drda.CodePointRDBCMM {
+					case drda.CodePointRDBCMM:
 						if _, err := c.Write(append(sqlcardHdr, sqlcardObj...)); err != nil {
 							return
 						}

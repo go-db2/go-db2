@@ -593,9 +593,10 @@ func ParseSQLDTARD(data []byte, endian binary.ByteOrder) ([]any, error) {
 			}
 		}
 
-		if codePoint == 0x0010 { // FDODSC
+		switch codePoint {
+		case 0x0010: // FDODSC
 			dscBytes = payload
-		} else if codePoint == 0x147A { // FDODTA
+		case 0x147A: // FDODTA
 			dtaBytes = payload
 		}
 	}

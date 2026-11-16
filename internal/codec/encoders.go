@@ -494,10 +494,11 @@ func appendPackedDecimalParam(dst []byte, val any, prec, scale int) ([]byte, err
 		if len(str) == 0 {
 			return dst, fmt.Errorf("db2: invalid empty string for DECIMAL(%d,%d)", prec, scale)
 		}
-		if str[0] == '-' {
+		switch str[0] {
+		case '-':
 			negative = true
 			str = str[1:]
-		} else if str[0] == '+' {
+		case '+':
 			str = str[1:]
 		}
 		if dotIdx := strings.IndexByte(str, '.'); dotIdx >= 0 {
