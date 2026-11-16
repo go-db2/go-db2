@@ -442,6 +442,11 @@ func DecodePackedDecimal(b []byte, scale int) string {
 	if len(b) == 0 {
 		return "0"
 	}
+	if scale < -1024 {
+		scale = -1024
+	} else if scale > 1024 {
+		scale = 1024
+	}
 
 	var stackDigits [64]byte
 	var digits []byte
@@ -494,6 +499,9 @@ func DecodePackedDecimal(b []byte, scale int) string {
 		outLen = negLen + 2 + scale
 	} else {
 		outLen = negLen + numSig + 1
+	}
+	if outLen < 0 {
+		return "0"
 	}
 
 	// Optimization: Use a stack buffer for output bytes when outLen <= 64 to avoid extra heap allocation.

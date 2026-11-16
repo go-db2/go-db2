@@ -876,3 +876,140 @@ func TestParseDSN_DocAlignment_SEC07(t *testing.T) {
 		t.Fatalf("unexpected db2s config: %+v", cfgSSL)
 	}
 }
+
+func TestParseDSN_ConnTimeout(t *testing.T) {
+	t.Run("ValidURLAndKeyValue", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			dsn         string
+			wantTimeout time.Duration
+		}{
+			{
+				name:        "URL duration",
+				dsn:         "db2://u@localhost/DB?conn_timeout=10s",
+				wantTimeout: 10 * time.Second,
+			},
+			{
+				name:        "URL integer seconds",
+				dsn:         "db2://u@localhost/DB?conn_timeout=15",
+				wantTimeout: 15 * time.Second,
+			},
+			{
+				name:        "Key-Value duration",
+				dsn:         "host=localhost;database=DB;user=u;conn_timeout=12s",
+				wantTimeout: 12 * time.Second,
+			},
+			{
+				name:        "Key-Value integer seconds",
+				dsn:         "host=localhost;database=DB;user=u;conn_timeout=20",
+				wantTimeout: 20 * time.Second,
+			},
+			{
+				name:        "Key-Value last parameter wins (timeout after conn_timeout)",
+				dsn:         "host=localhost;database=DB;user=u;conn_timeout=10s;timeout=25s",
+				wantTimeout: 25 * time.Second,
+			},
+			{
+				name:        "Key-Value last parameter wins (conn_timeout after timeout)",
+				dsn:         "host=localhost;database=DB;user=u;timeout=25s;conn_timeout=10s",
+				wantTimeout: 10 * time.Second,
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg, err := ParseDSN(tc.dsn)
+				if err != nil {
+					t.Fatalf("ParseDSN(%q) unexpected error: %v", tc.dsn, err)
+				}
+				if cfg.Timeout != tc.wantTimeout {
+					t.Errorf("Timeout = %v, want %v", cfg.Timeout, tc.wantTimeout)
+				}
+			})
+		}
+	})
+
+	t.Run("InvalidValuesAndPasswordRedaction", func(t *testing.T) {
+		const secretPass = "SecretPass123!"
+		cases := []struct {
+			name string
+			dsn  string
+		}{
+			{
+				name: "URL negative duration",
+				dsn:  "db2://u:" + secretPass + "@localhost/DB?ssl=true&conn_timeout=-1s",
+			},
+			{
+				name: "URL non-numeric duration",
+				dsn:  "db2://u:" + secretPass + "@localhost/DB?ssl=true&conn_timeout=abc",
+			},
+			{
+				name: "KV negative duration",
+				dsn:  "host=localhost;database=DB;user=u;password=" + secretPass + ";ssl=true;conn_timeout=-1s",
+			},
+			{
+				name: "KV non-numeric duration",
+				dsn:  "host=localhost;database=DB;user=u;password=" + secretPass + ";ssl=true;conn_timeout=abc",
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := ParseDSN(tc.dsn)
+				if err == nil {
+					t.Fatalf("expected error for %s, got nil", tc.name)
+				}
+				if !strings.Contains(err.Error(), "invalid timeout value") {
+					t.Errorf("expected invalid timeout value error, got: %v", err)
+				}
+				if strings.Contains(err.Error(), secretPass) {
+					t.Errorf("error leaked password: %v", err)
+				}
+			})
+		}
+	})
+}
+
+func TestParseDSN_NoPasswordLeakWhenNotStructural(t *testing.T) {
+	const secretPass = "SecretPass123"
+	cases := []struct {
+		name string
+		dsn  string
+	}{
+		{
+			name: "missing host after @",
+			dsn:  "db2://user:" + secretPass + "@",
+		},
+		{
+			name: "missing host with query after @",
+			dsn:  "db2://user:" + secretPass + "@?ssl=true",
+		},
+		{
+			name: "equals sign and invalid port in authority",
+			dsn:  "db2://user:" + secretPass + "@a=b:badport",
+		},
+		{
+			name: "double @ and invalid port",
+			dsn:  "db2://user:" + secretPass + "@a@b:badport",
+		},
+		{
+			name: "equals sign in host with valid port",
+			dsn:  "db2://user:" + secretPass + "@a=b:50000/DB",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseDSN(tc.dsn)
+			if err == nil {
+				t.Fatalf("expected ParseDSN(%q) to fail, got nil", tc.dsn)
+			}
+			if !errors.Is(err, ErrInvalidConnectionStr) {
+				t.Fatalf("expected ErrInvalidConnectionStr, got: %v", err)
+			}
+			if strings.Contains(err.Error(), secretPass) {
+				t.Fatalf("ParseDSN(%q) leaked password in error: %s", tc.dsn, err.Error())
+			}
+		})
+	}
+}

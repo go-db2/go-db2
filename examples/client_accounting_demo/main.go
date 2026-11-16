@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-db2/go-db2"
@@ -14,12 +15,28 @@ import (
 func main() {
 	fmt.Println("1. Conectando ao IBM Db2 com registradores de Client Workstation & Accounting via DSN...")
 
-	dsn := "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true" +
-		"&client_applname=orders-microservice" +
+	dsn := os.Getenv("DB2_DSN")
+	if dsn == "" {
+		dsn = "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true"
+	}
+	clientParams := "client_applname=orders-microservice" +
 		"&client_wrkstnname=k8s-node-worker-01" +
 		"&client_userid=user_app_77" +
 		"&client_acctng=dept_ecommerce" +
 		"&client_corr_token=trace-initial-001"
+	if strings.HasPrefix(dsn, "db2://") || strings.HasPrefix(dsn, "db2s://") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&" + clientParams
+		} else {
+			dsn += "?" + clientParams
+		}
+	} else {
+		kvParams := strings.ReplaceAll(clientParams, "&", ";") + ";"
+		if !strings.HasSuffix(dsn, ";") {
+			dsn += ";"
+		}
+		dsn += kvParams
+	}
 
 	db, err := sql.Open("db2", dsn)
 	if err != nil {

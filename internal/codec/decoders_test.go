@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"math"
 	"testing"
 	"time"
 )
@@ -132,6 +133,31 @@ func TestDecodePackedDecimal_NegativeScale(t *testing.T) {
 	resZero := DecodePackedDecimal(bZero, -2)
 	if resZero != "0" {
 		t.Errorf("DecodePackedDecimal zero with scale -2 = %q, want %q", resZero, "0")
+	}
+}
+
+func TestDecodePackedDecimal_ExtremeScaleClamping(t *testing.T) {
+	pos := []byte{0x12, 0x3C}
+	if got := DecodePackedDecimal(pos, math.MinInt); len(got) != 3+1024 || got[:3] != "123" {
+		t.Fatalf("DecodePackedDecimal(pos, math.MinInt) unexpected len=%d prefix=%q", len(got), got[:min(len(got), 10)])
+	}
+	if got := DecodePackedDecimal(pos, math.MaxInt); len(got) != 2+1024 || got[:2] != "0." || got[len(got)-3:] != "123" {
+		t.Fatalf("DecodePackedDecimal(pos, math.MaxInt) unexpected len=%d", len(got))
+	}
+
+	neg := []byte{0x45, 0x6D}
+	if got := DecodePackedDecimal(neg, math.MinInt); len(got) != 1+3+1024 || got[:4] != "-456" {
+		t.Fatalf("DecodePackedDecimal(neg, math.MinInt) unexpected len=%d prefix=%q", len(got), got[:min(len(got), 10)])
+	}
+	if got := DecodePackedDecimal(neg, math.MaxInt); len(got) != 1+2+1024 || got[:3] != "-0." || got[len(got)-3:] != "456" {
+		t.Fatalf("DecodePackedDecimal(neg, math.MaxInt) unexpected len=%d", len(got))
+	}
+
+	if got := DecodePackedDecimal([]byte{0x00, 0x0C}, math.MinInt); got != "0" {
+		t.Fatalf("DecodePackedDecimal(0, math.MinInt) = %q, want %q", got, "0")
+	}
+	if got := DecodePackedDecimal([]byte{0x00, 0x0D}, math.MinInt); got != "-0" {
+		t.Fatalf("DecodePackedDecimal(-0, math.MinInt) = %q, want %q", got, "-0")
 	}
 }
 

@@ -23,7 +23,7 @@
 - **100% Pure Go (`CGO_ENABLED=0`)**: Zero CGO, zero `unsafe`, and zero external C library dependencies. No need to install IBM's heavy `clidriver` or ODBC components.
 - **Trivial Cross-Compilation & Portability**: Build small, static binaries for Linux (x86_64, ARM64), macOS (including Apple Silicon M1/M2/M3/M4), Windows, and lightweight container base images (`scratch`, `distroless`, Alpine Linux).
 - **Standard `database/sql` & Ecosystem Ready**: Native support for Go's connection pooling, explicit transactions with ACID isolation, contexts/timeouts/cancellations, and seamless compatibility with ORMs and tools such as `sqlx`, `GORM`, `sqlc`, and `golang-migrate`.
-- **Exceptional Performance & Low Memory Footprint**: Up to **31x faster** for single-row queries, **326x faster** on bulk row scans, **1.257x faster** for prepared statement inserts, and up to **770x lower memory allocation** than IBM's CGO driver.
+- **Low-Allocation Wire Engine**: Stack buffers, pre-computed EBCDIC CP500 and UTF-16BE lookup tables, zero-alloc `ColumnTypeScanType`, and configurable DRDA `QRYBLKSZ` streaming minimize GC pressure.
 
 ---
 
@@ -31,30 +31,30 @@
 
 | Feature | Status | Description |
 | :--- | :---: | :--- |
-| **Pure Go Engine** | Supported | 100% Go implementation with native DRDA/DDM binary protocol parser |
-| **Authentication & Handshake** | Supported | SECMEC 3 (Plain), SECMEC 9 (Diffie-Hellman + DES), EBCDIC CP500 exchange |
-| **TLS/SSL & mTLS Encryption** | Supported | Native TLS 1.2+ (`crypto/tls`) with custom Root CAs and client certificate/key authentication |
-| **`database/sql` Registration** | Supported | `sql.Register("db2", ...)` with standard URL and Key-Value DSN parsers |
-| **Connection Pooling & Liveness** | Supported | `db.PingContext()`, `driver.Connector`, transparent pool lifecycle management |
-| **Transactions & ACID Isolation** | Supported | `db.BeginTx()`, `tx.Commit()`, `tx.Rollback()` with strict auto-commit management |
+| **Pure Go Engine** | Supported | 100% Go implementation (`CGO_ENABLED=0`, zero external dependencies) with native DRDA/DDM binary protocol parser |
+| **Authentication & Handshake** | Supported | SECMEC 3 (Plain, requires TLS or `allow_plaintext_auth=true`), SECMEC 4 (User ID only), SECMEC 9 (Diffie-Hellman + DES), EBCDIC CP500 exchange |
+| **TLS/SSL & mTLS Encryption** | Supported | Native TLS 1.2+ (`crypto/tls`) with strict verification, `db2s://`, custom Root CAs, mTLS, and in-memory `Config.TLSConfig` |
+| **`database/sql` Registration** | Supported | `sql.Register("db2", ...)` (`DriverContext`, `NewConnector`) with URL (`db2://`, `db2s://`) and Key-Value DSN parsers |
+| **Connection Pooling & Liveness** | Supported | `db.PingContext()` (via `EXCSAT`), `driver.Validator`, and `driver.SessionResetter` for safe pool lifecycle management |
+| **Transactions & ACID Isolation** | Supported | `db.BeginTx()`, `tx.Commit()`, `tx.Rollback()` supporting `UR`, `CS`, `RS`, and `RR` isolation levels |
 | **DDL & DML Execution** | Supported | `db.ExecContext()` for `CREATE`, `DROP`, `INSERT`, `UPDATE`, `DELETE` |
-| **Query & Streaming Rows** | Supported | `db.QueryContext()`, `db.QueryRowContext()`, `rows.Scan()`, `rows.Columns()` |
-| **Type Conversions & NULLs** | Supported | Integers, Varchars, Floats, Dates, Timestamps, Decimals, Booleans, `sql.Null*` |
-| **Prepared Statements & Params** | Supported | Positional `?` parameter binding (`FDODSC`, `FDODTA`, `SQLDTA`) with single roundtrip reuse |
-| **LOBs (BLOB / CLOB / DBCLOB)** | Supported | Large binary and text streaming via DRDA `EXTDTA` (`0x146C`) packet collection |
+| **Query & Streaming Rows** | Supported | On-demand cursor streaming via DRDA `OPNQRY` / `CNTQRY` / `CLSQRY` (`QueryStream`) with row spanning |
+| **Type Conversions & NULLs** | Supported | Integers, Varchars, Floats, Dates, Timestamps, Decimals, Booleans, `sql.Null*`, `[16]byte`, `NamedValueChecker` (`driver.ErrSkip`) |
+| **Prepared Statements & Params** | Supported | Positional `?` binding (`FDODSC`, `FDODTA`, `SQLDTA`) with dedicated DRDA section allocation (`sectionManager`, up to 499 concurrent prepared statements per connection — sections `2..500`, section `1` reserved for direct commands) |
+| **LOBs (BLOB / CLOB / DBCLOB)** | Supported | Large binary and text streaming (`[]byte`, `string`, `io.Reader`) via DRDA `EXTDTA` (`0x146C`) with DoS frame/chain bounds |
 | **Stored Procedures & `sql.Out`** | Supported | `CALL procedure(?, ...)` supporting `IN`, `OUT`, and `INOUT` parameters via `SQLDTARD` |
 | **Multi-Result Sets** | Supported | Full `driver.RowsNextResultSet` implementation for procedures returning multiple cursors |
-| **`Result.LastInsertId()`** | Unsupported (DRDA) | Retorna erro explícito orientando uso idiomático de `SELECT ... FROM FINAL TABLE (INSERT ...)` |
+| **`Result.LastInsertId()`** | Unsupported (DRDA) | Returns explicit error directing callers to `SELECT ... FROM FINAL TABLE (INSERT ...)` |
 | **Extended Data Types** | Supported | `DECFLOAT(16/34)` (IEEE 754-2008 DPD), `XML` documents, `TIMESTAMP WITH TIME ZONE` |
-| **Graphic & DBCS Types** | Supported | `GRAPHIC`, `VARGRAPHIC`, `LONG VARGRAPHIC`, `DBCLOB`, `CODEUNITS32` |
-| **Batch / Array Parameter DML** | Supported | High-throughput bulk operations with primitive slices (`[]int`, `[]string`, `[]float64`) |
+| **Graphic & DBCS Types** | Supported | `GRAPHIC`, `VARGRAPHIC`, `LONG VARGRAPHIC`, `DBCLOB` (`UTF-16BE` codec) |
+| **Batch / Array Parameter DML** | Supported | Atomic transactional multi-row execution (`ExecBatchWithParams`) using primitive slices (`[]int`, `[]string`, `[]float64`, etc.) with automatic rollback on failure |
 | **Admin DB Management & APIs** | Supported | `CreateDB()`, `DropDB()`, and `ExecAdminCmd()` (`SYSPROC.ADMIN_CMD`) |
-| **Kerberos SSO & GSSAPI Auth** | Supported | Network directory authentication (`SECMEC 7/11`) via `ccache`, `keytab`, or domain credentials |
-| **Trusted Context & User Switching** | Supported | Microsecond user/tenant identity transition (`SwitchUser`, `WithUser`) on pooled connections |
-| **Client Workstation & Accounting** | Supported | Workload identification & APM registers (`CLIENT APPLNAME`, `WRKSTNNAME`, `USERID`, `ACCTNG`) |
-| **Adaptive Block Fetching** | Supported | Configurable buffer block size via DSN (`?block_size=131072`) with DRDA `QRYBLKSZ` |
-| **Query Cancellation (`SQLINTR`)** | Supported | Asynchronous cancellation signal and timeout aborts via DRDA `SQLINTR` (`0x2007`) |
-| **Security Hardening & Redaction** | Supported | Sensitive fields redacted in `fmt.Stringer`, regex identifier validation, zero data races |
+| **Kerberos SSO & GSSAPI Auth** | Disabled (Runtime) | `ParseDSN` accepts Kerberos parameters and `internal/auth` implements keytab/GSSAPI token helpers, while runtime `SECMEC 7/11` exchange is disabled (`Session.handshake` / `AcquireKerberosToken`) until a compliant RFC 4120 `AP-REQ` subpackage is integrated |
+| **Trusted Context & User Switching** | Supported | Session user identity transition (`SwitchUser`, `WithUser`) on pooled/dedicated connections |
+| **Client Workstation & Accounting** | Supported | Workload identification & APM registers (`CURRENT CLIENT_APPLNAME`, `WRKSTNNAME`, `USERID`, `ACCTNG`, `CORR_TOKEN`) |
+| **Adaptive Block Fetching** | Supported | Configurable DRDA `QRYBLKSZ` block size (`1024..1048576` bytes, default `65535`) via DSN (`?block_size=131072`) |
+| **Context Cancellation & Timeouts** | Supported | Implemented via `Session.watch(ctx)` with `context.AfterFunc`, expiring the socket deadline (`SetDeadline(time.Now())`) and marking the session `broken` for safe eviction by `database/sql` (does not use `SQLINTR` on a separate connection) |
+| **Security Hardening & Redaction** | Supported | Sensitive fields redacted in `fmt.Stringer`/`fmt.GoStringer` and DSN errors, strict DSN validation, identifier validation, zero data races |
 
 ---
 
@@ -70,41 +70,58 @@ Requires Go **1.22** or higher.
 
 ## Connection String & DSN Reference
 
-`go-db2` supports both standard **URL format** and **Key-Value (ODBC-style) format**.
+`go-db2` supports both standard **URL format** (`db2://` and `db2s://`) and **Key-Value (ODBC-style) format**.
 
 ### 1. URL Format (Recommended)
 ```text
 db2://[username:password@]host[:port]/database[?param1=value1&param2=value2]
+db2s://[username:password@]host[:port]/database[?param1=value1&param2=value2]
 ```
-*Example:*
+- `db2://` defaults to `ssl=false` and port `50000`.
+- `db2s://` enforces `ssl=true` and defaults to port `50001`.
+
+*Examples:*
 ```text
-db2://db2inst1:SecretPass123@127.0.0.1:50000/TESTDB?ssl=false
+db2://db2inst1:SecretPass123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true
+db2s://db2inst1:SecretPass123@127.0.0.1:50001/TESTDB?ssl_root_ca=/path/to/ca.pem
 ```
 
 ### 2. Key-Value Format
 ```text
-host=127.0.0.1;port=50000;database=TESTDB;uid=db2inst1;pwd=SecretPass123;ssl=false;
+host=127.0.0.1;port=50000;database=TESTDB;uid=db2inst1;pwd=SecretPass123;ssl=false;allow_plaintext_auth=true;
 ```
 
 ### Supported DSN Parameters
 
-| Parameter | Type | Default | Description |
-| :--- | :---: | :---: | :--- |
-| `ssl` / `tls` | `bool` | `false` | Enable TLS/SSL encrypted connection (enforces TLS 1.2+). |
-| `ssl_ca` | `string` | `""` | Path to custom Root CA certificate file (PEM format). |
-| `ssl_cert` | `string` | `""` | Path to client certificate file for mTLS authentication. |
-| `ssl_key` | `string` | `""` | Path to client private key file for mTLS authentication. |
-| `security_mechanism` / `secmec` | `string` | `plain` | Authentication mode: `plain` (SECMEC 3), `encrypted-password` (SECMEC 9 - DH+DES), or `kerberos` (SECMEC 7/11). |
-| `spn` | `string` | `""` | Kerberos Service Principal Name (e.g. `db2/server.corp.local@CORP.LOCAL`). |
-| `krb5_keytab` | `string` | `""` | Path to Kerberos `.keytab` file for background authentication. |
-| `krb5_ccache` | `string` | `""` | Path to Kerberos credential cache (`/tmp/krb5cc_...`). |
-| `client_applname` | `string` | `""` | Initial `CURRENT CLIENT_APPLNAME` special register for APM/tracing. |
-| `client_wrkstnname` | `string` | `""` | Initial `CURRENT CLIENT_WRKSTNNAME` special register (host/pod name). |
-| `client_userid` | `string` | `""` | Initial `CURRENT CLIENT_USERID` special register. |
-| `client_acctng` | `string` | `""` | Initial `CURRENT CLIENT_ACCTNG` accounting string. |
-| `block_size` | `int` | `32768` | DRDA `QRYBLKSZ` buffer block size in bytes (e.g. `65536`, `131072`). |
-| `timeout` | `duration`| `15s` | Query execution and socket read/write timeout (e.g. `30s`, `1m`). |
-| `conn_timeout` | `duration`| `10s` | Initial TCP connect and handshake timeout. |
+| Parameter | Aliases | Type | Default | Description |
+| :--- | :--- | :---: | :---: | :--- |
+| `host` | `server`, `hostname` | `string` | `"localhost"` | Db2 server hostname or IP (`host:port` supported). |
+| `port` | — | `int` | `50000` (`50001` with SSL) | TCP port (`1..65535`). Explicit port is preserved when `ssl=true`. |
+| `database` | `dbname`, `db` | `string` | `""` | Target relational database name (required; enforced in URL format). |
+| `user` | `uid`, `username` | `string` | `""` | Authentication username. |
+| `password` | `pwd` | `string` | `""` | Authentication password. |
+| `ssl` | `use_ssl`, `usessl`, `tls` | `bool` | `false` (`true` for `db2s://`) | Enable TLS 1.2+ with strict server verification (`InsecureSkipVerify: false`). Automatically enabled by `db2s://` or `ssl_root_ca`/`ssl_client_cert_path`/`ssl_client_key_path`. Accepts `true`/`1`/`yes` or `false`/`0`/`no`. |
+| `ssl_root_ca` | `ssl_ca`, `sslrootcapath`, `ssl_ca_path` | `string` | `""` | Path to PEM Root CA file (enables `ssl=true`). |
+| `ssl_client_cert_path` | `ssl_client_cert`, `sslcert`, `cert` | `string` | `""` | Path to PEM client certificate for mTLS (enables `ssl=true`). |
+| `ssl_client_key_path` | `ssl_client_key`, `sslkey`, `key` | `string` | `""` | Path to PEM client private key for mTLS (enables `ssl=true`). |
+| `allow_plaintext_auth` | — | `bool` | `false` | Explicitly allow plaintext password auth (`SECMEC 3`) without TLS. Accepts `true`/`1`/`yes` or `false`/`0`/`no`. |
+| `security_mechanism` | `secmec`, `auth_mechanism`, `auth` | `string` | `""` (`SECMEC 3` at runtime) | `plain`/`plaintext`/`secmec3`/`3` (SECMEC 3), `encrypted-password`/`encrypted_password`/`dh_encrypted_password`/`secmec9`/`9` (SECMEC 9), `user_only`/`secmec4`/`4` (SECMEC 4, no password), `kerberos`/`gssapi`/`7` and `encrypted_kerberos`/`11` (disabled at runtime). |
+| `spn` | `service_principal`, `server_principal` | `string` | `""` | Kerberos Service Principal Name. |
+| `realm` | `krb5_realm` | `string` | `""` | Kerberos realm. |
+| `krb5_config` | `krb5_conf` | `string` | `""` | Path to `krb5.conf`. |
+| `krb5_keytab` | `keytab` | `string` | `""` | Path to Kerberos `.keytab` file. |
+| `krb5_ccache` | `ccache` | `string` | `""` | Path to Kerberos credential cache. |
+| `client_applname` | `applname`, `application_name`, `appname` | `string` | `""` | Initial `CURRENT CLIENT_APPLNAME` register. |
+| `client_wrkstnname` | `wrkstnname`, `workstation_name`, `workstation` | `string` | `""` | Initial `CURRENT CLIENT_WRKSTNNAME` register. |
+| `client_userid` | `client_user`, `end_user` | `string` | `""` | Initial `CURRENT CLIENT_USERID` register. |
+| `client_acctng` | `acctng`, `accounting` | `string` | `""` | Initial `CURRENT CLIENT_ACCTNG` register. |
+| `client_corr_token` | `corr_token`, `correlation_token` | `string` | `""` | Initial `CURRENT CLIENT_CORR_TOKEN` register. |
+| `block_size` | `blocksize`, `qryblksz` | `int` | `65535` | DRDA `QRYBLKSZ` block size in bytes (`1024..1048576`). |
+| `timeout` | `connect_timeout`, `conn_timeout` | `duration` | `30s` | TCP dial timeout (duration e.g. `10s`, or integer seconds). Per-query timeouts use `context.Context`. |
+
+> **Strict DSN Validation**: Unknown parameter keys as well as invalid boolean, integer, or duration values fail immediately in `ParseDSN`.
+>
+> **Custom In-Memory TLS Configuration**: There is no DSN parameter to disable server certificate verification. For in-memory Root CA pools, client certificates, or custom `*tls.Config` settings, parse a base DSN with `db2.ParseDSN`, assign `cfg.TLSConfig`, and open the pool via `db2.NewConnector(cfg)` + `sql.OpenDB(connector)`.
 
 ---
 
@@ -125,7 +142,7 @@ import (
 )
 
 func main() {
-	db, err := sql.Open("db2", "db2://db2inst1:MinhaSenhaForte123@127.0.0.1:50000/TESTDB?ssl=false")
+	db, err := sql.Open("db2", "db2://db2inst1:SecretPass123@127.0.0.1:50000/TESTDB?ssl=false&allow_plaintext_auth=true")
 	if err != nil {
 		log.Fatalf("Failed to open db: %v", err)
 	}
@@ -211,19 +228,20 @@ import "github.com/go-db2/go-db2"
 
 // Inject telemetry context into any query or transaction
 clientCtx := db2.WithClientInfo(ctx, db2.ClientInfo{
-    ApplicationName: "orders-microservice",
-    WorkstationName: "k8s-worker-node-04",
-    UserID:          "app_user_42",
-    Accounting:      "billing_dept",
+    ApplicationName:  "orders-microservice",
+    WorkstationName:  "k8s-worker-node-04",
+    UserID:           "app_user_42",
+    Accounting:       "billing_dept",
+    CorrelationToken: "trace-1",
 })
 
 // Db2 special registers (CURRENT CLIENT_APPLNAME, etc.) are automatically synchronized
 rows, err := db.QueryContext(clientCtx, "SELECT * FROM orders WHERE status = ?", "PENDING")
 ```
 
-### 5. High-Throughput Batch / Bulk DML
+### 5. Atomic Transactional Batch / Bulk DML
 ```go
-// Bulk insert 1,000 rows in a single DRDA network operation
+// Atomic transactional batch insert (ExecBatchWithParams) with automatic rollback on failure
 productIDs := []int{101, 102, 103, 104}
 skus := []string{"SKU-A", "SKU-B", "SKU-C", "SKU-D"}
 prices := []float64{19.99, 29.50, 49.00, 99.90}
@@ -251,33 +269,30 @@ if errors.Is(err, db2.ErrAuthenticationFailed) {
 
 ## Performance & Conformance Benchmarks
 
-`go-db2` includes a fully automated containerized benchmark and semantic conformance suite comparing it directly against the official IBM CGO driver (`go_ibm_db`).
+`go-db2` includes an isolated containerized benchmark and semantic conformance suite in the [`benchmarks/`](benchmarks/) module comparing `go-db2` directly against IBM's CGO driver (`go_ibm_db`).
 
 ### 1. Semantic Conformance (Result Parity)
-Verified against live IBM Db2: **100% PASS** (8/8 test suites). All scalar types, nullables, high-precision decimals (`DECFLOAT(34)`), dates/timestamps, DBCS strings (`VARGRAPHIC`), and binary `BLOB` payloads (verified via SHA-256 hash match) produce **byte-for-byte identical results**.
+Verified against live IBM Db2 across 8 test suites (`benchmarks/suite`): scalar types, nullables (`sql.Null*`), high-precision decimals (`DECIMAL` / `DECFLOAT(34)`), dates/timestamps, DBCS strings (`VARGRAPHIC`), and binary `BLOB`/`CLOB` payloads (verified via SHA-256 hash match).
 
-### 2. Performance & Memory Comparison
+### 2. Running Microbenchmarks & Live Containerized Comparisons
+- **Local Go wire/codec microbenchmarks** (no Db2 server required):
+  ```bash
+  go test -bench=. -benchmem ./...
+  ```
+- **Live containerized benchmark suite** (`benchmarks/` module with `SPEC-004` error-propagating harness in `benchmarks/suite/perf.go`):
+  ```bash
+  ./benchmarks/run_benchmark.sh
+  ```
 
-| Scenario | `go-db2` (Pure Go) | `go_ibm_db` (CGO / CLI) | Speedup / Ratio | Memory / Allocations |
-| :--- | :---: | :---: | :---: | :---: |
-| **Simple Single-Row SELECT** | **8.37 µs** | 259.84 µs | **31.05x faster** | **1.3 KB** vs 1.9 KB |
-| **Fetch 1,000 Rows Scan** | **16.37 µs** | 5.35 ms | **326.80x faster** | **1.3 KB** vs 97.9 KB (73x less) |
-| **Prepared Statement INSERT** | **14.90 µs** | 18.74 ms | **1.257,79x faster** | **2.4 KB** vs 11.5 KB |
-| **Read 500KB BLOB Payload** | **29.12 µs** | 1.94 ms | **66.74x faster** | **1.3 KB** vs 1.05 MB (770x less) |
-
-> **Full Report**: See [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for full benchmark breakdown.
->
-> **Reproduce in Container (Zero host setup required)**:
-> ```bash
-> ./benchmarks/run_benchmark.sh
-> ```
+> **Note on [benchmarks/RESULTS.md](benchmarks/RESULTS.md)**: The static snapshot generated on `2026-08-30` predates the `SPEC-004` benchmark harness error-propagation fix. Re-run `./benchmarks/run_benchmark.sh` against a live IBM Db2 container to collect fresh comparative measurements.
 
 ---
 
 ## Testing
 
-### 1. Run Unit Tests & Security Race Checks
+### 1. Run Unit Tests, Examples & Race Checks
 ```bash
+CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go test -count=1 ./...
 go test -v -race -timeout 5m -count=1 ./...
 ```
 

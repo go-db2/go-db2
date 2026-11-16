@@ -22,7 +22,8 @@
 //     settings, configure Config.TLSConfig programmatically with NewConnector.
 //   - ssl_root_ca, ssl_client_cert_path, ssl_client_key_path: Paths to PEM root CA, client certificate, and private key.
 //   - port: Server TCP port (default: 50000 when SSL is disabled, 50001 when SSL is enabled).
-//   - timeout (alias: connect_timeout): Connection/operation timeout (default: 30s).
+//   - timeout (aliases: connect_timeout, conn_timeout): Dial/connect timeout (default: 30s). Query execution and
+//     I/O cancellations/timeouts are controlled via context.Context.
 //   - block_size (aliases: blocksize, qryblksz): DRDA query block size in bytes (1024..1048576, default: 65535).
 //   - allow_plaintext_auth: Allow unencrypted plaintext password authentication (SECMEC 3) over non-TLS TCP (default: false).
 //   - security_mechanism (aliases: secmec, auth_mechanism, auth): DRDA authentication mechanism:

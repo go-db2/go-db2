@@ -336,7 +336,7 @@ func NewConfig() *Config {
 // Examples:
 //
 //	db2://user:password@localhost:50000/sample?ssl=true&timeout=30s
-//	host=localhost;port=50000;database=sample;user=db2inst1;password=password;ssl=false;
+//	host=localhost;port=50000;database=sample;user=db2inst1;password=password;ssl=false;allow_plaintext_auth=true;
 func ParseDSN(dsn string) (*Config, error) {
 	dsn = strings.TrimSpace(dsn)
 	if dsn == "" {
@@ -422,6 +422,13 @@ func parseURL(dsn string) (*Config, error) {
 
 	u, err := url.Parse(sanitizedDSN)
 	if err != nil {
+		if !hasStructuralPwd {
+			var urlErr *url.Error
+			if errors.As(err, &urlErr) && urlErr.Err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrInvalidConnectionStr, sanitizeLogString(redactDSNPassword(urlErr.Err.Error())))
+			}
+			return nil, fmt.Errorf("%w: invalid connection string", ErrInvalidConnectionStr)
+		}
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConnectionStr, sanitizeLogString(redactDSNPassword(err.Error())))
 	}
 
@@ -431,7 +438,7 @@ func parseURL(dsn string) (*Config, error) {
 
 	if !hasStructuralPwd && u.User != nil {
 		if pwd, hasPwd := u.User.Password(); hasPwd && pwd != "" {
-			return nil, fmt.Errorf("%w: malformed authority or credentials in %s", ErrInvalidConnectionStr, sanitizeLogString(redactDSNPassword(dsn)))
+			return nil, fmt.Errorf("%w: malformed authority or credentials", ErrInvalidConnectionStr)
 		}
 	}
 
@@ -443,6 +450,9 @@ func parseURL(dsn string) (*Config, error) {
 	// Host and Port
 	rawHost := u.Hostname()
 	if !isValidDSNHost(rawHost) {
+		if !hasStructuralPwd && strings.Contains(dsn[schemeEnd:], ":") && strings.Contains(dsn[schemeEnd:], "@") {
+			return nil, fmt.Errorf("%w: invalid host %q", ErrInvalidConnectionStr, sanitizeLogString(rawHost))
+		}
 		return nil, fmt.Errorf("%w: invalid host %q in %s", ErrInvalidConnectionStr, sanitizeLogString(rawHost), sanitizeLogString(redactDSNPassword(sanitizedDSN)))
 	}
 	if rawHost != "" {
@@ -452,7 +462,7 @@ func parseURL(dsn string) (*Config, error) {
 		port, err := strconv.Atoi(u.Port())
 		if err != nil || port <= 0 || port > 65535 {
 			if !hasStructuralPwd && strings.Contains(dsn[schemeEnd:], ":") && strings.Contains(dsn[schemeEnd:], "@") {
-				return nil, fmt.Errorf("%w: invalid port in %s", ErrInvalidConnectionStr, sanitizeLogString(redactDSNPassword(dsn)))
+				return nil, fmt.Errorf("%w: invalid port", ErrInvalidConnectionStr)
 			}
 			return nil, fmt.Errorf("%w: invalid port %s", ErrInvalidConnectionStr, sanitizeLogString(u.Port()))
 		}
@@ -568,7 +578,7 @@ func applyParam(cfg *Config, key, val string) error {
 	case "ssl_client_key_path", "ssl_client_key", "sslkey", "key":
 		cfg.SSLClientKeyPath = val
 		cfg.UseSSL = true
-	case "timeout", "connect_timeout":
+	case "timeout", "connect_timeout", "conn_timeout":
 		if d, err := time.ParseDuration(val); err == nil {
 			if d < 0 {
 				return fmt.Errorf("db2: invalid timeout value: %q", val)

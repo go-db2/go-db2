@@ -27,7 +27,7 @@ We will acknowledge receipt within 48 hours and work with you to remediate the i
 ## Security Architecture & Invariants
 
 - **Pure Go / Zero-CGO**: `go-db2` contains zero C dependencies (`CGO_ENABLED=0`) and does not use `unsafe`, preventing memory corruption, buffer overflows, and binary injection vulnerabilities typical of C wrapper drivers.
-- **Secure by Default Transport**: Connections require TLS/SSL encryption (`ssl=true`) by default. Plaintext authentication over unencrypted TCP is rejected unless explicitly enabled via `allow_plaintext_auth=true`.
+- **Transport Security & Plaintext Guard**: Standard `db2://` and Key-Value DSNs default to `ssl=false`, whereas `db2s://` URLs and DSNs specifying `ssl_root_ca`, `ssl_client_cert_path`, or `ssl_client_key_path` automatically enable TLS 1.2+ (`ssl=true`) with strict server certificate verification (`InsecureSkipVerify: false`). Plaintext password authentication (`SECMEC 3`) over unencrypted TCP is rejected by default unless explicitly enabled via `allow_plaintext_auth=true`.
 - **SQL Injection Prevention**: Administrative procedures (`SYSPROC.ADMIN_CMD`) and dynamic DDL statements enforce strict identifier sanitization and whitelist validation (`internal/validate`).
-- **Encrypted Authentication**: Supports DRDA SECMEC 9 (Diffie-Hellman Key Exchange + DES password encryption) and SECMEC 7/11 (Kerberos / GSSAPI token authentication) to prevent credential sniffing on the wire.
+- **Encrypted Authentication**: Supports DRDA SECMEC 9 (Diffie-Hellman key exchange + DES password encryption) to protect credentials on the wire, with downgrade protection enforced during `ACCSEC`/`SECCHK` negotiation. Native Kerberos (`SECMEC 7/11`) ticket exchange via keytab/ccache is currently disabled at runtime until a compliant RFC 4120 `AP-REQ` subpackage is integrated.
 

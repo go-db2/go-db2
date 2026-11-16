@@ -2,6 +2,8 @@
 
 > Generated at: 2026-08-30 02:33:16 UTC
 
+> **Historical Snapshot Note**: This static report from `2026-08-30` predates the `SPEC-004` benchmark harness error-propagation fix in `benchmarks/suite/perf.go` (earlier runs discarded iteration errors in `measure` and could record partial/failed timings). Re-run `./benchmarks/run_benchmark.sh` against a live IBM Db2 container for current head-to-head measurements, or run `go test -bench=. -benchmem ./...` for local driver microbenchmarks.
+
 Comparison between **`go-db2`** (Pure Go DRDA implementation) and **`go_ibm_db`** (IBM Official CGO / clidriver wrapper).
 
 ## 1. Semantic Conformance (Result Parity)
